@@ -29,11 +29,11 @@ export function useBotCall(botAudioRef: React.RefObject<HTMLAudioElement | null>
     const line: Line = { id: i >= 0 ? s.lines[i].id : nid(), who, text, final };
     return { lines: i >= 0 ? s.lines.map((l, j) => (j === i ? line : l)) : [...s.lines, line] };
   });
-  // The bot's text comes a sentence at a time, and they belong together until it stops talking.
-  const addBotText = (text: string) => up((s) => {
-    const i = s.lines.findIndex((l) => l.who === "bot" && !l.final);
-    if (i < 0) return { lines: [...s.lines, { id: nid(), who: "bot", text, final: false }] };
-    return { lines: s.lines.map((l, j) => (j === i ? { ...l, text: `${l.text} ${text}` } : l)) };
+  // Both sides arrive a phrase at a time, and they belong together until the other one speaks.
+  const addText = (who: Line["who"], text: string, final: boolean) => up((s) => {
+    const last = s.lines[s.lines.length - 1];
+    if (last?.who !== who) return { lines: [...s.lines, { id: nid(), who, text, final }] };
+    return { lines: [...s.lines.slice(0, -1), { ...last, text: `${last.text} ${text}`, final }] };
   });
   const endBotLine = () => up((s) => ({ lines: s.lines.map((l) => (l.who === "bot" ? { ...l, final: true } : l)) }));
   const addEvent = (kind: CallEvent["kind"], text: string) => up((s) => ({ events: [...s.events, { id: nid(), atS: s.startedAt ? (Date.now() - s.startedAt) / 1000 : 0, text, kind }] }));
@@ -76,12 +76,11 @@ export function useBotCall(botAudioRef: React.RefObject<HTMLAudioElement | null>
           onUserStartedSpeaking: () => up({ youSpeaking: true }),
           onUserStoppedSpeaking: () => up({ youSpeaking: false }),
           onBotStartedSpeaking: () => up({ botSpeaking: true }),
-          onBotStoppedSpeaking: () => up({ botSpeaking: false }),
+          onBotStoppedSpeaking: () => { up({ botSpeaking: false }); endBotLine(); },
           onBotInterrupted: () => { up({ botSpeaking: false }); endBotLine(); },
-          onUserTranscript: (d) => addLine("you", d.text, d.final),
+          onUserTranscript: (d) => { if (d.final) addText("you", d.text, true); },
           // A sentence arrives more than once as it moves from generated to spoken, under one segment id.
-          onBotOutput: (d) => { const seen = d.segment_id != null && segments.has(d.segment_id); if (d.segment_id != null) segments.add(d.segment_id); if (!seen && d.text.trim()) addBotText(d.text.trim()); },
-          onBotTtsStopped: endBotLine,
+          onBotOutput: (d) => { const seen = d.segment_id != null && segments.has(d.segment_id); if (d.segment_id != null) segments.add(d.segment_id); if (!seen && d.text.trim()) addText("bot", d.text.trim(), false); },
           onServerMessage: (data: unknown) => { const v = (data as { voicelab?: VoicelabServerMessage })?.voicelab; if (v) onServer(v); },
           onTrackStarted: (track, participant) => { if (!participant?.local && track.kind === "audio" && botAudioRef.current) { botAudioRef.current.srcObject = new MediaStream([track]); botAudioRef.current.play().catch(() => undefined); } },
           onDisconnected: () => up((s) => (s.status === "ended" || s.status === "error" ? {} : { status: "ended" })),
