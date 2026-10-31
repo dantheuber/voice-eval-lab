@@ -109,8 +109,10 @@ Accuracy and quality:
 
 - Nobody has listened to the benchmark audio. Voice quality was checked with ASR, which shows the words came out and says nothing about how they sound.
 - Human speech in the benchmarks is one LibriSpeech speaker and one JFK clip. Real callers, accents, and real phone lines were never tested. Neither were packet loss and line noise.
-- The judge's accuracy rests on one transcript with 5 criteria, run 6 times. That shows the plumbing works.
-- Delivery limits come from 21 clips with planted defects. They caught 105 of 105 within a call and 95 of 105 on fixed limits, with 1 false flag on 21 clean clips, and they were never checked against listener ratings.
+- The judge's accuracy rests on 18 real calls that its prompts were tuned on, with no held-out set. It's weakest on `general_no_invented_facts`, which accounts for 2 of its 3 misses.
+- Hand labels are one reader's. 37 of the 225 accept more than one answer, because a careful reader could go either way.
+- Delivery limits come from 21 clips with planted defects and 18 real calls of Phonon. They caught 105 of 105 within a call and 95 of 105 on fixed limits, with 1 false flag on 21 clean clips, and they were never checked against listener ratings. Rate limits are calibrated to this one voice.
+- Sound-alike matching lets a name or term through on spelling rules and one vowel in a long word, so a real mispronunciation that close would pass.
 - No audio model hears delivery. LFM3-Audio, Gemma 4 E2B, and Voxtral all found 0 of 20 planted defects.
 - STT reports no usable word confidence. Qwen3-ASR gives none, and Parakeet says 1.0 on every word, so pronunciation confidence comes from Whisper alone.
 - Before spoken-id handling, no live two-bot call reached a refund. The fix spells ids phone-style, and came back right 10 of 10 on ten numbers. Live pass rates are in the results section once measured.
@@ -136,6 +138,30 @@ Scope and setup:
 End-to-end results with the finished engine:
 
 <!-- RESULTS -->
+
+### Post-call eval on real calls
+
+Measured on 18 finished calls from `local-default` on 2026-10-31, each hand-labeled from its transcript, tool log, and database diff before any judge output was read. The labels and what a judge reads are in `tests/eval/fixtures/`. The prompts were tuned on these same calls, so treat the accuracy as a ceiling until a fresh set confirms it. Before is the code as it stood, whole-channel ASR and 400 tokens per criterion. The first judge line covers the 4 calls that had evals stored.
+
+| Measure | Before | After |
+| --- | --- | --- |
+| Whole eval, on calls of 58 to 294 s | 560 to 920 s | 34 to 65 s, mean 52 s |
+| Criteria `unknown` | 43 of 61, on those 4 calls | 0 of 225 |
+| Evaluator errors | 3, on those 4 calls | 0 |
+| Agreement with hand labels | not measured | 222 of 225. The judge's own 181 of 184, and the 41 the record decides |
+| Verdicts as labeled | not measured | 18 of 18 |
+| ASR words heard, caller and bot | 80%, 80% | 95%, 98% |
+| ASR spurious words, caller and bot | 55%, 47% | 10%, 5% |
+| Critical pronunciation findings | 37, of which 36 were false | 1, a dropped letter both engines heard |
+| Non-judge findings per call | 15.9, max 38 | 3.1, of which 1.3 to review, max 3 |
+| Findings to review per call, all evaluators | 22.5 on the 4 stored calls | 3.4, median 4, max 6, 0 on passing calls |
+
+What changed the numbers:
+
+- Whisper fed a whole channel looped on invented text across silences, and whisper.cpp's "words" are tokens, so "I'm" and "SSL" reached eval in pieces. Each stretch of speech now goes to it alone, and tokens are joined. Both fixes came before any judge work, and most of the old quote rejections went with them.
+- The judge's 400 tokens went on reasoning, then it was asked the same thing again. Reasoning is off, one request covers every criterion, and each reply writes its evidence before its status. `draft-mtp` speculation gives the same output at 30 t/s instead of 12.
+- The judge reads speech and tool calls as one timeline. It's told who ended the call and when the bot verified, and a rule the record can answer never reaches it.
+- Qwen3.5-4B was tried as the judge, at about 18 s a call. It scored 90.7% against 95.6% before rules moved to the record, and passed one bot failure, so 27B stayed.
 
 ## Repo layout
 
