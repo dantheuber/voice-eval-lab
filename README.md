@@ -137,9 +137,47 @@ Scope and setup:
 
 ## Results
 
-End-to-end results with the finished engine:
+End-to-end results with the finished engine.
 
-<!-- RESULTS -->
+### Real calls through the dashboard
+
+Measured on 2026-10-31 through `./run.sh`, the real dashboard in Chrome 154, and real models on an otherwise idle GPU. Mic calls used a fake capture device playing Pocket TTS speech from a WAV, with talk-overs placed in it, so no human voice, real microphone, or real speaker was involved.
+
+| Measure | `local-default` | `local-fast` | `local-realtime` |
+| --- | --- | --- | --- |
+| Bot calls, reply p50 per call, end of caller speech to first bot audio | 1.77 to 2.39 s, median 2.06 s, 12 calls | 1.49 to 1.56 s, 2 calls | 1.22 to 1.56 s, 2 calls |
+| Mic calls, reply p50 and p95 | 1.69 to 2.07 s and 2.5 to 3.8 s, on calls with tool turns. 1.44 s and 1.57 s on 6 minutes of plain questions | not run | 1.26 s p50, 1 call |
+| Barge-in, caller speech to bot stopped | 0.22 s median, 0.24 s max, 12 of 12 on mic calls. 0.26 s and 0.28 s across 52 on bot calls | 0.26 s, 0.28 s max, 24 cut-ins | 0.86 s, 2.28 s max, 24 cut-ins. Each one rebuilds the session |
+| Eval, whole pipeline | 44 to 65 s on bot calls of 81 to 216 s, 45 to 46 s on 157 s mic calls | 57 to 58 s | 48 to 64 s |
+
+The first audio of a mic call arrives 0.5 to 0.8 s after pressing Start. Both Chrome and the server saw every packet: 0 lost, about 32 to 41 ms in the jitter buffer, over loopback and over the LAN address on HTTPS. Uploads took 24 to 32 s to evaluate.
+
+Over a 372 s mic call of 31 turns:
+
+| Measure | Result |
+| --- | --- |
+| GPU memory | 30.5 GB, flat |
+| GPU busy, CPU | 8% and 4% on average |
+| `voicelab` memory | 415 MB falling to 382 MB |
+| `voicelab` threads, file descriptors | 72 up to 125 and back to 88, 15 to 18 |
+| LLM server memory | 8.8 GB rising to 9.9 GB. This is llama-server's prompt cache, capped at 8 GiB, and the log shows it evicting |
+
+Nothing else grew, so there's no sign of a leak in that length of call. Longer calls weren't run.
+
+| Operation | Time |
+| --- | --- |
+| `./run.sh` to all models ready | 5.8 s, or 10.5 s with a dashboard rebuild. The models were in the page cache, so a load from a cold disk will be slower and wasn't measured |
+| Profile swap | 3 to 16 s, restarting only the servers that changed |
+| Ctrl-C | 2.3 s, no process left behind |
+| Model server killed | Back within 2 to 3 s. A call between requests carries on. A request in flight fails the call, keeps the recording, and says why |
+| Restart during a run | 8 s. Calls in flight are marked failed with their recordings, and queued ones resume by themselves |
+| Closing the tab on a mic call | Finalized in 1 s |
+
+Of 12 calls on `local-default` on a clean line, 2 passed, 6 failed, 3 were invalid, and 1 needs review. The failures read as real: a double refund, a refund after a failed PIN, a mis-heard address sent to a tool. Treat that as a sample, not a pass rate.
+
+The first run of these tests found problems unit tests couldn't. After a barge-in stopped the bot on "two charges of forty nine", it ended later replies on those words too. The bot went silent when STT was slower than the end of the turn. A caller could be left holding on "one moment" and the call sat silent for 15 minutes. Realtime calls stalled or failed outright, and a mic call needed the internet because the browser library fetched code from Daily's CDN. All are fixed, and these numbers are from after the fixes.
+
+Still not verified: a real person talking, a real microphone or speakers, echo in a real room, other browsers, a network beyond one machine, and live AWS.
 
 ### Post-call eval on real calls
 
