@@ -38,7 +38,7 @@ interface Persona {
 }
 
 interface Beat { id: string; instruction: string; checkpoint: string | null; required: boolean; }
-interface Rule { id: string; text: string; severity: "critical" | "major" | "minor"; }
+interface Rule { id: string; text: string; severity: "critical" | "major" | "minor"; needsBeat?: string | null; }
 interface StateExpectation { id: string; table: string; where: Record<string, unknown>; op: "changed" | "no_change" | "row_added"; changes: Record<string, unknown>; description: string; }
 
 interface Scenario {

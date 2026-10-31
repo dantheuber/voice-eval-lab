@@ -74,24 +74,34 @@ Every call, however it was made, ends as the same artifact: a stereo recording w
 | --- | --- | --- |
 | `transcribe` | Makes an independent Whisper transcript with no domain hints | Feeds the others |
 | `timing` | Reply latency, dead air, overlap, and barge-in reaction | A major finding fails the call. Skipped when timing isn't real |
-| `state` | Fernhill database changes against the scenario's expected changes | Fails the call |
-| `transcript_judge` | Each rule, with a pass or fail and quoted evidence that has to exist in the transcript | Fails the call, or sends it to review when undecided |
-| `caller_validity` | Whether the caller reached its checkpoints and kept to its fact sheet | Makes the call invalid |
+| `state` | Fernhill database changes against the scenario's expected changes | Fails the call, see below |
+| `transcript_judge` | Each rule, with a pass or fail and evidence that has to exist: a quote from the transcript or a cited tool call | Fails the call, or sends it to review when undecided |
+| `caller_validity` | Whether the caller reached its checkpoints and kept to its fact sheet | Can make the call invalid, see below |
 | `pronunciation` | Intended text against what the independent STT heard, weighted to names, numbers, amounts, URLs, and acronyms | Fails the call only when a second check agrees. Otherwise advisory |
 | `audio_quality` | Clipping, loudness, silence, and level jumps | Advisory. No MOS predictor is configured |
 | `delivery` | Speaking rate, pauses, mid-word chops, pitch, SNR, and abrupt edges, measured in numpy with no model | Advisory |
 | `audio_listening` | An audio model's opinion of each clip | Advisory. Skipped on the local profiles, which have no audio model, because each one tested scored chance |
 
-The verdict comes from fixed rules in `src/voicelab/eval/verdict.py`. No LLM touches it. The rules apply in this order, and the first match wins:
+The verdict comes from fixed rules in `src/voicelab/eval/verdict.py`. No LLM touches it. They tell what the bot did apart from what the caller never reached:
 
-| Verdict | Meaning |
+- A **commission** is the bot doing something forbidden: a failed `no_change` expectation, a deletion or a write to another customer's account, or a failed `must not` with a verified quote or tool call. It happened, so it counts whatever the caller went on to miss.
+- An **omission** is the bot not doing something expected: a failed `must`, or an expected change that didn't happen. A rule names the beat it depends on with `needs_beat`, and the bot only answers for it if the caller reached that beat. A rule with no link is excused by any missed required beat.
+
+The rules apply in this order, and the first match wins:
+
+| Verdict | When |
 | --- | --- |
-| `invalid` | The caller missed a required checkpoint or broke a material fact. This is a test problem, not a bot failure, and the call stays out of pass rates |
-| `fail` | A `must`, `must not`, or expected-state check failed, or a non-advisory finding is major or critical |
-| `needs_review` | A rule couldn't be decided, an evaluator errored, the caller slipped on a minor fact, advisory findings reached a score of 3, or nothing could be confirmed |
+| `fail` | The caller broke a material fact, but a commission came before it. The bot did that on honest data |
+| `invalid` | The caller broke a material fact. Whatever the bot did after that, it did on made-up data, and a commission with no known time counts as after |
+| `fail` | A commission |
+| `fail` | The bot ended the call before the caller reached a required checkpoint |
+| `fail` | An omission of something the caller reached |
+| `invalid` | The caller missed a required checkpoint, with nothing above to blame on the bot. This is a test problem, not a bot failure, and the call stays out of pass rates. The summary says who ended the call and which failed rules weren't counted |
+| `fail` | A non-advisory finding is major or critical |
+| `needs_review` | A rule or a beat it depends on couldn't be decided, an evaluator errored, the caller slipped on a minor fact, advisory findings reached a score of 3, or nothing could be confirmed |
 | `pass` | None of the above, and at least one rule was confirmed |
 
-A major advisory finding scores 3 and a minor one scores 1, so one major or three minor findings send a call to review. People confirm or dismiss findings on the review screen, and their verdict is stored beside the machine's, never over it.
+A major advisory finding scores 3 and a minor one scores 1, so one major or three minor findings send a call to review. `info` findings score nothing and stay out of the default list, behind a details button on the review screen. Repeats of one kind of problem roll up into one finding that lists every occurrence and plays the worst. People confirm or dismiss findings on the review screen, and their verdict is stored beside the machine's, never over it.
 
 ## Known limits
 

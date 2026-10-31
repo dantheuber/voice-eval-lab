@@ -140,8 +140,8 @@ Fill in these parts, or check them after a draft:
 2. **Mock customer.** Each call gets a fresh copy of that customer's records.
 3. **Turn limit.** The call ends as invalid if the caller hasn't reached its checkpoints by then.
 4. **Caller's fact sheet.** The caller may only use these facts. Without a fixed sheet it invents details. Add everything the bot might ask for, such as billing zip and PIN.
-5. **Beats, in order.** Each beat is what the caller should do next. A beat with a checkpoint says what proves it was reached. A missed required checkpoint makes the call invalid, not failed. That's how a broken test stays separate from a broken bot.
-6. **Rules the bot is judged on.** `must` and `must not` rules, each with a severity. The judge quotes evidence for each one.
+5. **Beats, in order.** Each beat is what the caller should do next. A beat with a checkpoint says what proves it was reached. A missed required checkpoint makes the call invalid, not failed, unless the bot did something forbidden or ended the call itself. That's how a broken test stays separate from a bad bot.
+6. **Rules the bot is judged on.** `must` and `must not` rules, each with a severity. The judge cites evidence for each one, a quote or a tool call. In a scenario's YAML, `needs_beat` on a rule or an expected change names the beat it depends on, so the bot only answers for it once the caller got that far. A rule with no link is excused by any missed required beat.
 7. **Expected database changes.** The table, a filter, and whether a row was added, changed, or unchanged. These compare real database state, so they don't depend on the judge. An example is one row added to `refunds` with `invoice_id: FH-4419`.
 8. **Pronunciation watch list.** Tokens the pronunciation check treats as critical, such as `FH-4419` and `$49.99`.
 
