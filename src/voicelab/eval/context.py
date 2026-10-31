@@ -73,6 +73,7 @@ class EvalContext:
     deps: EvalDeps
     transcripts: dict[Speaker, Transcript] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
+    delivery: list[Any] = field(default_factory=list)  # bot measurements, for the listener to face
     note_progress: ProgressNote = _no_note  # shows a step inside the running evaluator
     _audio: dict[Speaker, AudioClip] = field(default_factory=dict)
     _regions: dict[Speaker, list[Region]] = field(default_factory=dict)

@@ -89,12 +89,12 @@ def parakeet(name: str, device: str):
         save_result(f"stt-{name}", res)
 
 
-def whisper():
+def whisper(model_file: Path = WHISPER_MODEL, name: str = "whisper-vulkan"):
     port = free_port(18700)
     log = open(LOGS / "whisper-server.log", "w")
     env = {"LD_LIBRARY_PATH": str(RT / "toolchain" / "lib"), "PATH": "/usr/bin:/bin"}
     gpu0 = gpu_mem_gb()
-    proc = subprocess.Popen([str(WHISPER_BIN), "-m", str(WHISPER_MODEL), "--port", str(port), "--host", "127.0.0.1", "-l", "en", "-t", "8", "-nt"],
+    proc = subprocess.Popen([str(WHISPER_BIN), "-m", str(model_file), "--port", str(port), "--host", "127.0.0.1", "-l", "en", "-t", "8", "-nt"],
                             stdout=log, stderr=subprocess.STDOUT, env=env)
     try:
         t0 = time.perf_counter()
@@ -111,14 +111,22 @@ def whisper():
             if time.perf_counter() - t0 > 90:
                 raise TimeoutError("whisper-server")
             time.sleep(0.3)
-        meta = {"load_s": time.perf_counter() - t0, "gpu_gb": gpu_mem_gb() - gpu0, "rss_gb": rss_gb(proc.pid), "model": WHISPER_MODEL.name}
+        meta = {"load_s": time.perf_counter() - t0, "gpu_gb": gpu_mem_gb() - gpu0, "rss_gb": rss_gb(proc.pid), "model": model_file.name}
 
         def go(path: str) -> str:
             with open(path, "rb") as f:
                 r = client.post(url + "/inference", files={"file": ("a.wav", f, "audio/wav")}, data={"response_format": "json", "temperature": "0"})
             r.raise_for_status()
             return r.json()["text"].strip()
-        score("whisper-vulkan", go, meta)
+        res = score(name, go, meta)
+        five = BENCH / "clean" / "long300.wav"
+        if five.exists():
+            t1 = time.perf_counter()
+            text = go(str(five))
+            dt = time.perf_counter() - t1
+            res["long300"] = {"secs": dt, "rtf": 300 / dt, "words": len(text.split())}
+            print(f"  300 s clip: {dt:.1f} s, {300 / dt:.1f}x", flush=True)
+            save_result(f"stt-{name}", res)
     finally:
         proc.terminate()
         proc.wait(10)
@@ -151,6 +159,7 @@ def main(names: list[str]) -> int:
         "parakeet-vulkan": lambda: parakeet("parakeet-vulkan", "vulkan:0"),
         "parakeet-cpu": lambda: parakeet("parakeet-cpu", "cpu"),
         "whisper-vulkan": whisper,
+        "whisper-large-v3": lambda: whisper(MODELS / "whisper" / "ggml-large-v3-q5_0.bin", "whisper-large-v3-vulkan"),
         "qwen-asr-vulkan": qwen_asr,
         "parakeet-onnx": parakeet_onnx,
     }

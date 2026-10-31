@@ -27,7 +27,7 @@ from common import BENCH, LFM_Q4, LFM_Q4_MM, LFM_Q8, LFM_Q8_MM, MODELS, LlamaSer
 from fernhill_fixture import SUPPORT_SYSTEM, TOOLS, run_tool, tool_message
 from llm_client import THINK, chat
 from rt_client import read_pcm16
-from speech_backends import PARAKEET, HttpSTT, NemoServer, make_tts
+from speech_backends import make_tts, open_stt
 
 torch.set_num_threads(1)
 WINDOW = 512  # Silero window at 16 kHz, 32 ms
@@ -111,14 +111,9 @@ class Stack:
         try:
             if need_lfm:
                 servers["lfm"] = LlamaServer(args_lfm, name="e2e-lfm", port=free_port(18400)).__enter__()
-            if self.stt_name.startswith("parakeet"):
-                device = "cpu" if self.stt_name.endswith("-cpu") else "vulkan:0"
-                servers["nemo"] = NemoServer(PARAKEET, device).__enter__()
-                stt = HttpSTT(servers["nemo"].url, model=httpx.get(servers["nemo"].url + "/v1/models").json()["data"][0]["id"])
-            elif self.stt_name == "lfm3":
-                stt = HttpSTT(servers["lfm"].url)
-            else:
-                raise SystemExit(f"unknown stt {self.stt_name}")
+            stt, stt_servers = open_stt(self.stt_name, servers["lfm"].url if need_lfm else None)
+            for i, srv in enumerate(stt_servers):
+                servers[f"stt{i}"] = srv
             servers["llm"] = LlamaServer(llm_args(self.llm_name), name="e2e-llm", port=free_port(18450)).__enter__()
             tts = make_tts(self.tts_name, servers["lfm"].url if need_lfm else None)
             mem = gpu_mem_gb() - gpu0

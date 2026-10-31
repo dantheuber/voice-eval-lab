@@ -130,11 +130,44 @@ _ONES = {w: i for i, w in enumerate("zero one two three four five six seven eigh
 _TENS = {w: (i + 2) * 10 for i, w in enumerate("twenty thirty forty fifty sixty seventy eighty ninety".split())}
 
 
+class _letters:
+    open = False
+
+
+_ORDINALS = dict(zip("first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth fourteenth "
+                     "fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split(), range(1, 21)))
+
+
 def _words_to_digits(words: list[str]) -> list[str]:
     out: list[str] = []
     i = 0
     while i < len(words):
         w = words[i]
+        if w in _ORDINALS and w != "second":
+            out.append(str(_ORDINALS[w]))
+            i += 1
+            continue
+        if w == "mr":
+            out.append("mister")
+            i += 1
+            continue
+        if w == "hundred" and out and out[-1].isdigit() and int(out[-1]) < 10:
+            # "one hundred twenty" becomes 120
+            hundreds = int(out.pop()) * 100
+            rest = 0
+            j = i + 1
+            if j < len(words) and words[j] in _TENS:
+                rest = _TENS[words[j]]
+                j += 1
+                if j < len(words) and words[j] in _ONES and 0 < _ONES[words[j]] < 10:
+                    rest += _ONES[words[j]]
+                    j += 1
+            elif j < len(words) and words[j] in _ONES and _ONES[words[j]] > 0:
+                rest = _ONES[words[j]]
+                j += 1
+            out.append(str(hundreds + rest))
+            i = j
+            continue
         if w in _TENS:
             val = _TENS[w]
             if i + 1 < len(words) and words[i + 1] in _ONES and 0 < _ONES[words[i + 1]] < 10:
@@ -154,6 +187,7 @@ def _words_to_digits(words: list[str]) -> list[str]:
 def normalize(text: str) -> str:
     """Lowercase, drop punctuation, spoken numbers and written numbers become the same digit tokens."""
     t = text.lower()
+    t = re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", t)
     t = re.sub(r"\$\s*(\d+)\.(\d\d)", r"\1 dollars and \2 cents", t)
     t = re.sub(r"\$\s*(\d+)", r"\1 dollars", t)
     t = re.sub(r"(\d)[,](\d)", r"\1\2", t)
@@ -161,8 +195,17 @@ def normalize(text: str) -> str:
     t = re.sub(r"(?<=\w)\.(?=\w)", " dot ", t)
     t = re.sub(r"[^a-z0-9' ]+", " ", t)
     t = re.sub(r"'", "", t)
-    words = t.split()
+    words = [w for w in t.split() if w != "dash"]
     words = _words_to_digits(words)
+    # spelled letters, so "F H" and "FH" compare equal
+    merged: list[str] = []
+    for w in words:
+        if len(w) == 1 and w.isalpha() and merged and len(merged[-1]) >= 1 and merged[-1].isalpha() and getattr(_letters, "open", False):
+            merged[-1] += w
+        else:
+            merged.append(w)
+        _letters.open = len(w) == 1 and w.isalpha()
+    words = merged
     # split digit strings so "4419" and "4 4 1 9" compare equal, and letters of an ID too
     out: list[str] = []
     for w in words:

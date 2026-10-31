@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -84,6 +85,72 @@ class HttpSTT:
                              data={"model": self.model, "language": "en", **self.extra})
         r.raise_for_status()
         return r.json()["text"].strip()
+
+
+class QwenAsrStt(HttpSTT):
+    """Qwen3-ASR through llama-server. Strips the language prefix the model emits."""
+
+    def transcribe(self, pcm: np.ndarray) -> str:
+        text = super().transcribe(pcm)
+        return re.sub(r"^.*?<asr_text>", "", text, flags=re.S).strip()
+
+
+class WhisperServer:
+    """whisper.cpp whisper-server, Vulkan build. Its HTTP route is /inference."""
+
+    def __init__(self, threads: int = 8):
+        self.port = free_port(18700)
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.threads = threads
+
+    def __enter__(self):
+        env = {"LD_LIBRARY_PATH": str(RT / "toolchain" / "lib"), "PATH": "/usr/bin:/bin"}
+        log = open(RT / "logs" / f"whisper-{self.port}.log", "w")
+        self.proc = subprocess.Popen([str(RT / "whisper.cpp/build/bin/whisper-server"), "-m", str(MODELS / "whisper/ggml-large-v3-turbo-q5_0.bin"),
+                                      "--port", str(self.port), "--host", "127.0.0.1", "-l", "en", "-t", str(self.threads), "-nt"],
+                                     stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < 60:
+            try:
+                if httpx.get(self.url + "/health", timeout=1).status_code == 200:
+                    return self
+            except httpx.HTTPError:
+                time.sleep(0.2)
+        raise TimeoutError("whisper-server")
+
+    def __exit__(self, *exc):
+        self.proc.terminate()
+        self.proc.wait(10)
+
+
+class WhisperStt:
+    def __init__(self, url: str):
+        self.url = url
+        self.client = httpx.Client(timeout=120)
+
+    def transcribe(self, pcm: np.ndarray) -> str:
+        r = self.client.post(self.url + "/inference", files={"file": ("a.wav", wav_bytes(pcm), "audio/wav")}, data={"response_format": "json", "temperature": "0"})
+        r.raise_for_status()
+        return r.json()["text"].strip()
+
+
+def open_stt(name: str, lfm_url: str | None = None) -> tuple:
+    """Returns (stt, context managers to close). name: parakeet, parakeet-cpu, qwen-asr, whisper, lfm3."""
+    from common import LlamaServer
+    if name.startswith("parakeet"):
+        srv = NemoServer(PARAKEET, "cpu" if name.endswith("-cpu") else "vulkan:0").__enter__()
+        return HttpSTT(srv.url, httpx.get(srv.url + "/v1/models").json()["data"][0]["id"]), [srv]
+    if name == "qwen-asr":
+        m = MODELS / "ggml-org__Qwen3-ASR-0.6B-GGUF"
+        srv = LlamaServer(["-m", str(m / "Qwen3-ASR-0.6B-Q8_0.gguf"), "-mm", str(m / "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf"), "--temp", "0", "-c", "8192", "-np", "2", "-ngl", "999"],
+                          name="qwen-asr", port=free_port(18650)).__enter__()
+        return QwenAsrStt(srv.url), [srv]
+    if name == "whisper":
+        srv = WhisperServer().__enter__()
+        return WhisperStt(srv.url), [srv]
+    if name == "lfm3":
+        return HttpSTT(lfm_url), []
+    raise SystemExit(f"unknown stt {name}")
 
 
 class KokoroTTS:
@@ -179,7 +246,7 @@ class PocketTTS(_StreamTTS):
     """Pocket TTS on CPU through its Python package. Not thread-safe, so each side needs an instance."""
     name = "pocket"
 
-    def __init__(self, language: str | None = "english_7m_2026-10", voice: str = "alba", threads: int | None = None):
+    def __init__(self, language: str | None = "english_7m_2026-10", voice: str = "marius", threads: int | None = None):
         import torch
         from pocket_tts import TTSModel
         if threads:
@@ -200,10 +267,10 @@ def make_tts(name: str, lfm_url: str | None = None, side: int = 0):
     if name == "lfm3":
         return LfmTTS(lfm_url, ("female", "male")[side])
     if name == "phonon":
-        return PhononTTS(("Easton", "Ivy")[side] if False else "Easton")
+        return PhononTTS(("Easton", "Delia")[side])
     if name.startswith("pocket"):
         lang = {"pocket": "english_7m_2026-10", "pocket-2m": "english_2m_2026-10", "pocket-18m": "english_18m_2026-10"}[name]
-        return PocketTTS(lang, ("alba", "marius")[side])
+        return PocketTTS(lang, ("marius", "anna")[side])
     raise SystemExit(f"unknown tts {name}")
 
 

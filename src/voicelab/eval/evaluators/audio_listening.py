@@ -1,7 +1,8 @@
 """An audio-capable model listens to a few bot clips.
 
 These models agree with human listeners less than 80% of the time, so everything here is advisory:
-it points a person at a clip and never decides a call.
+it points a person at a clip and never decides a call. Where it contradicts the `delivery`
+measurements of the same clip, the measurements win, as `eval.reconcile` works out.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from voicelab.core.models import Evidence, Finding, Speaker, Utterance
 from voicelab.eval.config import ListeningConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
 from voicelab.eval.judging import parse_json_reply, render_prompt
+from voicelab.eval.reconcile import reconcile
 
 LISTENING_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -158,6 +160,7 @@ class AudioListeningEvaluator:
 
         heard: list[dict[str, Any]] = []
         failures: list[str] = []
+        disagreements: list[dict[str, Any]] = []
         for position, clip in enumerate(clips, start=1):
             await ctx.note_progress(f"clip {position} of {len(clips)}")
             prompt = render_prompt(
@@ -171,7 +174,9 @@ class AudioListeningEvaluator:
             except Exception as exc:  # one unusable clip leaves the others worth keeping
                 failures.append(f"{clip.start_s:.1f} s: {exc}")
                 continue
-            out.findings.extend(_clip_findings(clip, payload))
+            findings = _clip_findings(clip, payload)
+            disagreements += reconcile(clip.start_s, clip.end_s, payload, findings, ctx.delivery)
+            out.findings.extend(findings)
             heard.append(
                 {
                     "start_s": round(clip.start_s, 3),
@@ -182,6 +187,7 @@ class AudioListeningEvaluator:
                 }
             )
         out.metrics["clips"] = heard
+        out.metrics["disagreements"] = disagreements
         if failures:
             out.metrics["failed_clips"] = failures
         if not heard:

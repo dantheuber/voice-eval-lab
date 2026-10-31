@@ -35,7 +35,7 @@ from common import BENCH, LFM_Q4, LFM_Q4_MM, LlamaServer, free_port, gpu_mem_gb,
 from fernhill_fixture import CALLER_SYSTEM, SUPPORT_SYSTEM, TOOLS, run_tool, tool_message
 from llm_client import THINK, chat
 from rt_client import Session, write_pcm16
-from speech_backends import PARAKEET, HttpSTT, KokoroTTS, NemoServer, make_tts
+from speech_backends import KokoroTTS, make_tts, open_stt
 
 torch.set_num_threads(1)
 WINDOW = 512
@@ -104,6 +104,7 @@ class Side:
         self.vad = VADIterator(vad_model, threshold=0.5, sampling_rate=16000, min_silence_duration_ms=hang_ms, speech_pad_ms=30)
         self.heard: list[np.ndarray] = []
         self.in_speech = False
+        self.pending_end = False
         self.turn_done = threading.Event()   # this side finished writing its current reply
         self.turn_done.set()
         self.jobs: queue.Queue = queue.Queue()
@@ -124,19 +125,27 @@ class Side:
         self.feed(window)
         if ev and "start" in ev:
             self.in_speech = True
+            self.pending_end = False
         if self.in_speech:
             self.heard.append(window)
         if ev and "end" in ev:
-            # the peer still talking means this VAD end fell in a pause inside its turn
+            # the peer still talking means this VAD end fell in a pause, or in TTS tail silence still on the line
             if not self.peer.turn_done.is_set() or self.line_in.queued > 0:
                 self.premature += 1
+                self.pending_end = True
                 return
-            self.in_speech = False
-            utter = np.concatenate(self.heard) if self.heard else np.zeros(0, dtype="<i2")
-            self.heard = []
-            self.turn_done.clear()
-            self.on_turn_end()
-            self.jobs.put((utter, self.line_in.t_last_real, time.perf_counter()))
+            self._end_turn()
+        elif self.pending_end and self.peer.turn_done.is_set() and self.line_in.queued == 0:
+            self._end_turn()
+
+    def _end_turn(self) -> None:
+        self.pending_end = False
+        self.in_speech = False
+        utter = np.concatenate(self.heard) if self.heard else np.zeros(0, dtype="<i2")
+        self.heard = []
+        self.turn_done.clear()
+        self.on_turn_end()
+        self.jobs.put((utter, self.line_in.t_last_real, time.perf_counter()))
 
     def feed(self, window: np.ndarray) -> None:
         pass
@@ -328,25 +337,24 @@ def run_call(a: Side, b: Side, opener: np.ndarray, rate: int, turns: int, max_s:
 def cascade(args) -> dict:
     vad_model = load_silero_vad(onnx=True)
     vad_model2 = load_silero_vad(onnx=True)
-    label = f"cascade-{args.stt}-{args.llm}-{args.tts}"
+    label = f"cascade-{args.stt}-{args.llm}-{args.tts}-{args.tts_caller or args.tts}"
     gpu0 = gpu_mem_gb()
     servers = []
     try:
         lfm = None
-        if args.tts == "lfm3":
+        if "lfm3" in (args.tts, args.tts_caller):
             lfm = LlamaServer(["-m", str(LFM_Q4), "-mm", str(LFM_Q4_MM), "--temp", "0", "-c", "16384", "-np", "2", "-ngl", "999"], name="tb-lfm", port=free_port(18500)).__enter__()
             servers.append(lfm)
-        nemo = NemoServer(PARAKEET, "vulkan:0").__enter__()
-        servers.append(nemo)
-        model_id = httpx.get(nemo.url + "/v1/models").json()["data"][0]["id"]
+        stt, stt_servers = open_stt(args.stt, lfm.url if lfm else None)
+        servers += stt_servers
         llm = LlamaServer(llm_args(args.llm, parallel=2), name="tb-llm", port=free_port(18550)).__enter__()
         servers.append(llm)
         tts_a = make_tts(args.tts, lfm.url if lfm else None, 0)
-        tts_b = make_tts(args.tts, lfm.url if lfm else None, 1)
+        tts_b = make_tts(args.tts_caller or args.tts, lfm.url if lfm else None, 1)
         tts_a.synth("Warm up.")
         tts_b.synth("Warm up.")
-        support = CascadeSide("support", vad_model, args.hang, HttpSTT(nemo.url, model_id), llm.url, tts_a, SUPPORT_SYSTEM, TOOLS)
-        caller = CascadeSide("caller", vad_model2, args.hang, HttpSTT(nemo.url, model_id), llm.url, tts_b, CALLER_SYSTEM, None)
+        support = CascadeSide("support", vad_model, args.hang, stt, llm.url, tts_a, SUPPORT_SYSTEM, TOOLS)
+        caller = CascadeSide("caller", vad_model2, args.hang, stt, llm.url, tts_b, CALLER_SYSTEM, None)
         opener = tts_a.synth("Thanks for calling Fernhill Internet, this is Robin. How can I help you today?")
         support.messages.append({"role": "assistant", "content": "Thanks for calling Fernhill Internet, this is Robin. How can I help you today?"})
         res = run_call(support, caller, opener, tts_a.rate, args.turns, args.max_s, label)
@@ -385,6 +393,7 @@ def main() -> int:
     p.add_argument("--stt", default="parakeet")
     p.add_argument("--llm", default="lfm3-1.7b", choices=list(LLMS))
     p.add_argument("--tts", default="kokoro")
+    p.add_argument("--tts-caller", default=None)
     p.add_argument("--quant", default="q8")
     p.add_argument("--turns", type=int, default=12)
     p.add_argument("--max-s", type=float, default=180)

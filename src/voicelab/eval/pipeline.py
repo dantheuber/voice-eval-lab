@@ -25,6 +25,7 @@ from voicelab.eval.context import (
 from voicelab.eval.evaluators.audio_listening import AudioListeningEvaluator
 from voicelab.eval.evaluators.audio_quality import AudioQualityEvaluator
 from voicelab.eval.evaluators.caller_validity import CallerValidityEvaluator
+from voicelab.eval.evaluators.delivery import DeliveryEvaluator
 from voicelab.eval.evaluators.pronunciation import PronunciationEvaluator
 from voicelab.eval.evaluators.state import StateEvaluator
 from voicelab.eval.evaluators.timing import TimingEvaluator
@@ -59,6 +60,7 @@ def default_evaluators() -> list[Evaluator]:
         CallerValidityEvaluator(),
         PronunciationEvaluator(),
         AudioQualityEvaluator(),
+        DeliveryEvaluator(),  # before listening, so measurements can overrule the audio model
         AudioListeningEvaluator(),
     ]
 

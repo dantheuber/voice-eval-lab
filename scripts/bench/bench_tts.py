@@ -17,14 +17,14 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from common import BENCH, LFM_Q4, LFM_Q4_MM, LlamaServer, MODELS, critical_hits, save_result, wer
+from common import BENCH, LFM_Q4, LFM_Q4_MM, LlamaServer, critical_hits, save_result, wer
 from rt_client import write_pcm16
-from speech_backends import PARAKEET, HttpSTT, KokoroTTS, LfmTTS, NemoServer
+from speech_backends import KokoroTTS, open_stt
 
 OUT = BENCH / "out" / "tts"
 SENTENCES = [
-    ("invoice", "Your invoice number is F H dash 4 4 1 9 for forty nine dollars and ninety nine cents.", [r"f h (dash )?4 4 1 9", r"49 dollars and 99 cents|49 99"]),
-    ("invoice-digits", "Your invoice FH-4419 for $49.99 was charged on March 14th.", [r"f h (dash )?4 4 1 9", r"49 dollars and 99 cents|49 99", r"march 14"]),
+    ("invoice", "Your invoice number is F H dash 4 4 1 9 for forty nine dollars and ninety nine cents.", [r"f ?h (dash )?4 4 1 9", r"49 dollars and 99 cents|49 99"]),
+    ("invoice-digits", "Your invoice FH-4419 for $49.99 was charged on March 14th.", [r"f ?h (dash )?4 4 1 9", r"49 dollars and 99 cents|49 99", r"march 14"]),
     ("mx", "Update your MX records and check IMAP settings at mail dot fernhill dot example.", [r"\bmx\b", r"\bimap\b", r"fernhill"]),
     ("url", "You can renew it at fernhill.example/ssl, or email help@fernhill.example.", [r"fernhill", r"\bssl\b", r"help"]),
     ("short", "Thanks for calling Fernhill Internet. How can I help you today?", [r"fernhill", r"help"]),
@@ -94,7 +94,7 @@ class Phonon:
 
 
 class Pocket:
-    def __init__(self, language=None, voice="alba", threads=None):
+    def __init__(self, language=None, voice="marius", threads=None):
         import torch
         from pocket_tts import TTSModel
         if threads:
@@ -140,8 +140,8 @@ def score() -> int:
     import subprocess
     table = {sid: (text, crit) for sid, text, crit in SENTENCES}
     results = {}
-    with NemoServer(PARAKEET, "vulkan:0") as nemo:
-        stt = HttpSTT(nemo.url, httpx.get(nemo.url + "/v1/models").json()["data"][0]["id"])
+    stt, servers = open_stt("qwen-asr")
+    try:
         for d in sorted(OUT.iterdir()):
             rows = []
             for wav in sorted(d.glob("*-0.wav")):
@@ -160,6 +160,9 @@ def score() -> int:
                 for r in rows:
                     if r["missed"]:
                         print(f"     {r['id']}: missed {r['missed']} heard {r['heard'][:110]!r}", flush=True)
+    finally:
+        for srv in servers:
+            srv.__exit__(None, None, None)
     save_result("tts-score", results)
     return 0
 

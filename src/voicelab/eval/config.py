@@ -43,6 +43,36 @@ class AudioQualityConfig(BaseModel):
     low_mos: float = 3.0
 
 
+class DeliveryConfig(BaseModel):
+    """Limits for how speech was delivered, checked as fixed ranges and against the call's median.
+
+    Ranges come from 21 real clips, 12 TTS and 9 human, wideband and through the phone line, with
+    the benchmark's planted defects. They are still only that: nobody has rated them by ear.
+    """
+
+    min_wpm: float = 125.0
+    max_wpm: float = 250.0
+    rate_median_ratio: float = 1.35  # rushed or dragging against the call's own pace
+    min_words: int = 4  # shorter utterances can't give a meaningful rate
+    min_rate_speech_s: float = 1.0
+    pause_s: float = 0.3  # shorter gaps count as speaking
+    max_pause_ratio: float = 0.45  # share of an utterance spent in pauses
+    min_pauses: int = 3
+    chop_min_s: float = 0.02
+    chop_max_s: float = 0.3
+    chop_cliff_db: float = 35.0
+    min_chops: int = 2
+    robotic_iqr_st: float = 0.5
+    monotone_iqr_st: float = 1.5
+    pitch_median_ratio: float = 0.5  # flatter than this share of the call's own movement
+    min_voiced_s: float = 0.6
+    min_snr_db: float = 15.0
+    snr_median_drop_db: float = 8.0
+    abrupt_edge_ms: float = 9.0
+    min_utterances_for_median: int = 3
+    max_findings_per_kind: int = 5
+
+
 class ListeningConfig(BaseModel):
     max_clips: int = 6
     min_samples: int = 2  # ordinary clips always heard, however many were flagged
@@ -111,6 +141,7 @@ class EvalConfig(BaseModel):
     timing: TimingConfig = Field(default_factory=TimingConfig)
     pronunciation: PronunciationConfig = Field(default_factory=PronunciationConfig)
     audio_quality: AudioQualityConfig = Field(default_factory=AudioQualityConfig)
+    delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)
     listening: ListeningConfig = Field(default_factory=ListeningConfig)
     verdict: VerdictConfig = Field(default_factory=VerdictConfig)
     general_criteria: list[GeneralCriterion] = Field(default_factory=_general_criteria)

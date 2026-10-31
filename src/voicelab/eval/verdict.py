@@ -19,6 +19,7 @@ MATERIAL_FACT_BREACH = "material_fact_breach"
 
 _BLOCKING_SEVERITIES = ("major", "critical")
 _MAX_LISTED = 5
+_MAX_DISAGREEMENTS = 3
 
 
 @dataclass
@@ -135,6 +136,11 @@ def write_summary(
     unchecked = unchecked_items(artifact, evaluators)
     if unchecked:
         lines.append("Not checked: " + "; ".join(unchecked) + ".")
+    disagreements = [d for r in evaluators for d in r.metrics.get("disagreements") or []]
+    if disagreements:
+        examples = " ".join(d["note"] for d in disagreements[:_MAX_DISAGREEMENTS])
+        count = len(disagreements)
+        lines.append(f"Measurements overruled the audio model {count} time(s). {examples}")
     limitation = next(
         (r.metrics["limitation"] for r in evaluators if "limitation" in r.metrics), None
     )

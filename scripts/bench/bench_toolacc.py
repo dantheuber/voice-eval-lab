@@ -11,14 +11,12 @@ import json
 import re
 import sys
 
-import httpx
-
 from bench_e2e import LLMS, llm_args
 from common import BENCH, RESULTS, LlamaServer, save_result
 from fernhill_fixture import SUPPORT_SYSTEM, TOOLS, tool_message
 from llm_client import chat
 from rt_client import read_pcm16
-from speech_backends import PARAKEET, HttpSTT, NemoServer
+from speech_backends import open_stt
 
 GARBAGE = re.compile(r"</?(tool_call|function|parameter)|\[customer_id\]|\[.*_id\]")
 CALLER = {c["id"]: c for c in json.loads((BENCH / "caller.json").read_text())}
@@ -38,10 +36,11 @@ def score_run(calls: list[dict], malformed: int) -> dict:
 
 
 def cascade(args) -> None:
-    with NemoServer(PARAKEET, "vulkan:0") as nemo:
-        stt = HttpSTT(nemo.url, httpx.get(nemo.url + "/v1/models").json()["data"][0]["id"])
-        heard = {c: stt.transcribe(read_pcm16(CALLER[c][args.cond])) for c in ("caller-lookup", "caller-refund")}
-        print(heard, flush=True)
+    stt, servers = open_stt(args.stt)
+    heard = {c: stt.transcribe(read_pcm16(CALLER[c][args.cond])) for c in ("caller-lookup", "caller-refund")}
+    for srv in servers:
+        srv.__exit__(None, None, None)
+    print(heard, flush=True)
     for name in args.models:
         if not LLMS[name][0].exists():
             print(f"{name}: not downloaded", flush=True)
@@ -66,8 +65,8 @@ def cascade(args) -> None:
                             calls.append({"name": c["name"], "args": c["args"]})
                             msgs.append(tool_message(c["id"] or f"c{i}", c["name"], c["args"]))
                 runs.append({"rep": rep, "calls": calls, "malformed": malformed, **score_run(calls, malformed)})
-        out = {"llm": name, "cond": args.cond, "heard": heard, "runs": runs}
-        save_result(f"toolacc-cascade-{name}-{args.cond}", out)
+        out = {"llm": name, "stt": args.stt, "cond": args.cond, "heard": heard, "runs": runs}
+        save_result(f"toolacc-cascade-{args.stt}-{name}-{args.cond}", out)
         print(f"{name}: lookup {sum(r['lookup_ok'] for r in runs)}/{len(runs)} invoices {sum(r['invoices_ok'] for r in runs)}/{sum(r['n_invoice_calls'] > 0 for r in runs)} refund {sum(r['refund_ok'] for r in runs)}/{len(runs)} malformed {sum(r['malformed'] for r in runs)} garbage {sum(r['garbage'] for r in runs)}", flush=True)
         print("   sample:", [(c["name"], c["args"]) for c in runs[0]["calls"]], flush=True)
 
@@ -82,7 +81,7 @@ def score() -> None:
     for f in sorted(RESULTS.glob("toolacc-cascade-*.json")):
         d = json.loads(f.read_text())
         r = d["runs"]
-        print(f"{d['llm']} ({d['cond']}): lookup {sum(x['lookup_ok'] for x in r)}/{len(r)} invoices {sum(x['invoices_ok'] for x in r)}/{sum(x['n_invoice_calls'] > 0 for x in r)} refund {sum(x['refund_ok'] for x in r)}/{len(r)} malformed {sum(x['malformed'] for x in r)} garbage {sum(x['garbage'] for x in r)} calls {sum(x['n_calls'] for x in r)}")
+        print(f"{d.get('stt', 'parakeet')}+{d['llm']} ({d['cond']}): lookup {sum(x['lookup_ok'] for x in r)}/{len(r)} invoices {sum(x['invoices_ok'] for x in r)}/{sum(x['n_invoice_calls'] > 0 for x in r)} refund {sum(x['refund_ok'] for x in r)}/{len(r)} malformed {sum(x['malformed'] for x in r)} garbage {sum(x['garbage'] for x in r)} calls {sum(x['n_calls'] for x in r)}")
 
 
 def main() -> int:
@@ -91,6 +90,7 @@ def main() -> int:
     p.add_argument("models", nargs="*", default=["lfm3-1.7b", "qwen3.5-4b"])
     p.add_argument("--reps", type=int, default=12)
     p.add_argument("--cond", default="tel")
+    p.add_argument("--stt", default="parakeet")
     args = p.parse_args()
     cascade(args) if args.mode == "cascade" else score()
     return 0

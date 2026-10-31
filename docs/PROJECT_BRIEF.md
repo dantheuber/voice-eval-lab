@@ -95,7 +95,8 @@ Evaluators produce findings with a timestamp, severity, evidence, and clip. Plan
 - **Timing:** response latency, overlap, dead air, barge-in reaction time
 - **Pronunciation:** intended text vs independent ASR of the audio, weighted to critical tokens (names, numbers, amounts, URLs, acronyms), plus a lexicon. Run ASR without domain hints, which can hide mispronunciation.
 - **Audio quality:** clipping, loudness, silence, a MOS predictor, compared against a baseline
-- **Audio listening:** an audio-capable model listens to clips for tone and odd delivery. Advisory only. Research shows these models agree with humans less than 80% of the time, so this flags clips for review and never fails a call on its own.
+- **Delivery:** deterministic measurements per utterance, in numpy with no model: speaking rate, pauses, mid-word chops, pitch movement, SNR, and abrupt edges, checked against fixed ranges and the call's own median. Advisory only. Added because LFM3-Audio missed all 5 planted defects in the listener benchmark. On 21 real clips with the same defects, wideband and through the phone line, it caught 105 of 105 within a call and 95 of 105 on fixed limits alone, with 1 false flag on the 21 clean clips (a plosive read as an abrupt onset). The limits have not been checked against listener ratings.
+- **Audio listening:** an audio-capable model listens to clips for tone and odd delivery. Advisory only. Research shows these models agree with humans less than 80% of the time, so this flags clips for review and never fails a call on its own. Where it contradicts the delivery measurements, the measurements win and the summary says so.
 
 Each call ends as `pass`, `fail`, `needs_review`, or `invalid`. Humans confirm or dismiss findings in the dashboard, and those verdicts are stored for judge calibration.
 

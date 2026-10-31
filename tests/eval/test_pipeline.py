@@ -2,7 +2,7 @@ import json
 
 import numpy as np
 import pytest
-from evalfakes import FakeAnalyst, FakeLLM, FakeSTT, verdict_json, write_call
+from evalfakes import RATE, FakeAnalyst, FakeLLM, FakeSTT, synth_voice, verdict_json, write_call
 from evalfakes import transcript as make_transcript
 
 from voicelab.core.audio import AudioClip
@@ -108,14 +108,28 @@ def friendly_judge() -> FakeLLM:
 SPANS = {"caller": [(0.0, 4.0)], "bot": [(4.5, 7.5)], "duration_s": 9.0}
 
 
+def voiced_call(store, artifact):
+    """The same call with speech-like audio. `delivery` rightly finds pure tones robotic."""
+    artifact.duration_s = SPANS["duration_s"]
+    silence = np.zeros(round(artifact.duration_s * RATE), dtype=np.float32)
+    caller, bot = silence.copy(), silence.copy()
+    words = synth_voice(9, seed=1)
+    caller[: len(words)] = words
+    reply = synth_voice(8, seed=2)
+    start = round(4.5 * RATE)
+    bot[start : start + len(reply)] = reply
+    clips = AudioClip.from_samples(caller, RATE), AudioClip.from_samples(bot, RATE)
+    return artifact, store.write_call(artifact, *clips)
+
+
 async def test_full_pipeline_on_a_synthetic_call_passes(store):
-    artifact, paths = write_call(store, scripted_call(), **SPANS)
+    artifact, paths = voiced_call(store, scripted_call())
     deps = EvalDeps(stt=stt(), judge=friendly_judge(), analyst=FakeAnalyst())
     result = await run_evaluation(artifact, paths, deps)
     assert result.call_id == artifact.id
     assert result.verdict == Verdict.PASS, result.summary
     assert [r.name for r in result.evaluators] == [e.name for e in default_evaluators()]
-    assert [r.status for r in result.evaluators] == ["ok"] * 8
+    assert [r.status for r in result.evaluators] == ["ok"] * 9
     assert {c.kind for c in result.criteria} == {"must", "must_not", "general", "beat", "state"}
     assert result.summary.startswith("Verdict: pass.")
     assert all(r.duration_s >= 0 for r in result.evaluators)
@@ -237,6 +251,7 @@ async def test_no_models_at_all_still_gives_a_result(store):
         "caller_validity": "skipped",
         "pronunciation": "skipped",
         "audio_quality": "ok",
+        "delivery": "ok",
         "audio_listening": "skipped",
     }
     assert result.verdict == Verdict.NEEDS_REVIEW
@@ -306,7 +321,7 @@ async def test_advisory_listening_alone_cannot_fail_a_call(store):
 
 async def test_upload_with_no_scenario_reports_what_it_could_not_check(store):
     artifact = CallArtifact(mode=CallMode.UPLOAD, has_tool_log=False, has_intended_text=False)
-    artifact, paths = write_call(store, artifact, **SPANS)
+    artifact, paths = voiced_call(store, artifact)
     deps = EvalDeps(stt=stt(), judge=FakeLLM(), analyst=FakeAnalyst())
     result = await run_evaluation(artifact, paths, deps)
     assert result.verdict == Verdict.PASS

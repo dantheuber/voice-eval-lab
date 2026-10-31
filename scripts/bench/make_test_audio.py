@@ -22,15 +22,15 @@ from common import BENCH, FFMPEG, MODELS
 
 HARD = [
     {"id": "hard-invoice", "text": "Your invoice number is F H dash 4 4 1 9 for forty nine dollars and ninety nine cents.",
-     "critical": [r"f h (dash )?4 4 1 9", r"49 dollars and 99 cents|49 99"]},
+     "critical": [r"f ?h (dash )?4 4 1 9", r"49 dollars and 99 cents|49 99"]},
     {"id": "hard-mx", "text": "Update your MX records and check IMAP settings at mail dot fernhill dot example.",
      "critical": [r"\bmx\b", r"\bimap\b", r"mail dot fernhill dot example"]},
     {"id": "hard-refund", "text": "I have issued a refund of one hundred twenty dollars to the card ending in 7 3 0 2.",
-     "critical": [r"(1 ?20|120|1 2 0|100 20) dollars", r"7 3 0 2"]},
+     "critical": [r"1 2 0 dollars", r"7 3 0 2"]},
     {"id": "hard-ssl", "text": "Your SSL certificate for example dash shop dot net expires on March 14th, so renew it through the DNS panel.",
      "critical": [r"\bssl\b", r"example (dash )?shop dot net", r"march 14", r"\bdns\b"]},
     {"id": "hard-account", "text": "My account number is A C 9 0 7 7 and my email is dana dot reyes at fernhill mail dot example.",
-     "critical": [r"a c 9 0 7 7", r"dana dot reyes", r"fernhill ?mail dot example"]},
+     "critical": [r"a ?c 9 0 7 7", r"dana dot reyes", r"fernhill ?mail dot example"]},
     {"id": "hard-angry", "text": "I was charged twice last month and nobody has called me back. I want this fixed today.",
      "critical": [r"charged twice", r"fixed today"]},
 ]

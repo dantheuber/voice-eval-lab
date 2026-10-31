@@ -6,11 +6,39 @@ import json
 import statistics as st
 from pathlib import Path
 
-from common import RESULTS
+from common import BENCH, RESULTS, critical_hits, wer
+
+
+MANIFEST = {m["id"]: m for m in json.loads((BENCH / "manifest.json").read_text())}
+
+
+def rescore(row: dict) -> dict:
+    """Recomputes WER and critical hits from the saved transcript, so scoring fixes do not need a rerun."""
+    m = MANIFEST[row["id"]]
+    if m["text"]:
+        row["wer"] = wer(m["text"], row["text"])
+    if m["critical"]:
+        row["crit_hits"], row["crit_total"], row["crit_missed"] = critical_hits(row["text"], m["critical"])
+    return row
 
 
 def load(pattern: str) -> dict:
-    return {Path(p).stem: json.loads(Path(p).read_text()) for p in sorted(glob.glob(str(RESULTS / f"{pattern}.json")))}
+    out = {Path(p).stem: json.loads(Path(p).read_text()) for p in sorted(glob.glob(str(RESULTS / f"{pattern}.json")))}
+    for d in out.values():
+        for key in ("rows", "asr"):
+            if key in d:
+                d[key] = [rescore(r) for r in d[key]]
+    return out
+
+
+def asr_summary(rows: list[dict], cond: str) -> dict:
+    cur = [r for r in rows if r["cond"] == cond]
+    sc = [r for r in cur if "wer" in r]
+    cr = [r for r in sc if "crit_total" in r]
+    longs = [r for r in cur if r["id"] == "long30"]
+    return {"rtf": st.median(r["rtf"] for r in cur), "ms": 1000 * st.median(r["secs"] for r in cur), "rtf30": longs[0]["rtf"] if longs else None,
+            "wer_human": st.mean(r["wer"] for r in sc if r["kind"] == "human"), "wer_hard": st.mean(r["wer"] for r in sc if r["kind"] == "synth-hard"),
+            "critical": f"{sum(r['crit_hits'] for r in cr)}/{sum(r['crit_total'] for r in cr)}"}
 
 
 def table(head: list[str], rows: list[list]) -> None:
@@ -29,20 +57,14 @@ def stt() -> None:
     rows = []
     for name, d in load("stt-*").items():
         if "error" in d:
-            rows.append([d["engine"], "failed", d["error"][:80], "", "", "", "", "", ""])
+            rows.append([d["engine"], "failed", d["error"][:80]] + [""] * 8)
             continue
-        c, t = d["summary"]["clean"], d["summary"]["tel"]
-        rows.append([d["engine"], f(c["rtf_median"], 1), f(c["rtf_30s"], 1), f(c["wer_human"], 3), f(t["wer_human"], 3), f(c["wer_hard"], 3), f(t["wer_hard"], 3), c["critical"], t["critical"], f(d.get("gpu_gb"), 1)])
+        c, t = asr_summary(d["rows"], "clean"), asr_summary(d["rows"], "tel")
+        rows.append([d["engine"], f(c["rtf"], 1), f(c["ms"], 0), f(c["rtf30"], 1), f(c["wer_human"], 3), f(t["wer_human"], 3), f(c["wer_hard"], 3), f(t["wer_hard"], 3), c["critical"], t["critical"], f(d.get("gpu_gb"), 1)])
     for name, d in load("lfm-asr-tts-*").items():
-        c = d["asr"]
-        def s(cond):
-            r = [x for x in c if x["cond"] == cond and "wer" in x]
-            cr = [x for x in r if "crit_total" in x]
-            return (st.mean(x["wer"] for x in r if x["kind"] == "human"), st.mean(x["wer"] for x in r if x["kind"] == "synth-hard"), f"{sum(x['crit_hits'] for x in cr)}/{sum(x['crit_total'] for x in cr)}")
-        cl, te = s("clean"), s("tel")
-        long_ = [x for x in c if x["id"] == "long30" and x["cond"] == "clean"]
-        rows.append([f"lfm3-audio {d['config']}", f(st.median(x["rtf"] for x in c if x["cond"] == "clean"), 1), f(long_[0]["rtf"] if long_ else None, 1), f(cl[0], 3), f(te[0], 3), f(cl[1], 3), f(te[1], 3), cl[2], te[2], f(d.get("gpu_gb"), 1)])
-    table(["Engine", "Median RTF", "30 s clip RTF", "WER human clean", "WER human tel", "WER hard clean", "WER hard tel", "Critical clean", "Critical tel", "GPU GB"], rows)
+        c, t = asr_summary(d["asr"], "clean"), asr_summary(d["asr"], "tel")
+        rows.append([f"lfm3-audio {d['config']}", f(c["rtf"], 1), f(c["ms"], 0), f(c["rtf30"], 1), f(c["wer_human"], 3), f(t["wer_human"], 3), f(c["wer_hard"], 3), f(t["wer_hard"], 3), c["critical"], t["critical"], f(d.get("gpu_gb"), 1)])
+    table(["Engine", "Median RTF", "Median ms", "30 s clip RTF", "WER human clean", "WER human tel", "WER hard clean", "WER hard tel", "Critical clean", "Critical tel", "GPU GB"], rows)
 
 
 def tts() -> None:
