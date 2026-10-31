@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from difflib import SequenceMatcher
+from itertools import pairwise
 from typing import Literal
 
 from voicelab.core.models import (
@@ -229,12 +229,11 @@ def _misheard_number(evidence: list[Evidence], ctx: EvalContext) -> str | None:
         if said is None:
             continue
         meant, heard = ctx.index.norms(said.intended_text), ctx.index.norms(item.quote)
-        # In place, because "two" elsewhere in the turn says nothing about this word.
-        steps = SequenceMatcher(a=meant, b=heard, autojunk=False).get_opcodes()
-        changed = [heard[j] for tag, _, _, j1, j2 in steps if tag != "equal" for j in range(j1, j2)]
-        wrong = [norm for norm in changed if norm.isdigit()]
-        if wrong:
-            return f"The transcript has {wrong[0]} where the bot meant to say something else."
+        # By the word before it, because "two" elsewhere in the turn says nothing about this one.
+        for before, norm in pairwise(heard):
+            meant_here = [after for word, after in pairwise(meant) if word == before]
+            if norm.isdigit() and meant_here and norm not in meant_here:
+                return f"The transcript has {norm} where the bot meant to say {meant_here[0]}."
     return None
 
 

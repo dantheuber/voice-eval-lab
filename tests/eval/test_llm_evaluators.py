@@ -139,7 +139,7 @@ async def test_a_number_the_bot_never_meant_to_say_goes_to_a_person(store):
     out = await run(TranscriptJudgeEvaluator(), ctx)
     result = by_id(out, "general_no_invented_facts")
     assert result.status == "unknown"
-    assert "has 2 where the bot meant" in result.reason
+    assert "has 2 where the bot meant to say" in result.reason
 
 
 async def test_the_same_digit_elsewhere_in_the_turn_doesnt_hide_a_slip(store):
