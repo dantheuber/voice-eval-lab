@@ -36,7 +36,7 @@ export function SettingsScreen() {
           <div className="actions"><Button onClick={() => bench.mutate()} disabled={bench.isPending}>Run benchmark</Button><Button onClick={() => { if (confirm("Restart all model servers? Running calls will fail.")) restartAll.mutate(); }}>Restart all servers</Button></div></div>
         <div className="cols-main-side">
           <div className="stack">
-            <Panel flush title="Active profile" meta={active ? <>{active.configPath} · {active.liveCapable ? "live mode ok" : "turn-based only"}{active.benchmark ? `, bot reply p50 ${active.benchmark.botReplyP50S} s, benchmark ${fmtWhen(active.benchmark.at)}` : ", no benchmark yet"}</> : ""}
+            <Panel flush title="Active profile" meta={active ? <>{active.configPath} · {active.liveCapable ? "live mode ok" : "turn-based only"}{active.benchmark ? `, models alone answer in ${active.benchmark.botReplyP50S} s, before voice detection and turn waits, benchmark ${fmtWhen(active.benchmark.at)}` : ", no benchmark yet"}</> : ""}
               actions={<select className="in" style={{ width: "auto", height: 26 }} value={profiles.data?.activeId ?? ""} onChange={(e) => setProfile.mutate(e.target.value)} aria-label="Active profile">{profiles.data?.items.map((p) => <option key={p.id} value={p.id}>{p.label}{p.untested ? " (untested)" : ""}</option>)}</select>}>
               <div style={{ overflow: "auto" }}>
                 <QueryState q={roles} what="roles" skeleton={<div style={{ padding: 12 }}><Skeleton rows={8} /></div>}>
