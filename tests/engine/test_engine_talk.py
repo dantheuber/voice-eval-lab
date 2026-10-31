@@ -187,8 +187,9 @@ async def test_talking_over_the_bot_stops_it_and_leaves_only_what_was_played(sto
 
     caller = utterances(artifact, Speaker.CALLER)[0]
     assert caller.heard_text == "Hold on please." and caller.intended_text is None
-    history = [m for m in support.requests[0] if m.role == "assistant"]
-    assert history[-1].content == greeting.spoken_text
+    # The greeting was cut mid-sentence, so its words reach the model in the caller's next turn.
+    caller_turn = next(m for m in session.brain.support.messages if "Hold on please." in m.content)
+    assert greeting.spoken_text in caller_turn.content
     assert utterances(artifact, Speaker.BOT)[1].intended_text == "All right."
 
 

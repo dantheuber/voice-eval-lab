@@ -615,7 +615,10 @@ async def test_interruption_leaves_earlier_turns_alone(db):
 async def test_interrupting_the_greeting(db):
     bot, _, _ = make_bot(db)
     bot.on_interrupted("Thanks for calling")
-    assert (bot.messages[-1].role, bot.messages[-1].content) == ("user", "(The phone rings and you answer.)")
+    assert (bot.messages[-1].role, bot.messages[-1].content) == (
+        "user",
+        "(The phone rings and you answer.)",
+    )
 
 
 async def test_abandoned_stream_keeps_what_was_yielded_and_closes_the_llm(db):
