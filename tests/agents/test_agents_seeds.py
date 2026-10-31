@@ -324,3 +324,17 @@ async def test_a_scripted_call_meets_a_seeded_scenario():
 
 def test_load_scenarios_returns_models():
     assert all(isinstance(item, Scenario) for item in load_scenarios().values())
+
+
+def test_a_rule_cannot_depend_on_a_beat_the_scenario_lacks():
+    seed = load_scenarios()["scn_dns_mx_fix"]
+    rule = seed.must[0].model_copy(update={"needs_beat": "no_such_beat"})
+    broken = seed.model_copy(update={"must": [rule]})
+    assert "needs beat no_such_beat" in " ".join(scenario_problems(broken))
+
+
+def test_every_seed_rule_says_which_beat_it_depends_on():
+    """Without a link, any missed beat excuses the rule, so a real failure could read as invalid."""
+    for scenario in load_scenarios().values():
+        expected = [*scenario.must, *(e for e in scenario.expected_state if e.op != "no_change")]
+        assert [r.id for r in expected if r.needs_beat is None] == [], scenario.id

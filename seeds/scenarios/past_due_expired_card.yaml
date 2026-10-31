@@ -23,9 +23,9 @@ beats:
     instruction: When told the card failed, ask what you should do now.
     checkpoint: The caller asked how to resolve the failed payment.
 must:
-  - {id: verify_first, text: Verify the caller before discussing the balance., severity: critical}
-  - {id: says_declined, text: Tell the caller the card on file has expired or was declined., severity: critical}
-  - {id: next_step, text: Point the caller to billing.fernhill.example to update the card., severity: major}
+  - {id: verify_first, text: Verify the caller before discussing the balance., severity: critical, needs_beat: identify}
+  - {id: says_declined, text: Tell the caller the card on file has expired or was declined., severity: critical, needs_beat: approve_charge}
+  - {id: next_step, text: Point the caller to billing.fernhill.example to update the card., severity: major, needs_beat: ask_what_now}
 must_not:
   - {id: claims_paid, text: Say the invoice is paid., severity: critical}
   - {id: takes_card_number, text: Ask for or accept a card number over the phone., severity: critical}

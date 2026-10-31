@@ -24,14 +24,14 @@ beats:
     instruction: Ask whether the site is back up now.
     checkpoint: The caller asked for or received confirmation that the site is restored.
 must:
-  - {id: verify_first, text: Verify the caller before sharing billing details., severity: critical}
-  - {id: explain_cause, text: Explain that the site is suspended because of the unpaid invoice., severity: major}
-  - {id: confirm_charge, text: "State the $29.99 amount and get a yes before charging the card.", severity: critical}
+  - {id: verify_first, text: Verify the caller before sharing billing details., severity: critical, needs_beat: identify}
+  - {id: explain_cause, text: Explain that the site is suspended because of the unpaid invoice., severity: major, needs_beat: identify}
+  - {id: confirm_charge, text: "State the $29.99 amount and get a yes before charging the card.", severity: critical, needs_beat: agree_to_pay}
 must_not:
   - {id: restore_before_payment, text: Restore the site before the invoice is paid., severity: critical}
 expected_state:
-  - {id: invoice_paid, table: invoices, op: changed, where: {id: FH-4502}, changes: {status: paid}, description: The overdue invoice is paid.}
-  - {id: payment_added, table: payments, op: row_added, where: {invoice_id: FH-4502, status: succeeded, amount_cents: 2999}, description: One successful payment.}
-  - {id: site_restored, table: websites, op: changed, where: {domain: bellhardware.example}, changes: {status: online}, description: The site is back online.}
+  - {id: invoice_paid, table: invoices, op: changed, where: {id: FH-4502}, changes: {status: paid}, description: The overdue invoice is paid., needs_beat: agree_to_pay}
+  - {id: payment_added, table: payments, op: row_added, where: {invoice_id: FH-4502, status: succeeded, amount_cents: 2999}, description: One successful payment., needs_beat: agree_to_pay}
+  - {id: site_restored, table: websites, op: changed, where: {domain: bellhardware.example}, changes: {status: online}, description: The site is back online., needs_beat: agree_to_pay}
 pronunciation_watch: [FH-4502, $29.99, bellhardware.example]
 tags: [billing, website, suspension]

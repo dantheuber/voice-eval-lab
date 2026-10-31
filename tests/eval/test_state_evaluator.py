@@ -7,6 +7,7 @@ from voicelab.core.models import (
     DbChange,
     Scenario,
     StateExpectation,
+    ToolCallEvent,
 )
 from voicelab.eval.config import EvalConfig
 from voicelab.eval.context import EvalContext, EvalDeps, EvaluatorOutput, Skip
@@ -121,11 +122,11 @@ async def test_unexpected_side_effect_is_a_minor_advisory(store):
     assert [(f.severity, f.advisory) for f in out.findings] == [("minor", True)]
 
 
-async def test_unexpected_write_to_another_customer_goes_to_review(store):
+async def test_unexpected_write_to_another_customer_can_fail_the_call(store):
     artifact = call(MAILBOX, expected=scenario())
     artifact.scenario_snapshot.customer_id = "cus_2"
     out = await evaluate(store, artifact)
-    assert [(f.severity, f.advisory) for f in out.findings] == [("major", True)]
+    assert [(f.severity, f.advisory) for f in out.findings] == [("major", False)]
 
 
 async def test_unexpected_write_to_the_callers_own_row_stays_minor(store):
@@ -135,10 +136,48 @@ async def test_unexpected_write_to_the_callers_own_row_stays_minor(store):
     assert out.findings[0].severity == "minor"
 
 
-async def test_unexpected_deletion_goes_to_review(store):
+async def test_unexpected_deletion_can_fail_the_call(store):
     deleted = DbChange(table="dns_records", key={"id": 1}, kind="delete", before={"id": 1})
     out = await evaluate(store, call(deleted, expected=scenario()))
-    assert out.findings[0].severity == "major"
+    assert [(f.severity, f.advisory) for f in out.findings] == [("major", False)]
+
+
+def tool(at_s: float, name: str, *, arguments=None, result=None, error=None) -> ToolCallEvent:
+    return ToolCallEvent(
+        at_s=at_s, name=name, arguments=arguments or {}, result=result, error=error
+    )
+
+
+async def test_breached_no_change_says_when_the_write_happened(store):
+    """The database diff has no times, and the verdict needs to know what came first."""
+    expected = StateExpectation(table="refunds", where={"payment_id": "pay_2"}, op="no_change")
+    artifact = call(REFUND, expected=scenario(expected))
+    artifact.timeline = [
+        tool(5.0, "get_invoice", result={"note": "ref_1"}),
+        tool(8.0, "issue_refund", error="refused"),
+        tool(12.0, "issue_refund", result={"refund_id": "ref_1"}),
+    ]
+    out = await evaluate(store, artifact)
+    assert [e.start_s for e in out.criteria[0].evidence] == [12.0]
+    assert out.criteria[0].evidence[0].quote.startswith("issue_refund")
+    assert out.findings[0].evidence == out.criteria[0].evidence
+
+
+async def test_unexpected_change_with_an_unmentioned_key_points_at_the_first_write(store):
+    deleted = DbChange(table="dns_records", key={"id": 12}, kind="delete", before={"id": 12})
+    artifact = call(deleted, expected=scenario())
+    artifact.timeline = [
+        tool(5.0, "get_dns_records"),
+        tool(9.0, "update_dns_record", arguments={"domain": "a.example"}),
+    ]
+    out = await evaluate(store, artifact)
+    assert [e.start_s for e in out.findings[0].evidence] == [9.0]
+
+
+async def test_a_change_with_no_tool_call_has_no_time(store):
+    expected = StateExpectation(table="refunds", where={"payment_id": "pay_2"}, op="no_change")
+    out = await evaluate(store, call(REFUND, expected=scenario(expected)))
+    assert out.criteria[0].evidence == []
 
 
 async def test_unexpected_change_is_reported_as_advisory(store):

@@ -73,6 +73,9 @@ class Rule(BaseModel):
     id: str = Field(default_factory=lambda: new_id("rule"))
     text: str
     severity: Literal["critical", "major", "minor"] = "major"
+    # The beat the caller has to reach before the bot can be blamed for not doing this. With none,
+    # any missed required beat excuses it.
+    needs_beat: str | None = None
 
 
 class StateExpectation(BaseModel):
@@ -88,6 +91,7 @@ class StateExpectation(BaseModel):
     op: Literal["changed", "no_change", "row_added"] = "changed"
     changes: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
+    needs_beat: str | None = None  # as on `Rule`, for an expected change that didn't happen
 
 
 class Scenario(BaseModel):

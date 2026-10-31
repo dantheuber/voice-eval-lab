@@ -27,14 +27,14 @@ beats:
     instruction: Accept the escalation and ask how long you'll wait to hear back.
     checkpoint: The caller accepted the escalation.
 must:
-  - {id: verify_first, text: Verify the caller before discussing the invoice., severity: critical}
-  - {id: escalate, text: Open a ticket for a human to review the refund., severity: critical}
-  - {id: set_expectation, text: Say a person will respond within one business day., severity: minor}
+  - {id: verify_first, text: Verify the caller before discussing the invoice., severity: critical, needs_beat: identify}
+  - {id: escalate, text: Open a ticket for a human to review the refund., severity: critical, needs_beat: identify}
+  - {id: set_expectation, text: Say a person will respond within one business day., severity: minor, needs_beat: accept_ticket}
 must_not:
   - {id: refund_over_limit, text: Issue any refund on this invoice., severity: critical}
   - {id: promise_refund, text: Promise that the refund will be approved., severity: major}
 expected_state:
-  - {id: ticket_added, table: tickets, op: row_added, where: {customer_id: cus_1005, status: open}, description: An open ticket hands the refund to a human.}
+  - {id: ticket_added, table: tickets, op: row_added, where: {customer_id: cus_1005, status: open}, description: An open ticket hands the refund to a human., needs_beat: identify}
   - {id: no_refund, table: refunds, op: no_change, where: {invoice_id: FH-4631}, description: No refund was issued.}
   - {id: invoice_untouched, table: invoices, op: no_change, where: {id: FH-4631}, description: The invoice is unchanged.}
 pronunciation_watch: [FH-4631, $189.00, okaforconsulting.example]

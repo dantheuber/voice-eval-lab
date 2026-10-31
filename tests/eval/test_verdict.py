@@ -6,8 +6,13 @@ from voicelab.core.models import (
     CallMode,
     CriterionResult,
     EvaluatorRun,
+    Evidence,
     Finding,
+    Rule,
     Scenario,
+    Speaker,
+    StateExpectation,
+    SystemEvent,
     Verdict,
 )
 from voicelab.eval.config import VerdictConfig
@@ -288,3 +293,257 @@ def test_non_material_slip_does_not_hide_a_bot_failure():
         findings=[breach_finding("fact_sheet_slip")],
     )
     assert decision.verdict == Verdict.FAIL
+
+
+# Commission and omission ------------------------------------------------------------------------
+
+REPORT = Beat(id="report", instruction="report the problem")
+APPROVE = Beat(id="approve", instruction="approve the fix")
+SAID_REFUND = Evidence(quote="the refund has been processed", speaker=Speaker.BOT, start_s=40.0)
+
+
+def linked_scenario() -> Scenario:
+    return Scenario(
+        title="t",
+        goal="g",
+        beats=[REPORT, APPROVE],
+        must=[
+            Rule(id="greet", text="greet the caller", needs_beat="report"),
+            Rule(id="fix", text="make the fix", needs_beat="approve"),
+            Rule(id="unlinked", text="be helpful"),
+        ],
+        must_not=[Rule(id="no_refund", text="issue a refund")],
+        expected_state=[
+            StateExpectation(id="done", table="t", changes={"x": 1}, needs_beat="approve"),
+            StateExpectation(id="keep", table="invoices", op="no_change", description="left alone"),
+        ],
+    )
+
+
+def linked(*events) -> CallArtifact:
+    return CallArtifact(
+        mode=CallMode.LIVE_BOTS, scenario_snapshot=linked_scenario(), timeline=list(events)
+    )
+
+
+def beat(beat_id: str, status: str) -> CriterionResult:
+    return criterion("beat", status, beat_id, f"beat {beat_id}")
+
+
+def must_not_failed(*evidence: Evidence) -> CriterionResult:
+    result = criterion("must_not", "fail", "no_refund", "issue a refund")
+    return result.model_copy(update={"evidence": list(evidence)})
+
+
+def no_change_failed(at_s: float | None = 30.0) -> CriterionResult:
+    evidence = [Evidence(quote="issue_refund", start_s=at_s)] if at_s is not None else []
+    result = criterion("state", "fail", "keep", "left alone")
+    return result.model_copy(update={"evidence": evidence})
+
+
+def serious_change() -> Finding:
+    return Finding(
+        evaluator="state",
+        category="unexpected_change",
+        severity="major",
+        title="Unexpected delete on invoices",
+    )
+
+
+def test_breached_no_change_fails_even_when_the_caller_missed_a_beat():
+    decision = decide(
+        linked(), criteria=[beat("report", "pass"), beat("approve", "fail"), no_change_failed()]
+    )
+    assert decision.verdict == Verdict.FAIL
+    assert "left alone" in decision.reasons[0]
+
+
+def test_serious_unexpected_change_fails_even_when_the_caller_missed_a_beat():
+    decision = decide(linked(), criteria=[beat("approve", "fail")], findings=[serious_change()])
+    assert decision.verdict == Verdict.FAIL
+    assert "Unexpected delete on invoices" in decision.reasons[0]
+
+
+def test_minor_unexpected_change_is_a_side_effect_not_a_failure():
+    side_effect = serious_change().model_copy(update={"severity": "minor", "advisory": True})
+    decision = decide(linked(), criteria=[beat("approve", "fail")], findings=[side_effect])
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_failed_must_not_with_a_verified_quote_fails_despite_a_missed_beat():
+    decision = decide(linked(), criteria=[beat("approve", "fail"), must_not_failed(SAID_REFUND)])
+    assert decision.verdict == Verdict.FAIL
+
+
+def test_failed_must_not_without_evidence_is_not_a_proven_commission():
+    decision = decide(linked(), criteria=[beat("approve", "fail"), must_not_failed()])
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_omission_after_a_reached_beat_is_a_bot_failure():
+    decision = decide(
+        linked(),
+        criteria=[
+            beat("report", "pass"),
+            beat("approve", "pass"),
+            criterion("must", "fail", "fix", "make the fix"),
+        ],
+    )
+    assert decision.verdict == Verdict.FAIL
+    assert "failed must: make the fix" in decision.reasons
+
+
+def test_omission_before_a_missed_beat_is_a_bot_failure():
+    """The caller did reach what this rule depends on, so a later miss doesn't excuse it."""
+    decision = decide(
+        linked(),
+        criteria=[
+            beat("report", "pass"),
+            beat("approve", "fail"),
+            criterion("must", "fail", "greet", "greet the caller"),
+        ],
+    )
+    assert decision.verdict == Verdict.FAIL
+    assert "failed must: greet the caller" in decision.reasons
+
+
+def test_omission_of_an_unreached_beat_is_invalid_and_says_why():
+    decision = decide(
+        linked(),
+        criteria=[
+            beat("report", "pass"),
+            beat("approve", "fail"),
+            criterion("must", "fail", "fix", "make the fix"),
+            criterion("state", "fail", "done", "the row changed"),
+        ],
+    )
+    assert decision.verdict == Verdict.INVALID
+    assert any("beat approve" in reason for reason in decision.reasons)
+    excused = next(reason for reason in decision.reasons if "not counted against" in reason)
+    assert "make the fix" in excused and "the row changed" in excused
+
+
+def test_rule_with_no_link_is_excused_by_any_missed_required_beat():
+    decision = decide(
+        linked(),
+        criteria=[beat("approve", "fail"), criterion("must", "fail", "unlinked", "be helpful")],
+    )
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_omission_with_an_undecided_beat_goes_to_review():
+    decision = decide(
+        linked(),
+        criteria=[
+            PASSED,
+            beat("report", "pass"),
+            beat("approve", "unknown"),
+            criterion("must", "fail", "fix", "make the fix"),
+        ],
+    )
+    assert decision.verdict == Verdict.NEEDS_REVIEW
+
+
+def test_call_with_no_beat_results_still_blames_the_bot():
+    """A human caller has no script, so every failed rule stands."""
+    artifact = linked()
+    artifact.mode = CallMode.HUMAN
+    decision = decide(artifact, criteria=[criterion("must", "fail", "fix", "make the fix")])
+    assert decision.verdict == Verdict.FAIL
+
+
+def test_rule_links_are_kept_apart_by_kind():
+    """A state expectation and a rule can share an id, and each has its own link."""
+    scenario = linked_scenario()
+    scenario.must = [Rule(id="done", text="say it's done", needs_beat="report")]
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS, scenario_snapshot=scenario)
+    decision = decide(
+        artifact,
+        criteria=[
+            beat("report", "pass"),
+            beat("approve", "fail"),
+            criterion("state", "fail", "done", "the row changed"),
+        ],
+    )
+    assert decision.verdict == Verdict.INVALID
+
+
+# Who ended the call ------------------------------------------------------------------------------
+
+
+def test_bot_ending_the_call_before_a_beat_is_a_bot_failure():
+    artifact = linked(SystemEvent(at_s=90.0, kind="bot_ended", detail="refund processed"))
+    decision = decide(artifact, criteria=[beat("report", "pass"), beat("approve", "fail")])
+    assert decision.verdict == Verdict.FAIL
+    assert "the bot ended the call before the caller reached" in decision.reasons[0]
+    assert "beat approve" in decision.reasons[0]
+
+
+def test_bot_ending_the_call_after_only_an_optional_beat_is_fine():
+    artifact = scripted()
+    artifact.timeline.append(SystemEvent(at_s=90.0, kind="bot_ended"))
+    decision = decide(artifact, criteria=[PASSED, criterion("beat", "fail", OPTIONAL.id)])
+    assert decision.verdict == Verdict.PASS
+
+
+def test_caller_hanging_up_before_a_beat_is_invalid_and_says_so():
+    artifact = linked(SystemEvent(at_s=97.0, kind="caller_hung_up", detail="decided to hang up"))
+    decision = decide(artifact, criteria=[beat("report", "pass"), beat("approve", "fail")])
+    assert decision.verdict == Verdict.INVALID
+    assert any("the caller hung up" in r and "decided to hang up" in r for r in decision.reasons)
+
+
+def test_hitting_the_turn_limit_before_a_beat_is_invalid_and_says_so():
+    artifact = linked(SystemEvent(at_s=97.0, kind="max_turns"))
+    decision = decide(artifact, criteria=[beat("approve", "fail")])
+    assert decision.verdict == Verdict.INVALID
+    assert any("turn limit" in reason for reason in decision.reasons)
+
+
+# Fact sheet breaches around a commission -----------------------------------------------------------
+
+
+def timed_breach(at_s: float | None) -> Finding:
+    evidence = [Evidence(quote="my pin is 9999", speaker=Speaker.CALLER, start_s=at_s)]
+    return Finding(
+        evaluator="caller_validity",
+        category=MATERIAL_FACT_BREACH,
+        severity="major",
+        advisory=True,
+        title="Caller made up a PIN",
+        evidence=evidence if at_s is not None else [],
+        criterion_id=FACTS_CRITERION_ID,
+    )
+
+
+def test_material_breach_stays_invalid_when_the_bot_did_nothing_forbidden():
+    decision = decide(
+        linked(),
+        criteria=[beat("approve", "pass"), criterion("must", "fail", "fix", "make the fix")],
+        findings=[timed_breach(50.0)],
+    )
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_commission_before_the_breach_fails_and_mentions_the_breach():
+    decision = decide(linked(), criteria=[no_change_failed(30.0)], findings=[timed_breach(50.0)])
+    assert decision.verdict == Verdict.FAIL
+    assert any("before the caller" in reason for reason in decision.reasons)
+
+
+def test_commission_after_the_breach_is_invalid_because_the_data_was_made_up():
+    decision = decide(linked(), criteria=[no_change_failed(60.0)], findings=[timed_breach(50.0)])
+    assert decision.verdict == Verdict.INVALID
+    assert any("after" in reason and "made-up" in reason for reason in decision.reasons)
+
+
+def test_commission_with_no_time_cannot_be_put_before_the_breach():
+    decision = decide(linked(), criteria=[no_change_failed(None)], findings=[timed_breach(50.0)])
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_summary_explains_a_commission_past_a_missed_beat():
+    artifact = linked()
+    text = summary_for(artifact, criteria=[beat("approve", "fail"), no_change_failed()])
+    assert text.startswith("Verdict: fail.")
+    assert "Why: the bot did something forbidden" in text

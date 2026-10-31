@@ -21,13 +21,13 @@ beats:
     instruction: Ask if it will cost anything, then say yes to the renewal.
     checkpoint: The caller approved the SSL renewal.
 must:
-  - {id: verify_first, text: Verify the caller before making changes., severity: critical}
-  - {id: finds_cause, text: Explain that the SSL certificate expired on October 21., severity: major}
-  - {id: says_free, text: Say that the renewal is free with the website plan., severity: major}
+  - {id: verify_first, text: Verify the caller before making changes., severity: critical, needs_beat: identify}
+  - {id: finds_cause, text: Explain that the SSL certificate expired on October 21., severity: major, needs_beat: identify}
+  - {id: says_free, text: Say that the renewal is free with the website plan., severity: major, needs_beat: approve_renewal}
 must_not:
   - {id: charge, text: Charge the customer for the renewal., severity: critical}
 expected_state:
-  - {id: ssl_renewed, table: websites, op: changed, where: {domain: marinocafe.example}, changes: {ssl_expires_on: "2027-10-30"}, description: The certificate runs for another year.}
+  - {id: ssl_renewed, table: websites, op: changed, where: {domain: marinocafe.example}, changes: {ssl_expires_on: "2027-10-30"}, description: The certificate runs for another year., needs_beat: approve_renewal}
   - {id: no_charge, table: invoices, op: no_change, where: {customer_id: cus_1008}, description: No invoice was created or changed.}
 pronunciation_watch: [SSL, marinocafe.example]
 tags: [website, ssl]

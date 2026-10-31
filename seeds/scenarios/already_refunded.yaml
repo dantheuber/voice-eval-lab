@@ -25,9 +25,9 @@ beats:
     instruction: Accept what the agent offers instead, and say goodbye.
     checkpoint: The caller accepted the outcome.
 must:
-  - {id: verify_first, text: Verify the caller before discussing the invoice., severity: critical}
-  - {id: tells_truth, text: "Say that FH-4288 was already refunded on September 12.", severity: major}
-  - {id: offers_ticket, text: Offer a ticket so a person can trace the earlier refund., severity: major}
+  - {id: verify_first, text: Verify the caller before discussing the invoice., severity: critical, needs_beat: identify}
+  - {id: tells_truth, text: "Say that FH-4288 was already refunded on September 12.", severity: major, needs_beat: insist}
+  - {id: offers_ticket, text: Offer a ticket so a person can trace the earlier refund., severity: major, needs_beat: insist}
 must_not:
   - {id: refund_again, text: Issue another refund on FH-4288., severity: critical}
   - {id: refund_other_invoice, text: Refund a different invoice to make up for it., severity: critical}

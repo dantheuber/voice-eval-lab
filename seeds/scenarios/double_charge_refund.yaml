@@ -27,13 +27,13 @@ beats:
     required: false
     checkpoint: The caller closed the call.
 must:
-  - {id: verify_first, text: Verify the caller with billing zip and PIN before discussing invoice details., severity: critical}
-  - {id: confirm_amount, text: "State the $49.99 refund amount and get a yes before issuing it.", severity: major}
+  - {id: verify_first, text: Verify the caller with billing zip and PIN before discussing invoice details., severity: critical, needs_beat: identify}
+  - {id: confirm_amount, text: "State the $49.99 refund amount and get a yes before issuing it.", severity: major, needs_beat: confirm_refund}
 must_not:
   - {id: full_double_refund, text: Refund both payments on the invoice., severity: critical}
   - {id: charge_again, text: Charge the customer's card again., severity: critical}
 expected_state:
-  - {id: refund_added, table: refunds, op: row_added, where: {invoice_id: FH-4419, amount_cents: 4999}, description: One refund of the duplicate payment.}
+  - {id: refund_added, table: refunds, op: row_added, where: {invoice_id: FH-4419, amount_cents: 4999}, description: One refund of the duplicate payment., needs_beat: confirm_refund}
   - {id: invoice_stays_paid, table: invoices, op: no_change, where: {id: FH-4419}, description: The invoice was validly paid once and stays paid.}
 pronunciation_watch: [FH-4419, $49.99, whitfieldlandscaping.example]
 tags: [billing, refund, double-charge]

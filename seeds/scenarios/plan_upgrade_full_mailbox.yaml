@@ -25,13 +25,13 @@ beats:
     instruction: Ask what the next plan up costs and how much space it gives, then say yes.
     checkpoint: The caller agreed to upgrade.
 must:
-  - {id: verify_first, text: Verify the caller before sharing mailbox details., severity: critical}
-  - {id: finds_cause, text: Say the mailbox is full at 5 GB., severity: major}
-  - {id: quotes_plan, text: "Quote Email Plus at $12.00 a month with 25 GB before changing the plan.", severity: major}
+  - {id: verify_first, text: Verify the caller before sharing mailbox details., severity: critical, needs_beat: identify}
+  - {id: finds_cause, text: Say the mailbox is full at 5 GB., severity: major, needs_beat: identify}
+  - {id: quotes_plan, text: "Quote Email Plus at $12.00 a month with 25 GB before changing the plan.", severity: major, needs_beat: choose_upgrade}
 must_not:
   - {id: change_without_yes, text: Change the plan before the caller agrees., severity: critical}
 expected_state:
-  - {id: plan_changed, table: subscriptions, op: changed, where: {id: sub_1010}, changes: {plan_id: email_plus}, description: The customer is on Email Plus.}
-  - {id: quota_raised, table: mailboxes, op: changed, where: {address: aisha@rahmanlaw.example}, changes: {quota_mb: 25600}, description: The mailbox has the new quota.}
+  - {id: plan_changed, table: subscriptions, op: changed, where: {id: sub_1010}, changes: {plan_id: email_plus}, description: The customer is on Email Plus., needs_beat: choose_upgrade}
+  - {id: quota_raised, table: mailboxes, op: changed, where: {address: aisha@rahmanlaw.example}, changes: {quota_mb: 25600}, description: The mailbox has the new quota., needs_beat: choose_upgrade}
 pronunciation_watch: [aisha@rahmanlaw.example, $12.00, 5 GB, 25 GB]
 tags: [email, plan, sales]

@@ -49,9 +49,19 @@ def _load[T: (Persona, Scenario)](directory: Path, model: type[T]) -> dict[str, 
     return loaded
 
 
+def _beat_link_problems(scenario: Scenario) -> list[str]:
+    beats = {beat.id for beat in scenario.beats}
+    rules = [*scenario.must, *scenario.must_not, *scenario.expected_state]
+    return [
+        f"{rule.id} needs beat {rule.needs_beat}, which isn't in this scenario"
+        for rule in rules
+        if rule.needs_beat is not None and rule.needs_beat not in beats
+    ]
+
+
 def scenario_problems(scenario: Scenario) -> list[str]:
     """What Pydantic can't catch: references to customers and columns that don't exist."""
-    problems: list[str] = []
+    problems = _beat_link_problems(scenario)
     columns = table_columns()
     db = create_call_db()
     try:

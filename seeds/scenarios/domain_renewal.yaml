@@ -24,13 +24,13 @@ beats:
     instruction: Ask for the new expiry date.
     checkpoint: The caller asked for the new expiry date.
 must:
-  - {id: verify_first, text: Verify the caller before renewing., severity: critical}
-  - {id: quote_price, text: "Quote $14.99 and get a yes before renewing.", severity: critical}
-  - {id: new_date, text: "State the new expiry date of November 6, 2027.", severity: major}
+  - {id: verify_first, text: Verify the caller before renewing., severity: critical, needs_beat: identify}
+  - {id: quote_price, text: "Quote $14.99 and get a yes before renewing.", severity: critical, needs_beat: confirm_purchase}
+  - {id: new_date, text: "State the new expiry date of November 6, 2027.", severity: major, needs_beat: confirm_date}
 must_not:
   - {id: extra_years, text: Renew for more than one year., severity: major}
 expected_state:
-  - {id: extended, table: domains, op: changed, where: {name: thompsonphoto.example}, changes: {expires_on: "2027-11-06"}, description: The domain runs one more year.}
-  - {id: invoice_added, table: invoices, op: row_added, where: {customer_id: cus_1009, amount_cents: 1499, status: paid}, description: A paid renewal invoice.}
+  - {id: extended, table: domains, op: changed, where: {name: thompsonphoto.example}, changes: {expires_on: "2027-11-06"}, description: The domain runs one more year., needs_beat: confirm_purchase}
+  - {id: invoice_added, table: invoices, op: row_added, where: {customer_id: cus_1009, amount_cents: 1499, status: paid}, description: A paid renewal invoice., needs_beat: confirm_purchase}
 pronunciation_watch: [thompsonphoto.example, $14.99, "2027-11-06"]
 tags: [domain, billing]
