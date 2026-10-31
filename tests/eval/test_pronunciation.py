@@ -12,7 +12,11 @@ from voicelab.core.models import (
     VoiceRef,
 )
 from voicelab.eval.context import EvalContext, EvalDeps, EvaluatorOutput, Skip
-from voicelab.eval.evaluators.pronunciation import LIMITATION, PronunciationEvaluator
+from voicelab.eval.evaluators.pronunciation import (
+    LIMITATION,
+    PronunciationEvaluator,
+    _same_sound,
+)
 from voicelab.eval.normalize import Lexicon, align, sounds_alike, tokenize
 from voicelab.providers.base import Transcript
 
@@ -892,3 +896,21 @@ async def test_both_engines_hearing_a_wrong_repeated_digit_is_corroborated(store
     [finding] = critical_findings(out)
     assert finding.category == "critical_token_corroborated"
     assert finding.advisory is False
+
+
+@pytest.mark.parametrize(
+    "heard",
+    [
+        ["priya.nair", "at", "mailbox.example."],
+        ["priya.nair@mailbox.example."],
+        ["priya", "dot", "nair", "at", "mailbox", "dot", "example."],
+    ],
+)
+def test_an_address_is_the_same_however_a_recognizer_writes_it(heard):
+    said = "priya dot nair at mailbox dot example.".split()
+    assert _same_sound(said, heard, Lexicon.load())
+
+
+def test_a_different_name_in_an_address_still_differs():
+    said = "priya dot nair at mailbox dot example.".split()
+    assert not _same_sound(said, ["dana.jones", "at", "mailbox.example."], Lexicon.load())

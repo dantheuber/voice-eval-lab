@@ -20,7 +20,12 @@ from voicelab.eval.judging import (
     verify_judgment,
 )
 from voicelab.eval.normalize import Lexicon
-from voicelab.eval.transcript import TranscriptIndex, estimate_words, render_transcript
+from voicelab.eval.transcript import (
+    TranscriptIndex,
+    estimate_words,
+    render_transcript,
+    timed_turns,
+)
 from voicelab.eval.vad import Region
 from voicelab.providers.adapters.openai_compat import LLMTimeoutError
 from voicelab.providers.base import Transcript
@@ -218,6 +223,29 @@ def test_overlapping_speech_stays_in_whole_turns():
         "[1.0s] CALLER: wait I need to know the price",
         "[1.1s] BOT: one moment let me check that",
     ]
+
+
+def test_a_bot_turn_breaks_at_a_tool_so_later_words_read_as_later():
+    words = {Speaker.BOT: transcript(("one moment the payment went through", 10.0))}
+    lines = [line for _, line in timed_turns(words, tool_times=[10.9])]
+    assert lines == ["[10.0s] BOT: one moment the", "[11.2s] BOT: payment went through"]
+
+
+def test_a_caller_turn_doesnt_break_at_a_tool():
+    words = {Speaker.CALLER: transcript(("my pin is four eight", 10.0))}
+    assert len(timed_turns(words, tool_times=[10.9])) == 1
+
+
+def test_a_tool_outside_a_turn_doesnt_break_it():
+    words = {Speaker.BOT: transcript(("all done here", 10.0))}
+    assert len(timed_turns(words, tool_times=[1.0, 90.0])) == 1
+
+
+def test_the_record_puts_words_said_after_a_tool_after_it():
+    artifact = tooled(call_of(10.9, "pay_invoice"))
+    words = {Speaker.BOT: transcript(("one moment the payment went through", 10.0))}
+    record = call_record("c", artifact, words)
+    assert record.index("one moment") < record.index("TOOL T1") < record.index("went through")
 
 
 def test_a_long_gap_on_one_channel_starts_a_new_line():
@@ -509,6 +537,26 @@ def test_a_change_that_failed_is_not_a_change():
     event = call_of(5.0, "renew_ssl")
     event.error = "no website"
     assert "changed nothing" in order_of_events(tooled(event, verified(9.0)))
+
+
+def test_the_record_states_when_the_account_was_read_before_verifying():
+    artifact = tooled(call_of(17.3, "get_account_summary"), verified(45.2))
+    assert "It read the account before that, at 17.3 s (T1)" in order_of_events(artifact)
+
+
+def test_the_record_states_a_read_with_no_verification_at_all():
+    line = order_of_events(tooled(verified(5.0, ok=False), call_of(9.0, "get_invoice")))
+    assert "never verified the caller. It read the account before that, at 9.0 s" in line
+
+
+@pytest.mark.parametrize("name", ["find_customer", "list_plans"])
+def test_reads_that_touch_no_account_details_arent_mentioned(name):
+    assert "read the account" not in order_of_events(tooled(call_of(1.0, name), verified(9.0)))
+
+
+def test_a_read_after_verifying_is_not_mentioned():
+    line = order_of_events(tooled(verified(5.0), call_of(9.0, "get_invoice")))
+    assert "read the account" not in line
 
 
 def test_reads_are_not_changes():

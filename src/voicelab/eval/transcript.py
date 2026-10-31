@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import chain
 
@@ -84,25 +85,34 @@ def render_transcript(transcripts: dict[Speaker, Transcript], *, gap_s: float = 
 
 
 def timed_turns(
-    transcripts: dict[Speaker, Transcript], *, gap_s: float = 1.0
+    transcripts: dict[Speaker, Transcript],
+    *,
+    gap_s: float = 1.0,
+    tool_times: Sequence[float] = (),
 ) -> list[tuple[float, str]]:
     """Each turn's start and its line.
 
     Turns are found on each channel alone and then put in order. Sorting words across channels
     would cut every overlap into one-word lines, and a judge can't read or quote those.
+
+    A bot turn also breaks at each tool call in it, or words said after the tool would be stamped
+    with the turn's start and read as coming before it. "One moment" running straight into the
+    answer made real results look like claims made ahead of the tool.
     """
     turns: list[tuple[float, Speaker, list[str]]] = []
     for speaker, transcript in transcripts.items():
         words: list[str] = []
-        started, last_end = 0.0, 0.0
+        started, last_start, last_end = 0.0, 0.0, 0.0
+        breaks = tool_times if speaker == Speaker.BOT else ()
         for word in transcript.words:
-            if words and word.start_s - last_end > gap_s:
+            crossed = any(last_start < at <= word.start_s for at in breaks)
+            if words and (word.start_s - last_end > gap_s or crossed):
                 turns.append((started, speaker, words))
                 words = []
             if not words:
                 started = word.start_s
             words.append(word.text)
-            last_end = word.end_s
+            last_start, last_end = word.start_s, word.end_s
         if words:
             turns.append((started, speaker, words))
     turns.sort(key=lambda turn: turn[0])
@@ -144,7 +154,7 @@ class TranscriptIndex:
         parts, and each part has to be there. When both sides said it, the `prefer` speaker's copy
         is returned.
         """
-        parts = [self._needle(part) for part in _ELLIPSIS.split(quote)]
+        parts = [self.norms(part) for part in _ELLIPSIS.split(quote)]
         parts = [part for part in parts if part]
         if not parts:
             return None
@@ -154,7 +164,8 @@ class TranscriptIndex:
                 return _evidence(channel, *spans[0])
         return None
 
-    def _needle(self, text: str) -> list[str]:
+    def norms(self, text: str) -> list[str]:
+        """The tokens a text comes down to, as a quote is compared."""
         return [token.norm for token in tokenize(text.split(), lexicon=self._lexicon)]
 
     def _find(self, channel: _Channel, needle: list[str]) -> tuple[int, int] | None:

@@ -121,6 +121,36 @@ async def test_a_call_the_bot_ended_has_its_ending_judged(store):
     assert "general_polite_ending" in asked_lines(judge.prompts[0])
 
 
+def _said_by_bot(meant: str) -> CallArtifact:
+    return CallArtifact(
+        mode=CallMode.LIVE_BOTS,
+        has_intended_text=True,
+        timeline=[
+            Utterance(speaker=Speaker.BOT, start_s=9.0, end_s=20.0, intended_text=meant),
+        ],
+    )
+
+
+async def test_a_number_the_bot_never_meant_to_say_goes_to_a_person(store):
+    heard = "your record now has priority 2"
+    judge = judge_for({"supported by a tool result": verdict_json("fail", quotes=[heard])})
+    ctx = context(store, _said_by_bot("Your record now has priority ten."), judge)
+    ctx.transcripts[Speaker.BOT] = make_transcript((heard, 10.0))
+    out = await run(TranscriptJudgeEvaluator(), ctx)
+    result = by_id(out, "general_no_invented_facts")
+    assert result.status == "unknown"
+    assert "has 2 where the bot meant" in result.reason
+
+
+async def test_a_number_the_bot_meant_to_say_still_fails(store):
+    heard = "your refund is 3 days away"
+    judge = judge_for({"supported by a tool result": verdict_json("fail", quotes=[heard])})
+    ctx = context(store, _said_by_bot("Your refund is 3 days away."), judge)
+    ctx.transcripts[Speaker.BOT] = make_transcript((heard, 10.0))
+    out = await run(TranscriptJudgeEvaluator(), ctx)
+    assert by_id(out, "general_no_invented_facts").status == "fail"
+
+
 async def test_a_tool_call_can_prove_a_rule_the_bot_never_said_aloud(store):
     rule = Rule(text="open a ticket")
     artifact = CallArtifact(

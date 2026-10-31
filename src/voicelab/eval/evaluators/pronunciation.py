@@ -213,7 +213,11 @@ def _live_words(group: _Group, lexicon: Lexicon) -> list[str] | None:
 
 
 def _same_sound(said: list[str], heard: list[str], lexicon: Lexicon) -> bool:
-    return sounds_alike(_canonical(said, lexicon), _canonical(heard, lexicon))
+    expected, got = _canonical(said, lexicon), _canonical(heard, lexicon)
+    # A recognizer writes "priya dot nair" as "priya.nair", and that keeps no "dot" to compare.
+    return sounds_alike(expected, got) or sounds_alike(
+        expected.replace("dot", ""), got.replace("dot", "")
+    )
 
 
 def _spelled_differently(

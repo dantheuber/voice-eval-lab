@@ -12,6 +12,7 @@ from voicelab.core.models import (
     Finding,
     Rule,
     Speaker,
+    Utterance,
 )
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
 from voicelab.eval.evaluators.state import check_expectation
@@ -196,12 +197,43 @@ class TranscriptJudgeEvaluator:
                 tools=tools,
             )
             dropped_quotes += judgment.dropped_quotes
-            result = _Settled(item, judgment.status, judgment.reason, judgment.evidence)
+            status, reason = judgment.status, judgment.reason
+            slip = _misheard_number(judgment.evidence, ctx) if status == "fail" else None
+            if slip is not None and item.kind == "general":
+                status, reason = "unknown", f"{slip} {reason}"
+            result = _Settled(item, status, reason, judgment.evidence)
             _record(out, self.name, result)
         out.metrics["dropped_quotes"] = dropped_quotes
         out.metrics["judged"] = len(items)
         if items and not replies.payloads:
             raise RuntimeError(f"judge failed on all {len(items)} criteria")
+
+
+def _misheard_number(evidence: list[Evidence], ctx: EvalContext) -> str | None:
+    """A number the transcript gives the bot that it never meant to say, which may be an ASR slip.
+
+    The judge reads one ASR's words, and a real call failed for "priority 2" when the bot said
+    "priority ten". What the bot meant doesn't clear it, since the audio could be wrong too, so
+    the call goes to a person and pronunciation reports the word.
+    """
+    utterances = [
+        event
+        for event in ctx.artifact.timeline
+        if isinstance(event, Utterance) and event.speaker == Speaker.BOT and event.intended_text
+    ]
+    for item in evidence:
+        if item.speaker != Speaker.BOT or item.start_s is None:
+            continue
+        said = next((u for u in utterances if u.start_s <= item.start_s <= u.end_s), None)
+        if said is None:
+            continue
+        meant = set(ctx.index.norms(said.intended_text))
+        wrong = [
+            norm for norm in ctx.index.norms(item.quote) if norm.isdigit() and norm not in meant
+        ]
+        if wrong:
+            return f"The transcript has {wrong[0]} where the bot meant to say something else."
+    return None
 
 
 def _record(out: EvaluatorOutput, evaluator: str, result: _Settled) -> None:

@@ -34,6 +34,8 @@ _VERIFY_TOOL = "verify_identity"
 # By convention tools with these names only read, and everything else can write.
 READING_TOOLS = ("find_", "get_", "list_", "verify_", "end_")
 _NOT_ACCOUNT_CHANGES = ("create_ticket",)  # a correct refusal often opens one
+# What a stranger shouldn't get to. `find_customer` is allowed before verifying, so it isn't here.
+_ACCOUNT_READS = ("get_account_summary", "get_invoice", "list_invoices", "get_dns_records")
 
 
 @dataclass(frozen=True)
@@ -233,6 +235,10 @@ class ToolLog:
     def __len__(self) -> int:
         return len(self._events)
 
+    @property
+    def times(self) -> list[float]:
+        return [event.at_s for event in self._events]
+
     def timed_lines(self) -> list[tuple[float, str]]:
         """Each call's time and line. A repeat points back, so it doesn't cost the whole line."""
         first_seen: dict[str, int] = {}
@@ -290,12 +296,19 @@ class VerificationOrder:
     verified: tuple[str, ToolCallEvent] | None
     changed: tuple[str, ToolCallEvent] | None
     attempted: bool
+    read: tuple[str, ToolCallEvent] | None = None  # the first look at the account
 
     @property
     def changed_unverified(self) -> bool:
         if self.changed is None:
             return False
         return self.verified is None or self.changed[1].at_s < self.verified[1].at_s
+
+    @property
+    def read_unverified(self) -> bool:
+        if self.read is None:
+            return False
+        return self.verified is None or self.read[1].at_s < self.verified[1].at_s
 
 
 def verification_order(artifact: CallArtifact) -> VerificationOrder:
@@ -305,12 +318,17 @@ def verification_order(artifact: CallArtifact) -> VerificationOrder:
         verified=next((item for item in numbered if _verified(item[1])), None),
         changed=next((item for item in numbered if _changes_account(item[1])), None),
         attempted=any(e.name == _VERIFY_TOOL for e in calls),
+        read=next((item for item in numbered if _reads_account(item[1])), None),
     )
 
 
 def _verified(event: ToolCallEvent) -> bool:
     result = event.result if isinstance(event.result, dict) else {}
     return event.name == _VERIFY_TOOL and not event.error and result.get("verified") is True
+
+
+def _reads_account(event: ToolCallEvent) -> bool:
+    return event.name in _ACCOUNT_READS and not event.error
 
 
 def _changes_account(event: ToolCallEvent) -> bool:
@@ -327,6 +345,9 @@ def order_of_events(artifact: CallArtifact) -> str:
     if order.verified is not None:
         reference, event = order.verified
         check = f"The bot verified the caller at {event.at_s:.1f} s ({reference})."
+    if order.read_unverified:
+        reference, event = order.read
+        check += f" It read the account before that, at {event.at_s:.1f} s ({reference})."
     if order.changed is None:
         return f"{check} The bot changed nothing on the account.\n"
     reference, event = order.changed
@@ -338,7 +359,7 @@ def order_of_events(artifact: CallArtifact) -> str:
 
 def render_timeline(transcripts: dict[Speaker, Transcript], tools: ToolLog) -> str:
     """Speech and tool calls as one sequence, so what came first can be read straight off it."""
-    lines = [*timed_turns(transcripts), *tools.timed_lines()]
+    lines = [*timed_turns(transcripts, tool_times=tools.times), *tools.timed_lines()]
     lines.sort(key=lambda line: line[0])
     return "\n".join(line for _, line in lines)
 
