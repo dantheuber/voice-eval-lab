@@ -27,7 +27,8 @@ SENTENCES = [
 
 
 def run(size: str) -> dict:
-    name = f"Qwen/Qwen3-TTS-12Hz-{size}-CustomVoice"
+    # the local snapshot, so nothing is fetched from the Hub
+    name = str(next((Path.home() / ".cache/huggingface/hub" / f"models--Qwen--Qwen3-TTS-12Hz-{size}-CustomVoice" / "snapshots").glob("*/")))
     t0 = time.perf_counter()
     tun = ROOT / ".runtime" / "bench" / f"tunableop-{size}.csv"
     torch.cuda.tunable.set_filename(str(tun))

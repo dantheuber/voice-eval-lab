@@ -35,7 +35,7 @@ HARD = [
      "critical": [r"charged twice", r"fixed today"]},
 ]
 VOICES = {"f": "af_heart", "m": "am_michael"}
-KOKORO_ONLY_SPLIT = 8
+HUMAN_CLIPS = 8
 # Caller turns for realtime and end-to-end tests. They exercise greeting, tool use, and a follow-up.
 CALLER = [
     ("caller-greeting", "Hi, I have a question about my bill."),
@@ -105,8 +105,8 @@ def main() -> int:
     print({k_: len(v) for k_, v in seen.items()})
     picked = []
     for group in seen.values():
-        picked.extend(group[:KOKORO_ONLY_SPLIT // max(1, len(seen))])
-    table = picked[:KOKORO_ONLY_SPLIT]
+        picked.extend(group[:HUMAN_CLIPS // max(1, len(seen))])
+    table = picked[:HUMAN_CLIPS]
     for r in table:
         pcm, sr = sf.read(io.BytesIO(r["audio"]["bytes"]), dtype="int16")
         cid = f"libri-{r['id']}"
@@ -133,7 +133,6 @@ def main() -> int:
         dst = tel / f"{m['id']}.wav"
         telephone(m["clean"], dst)
         m["tel"] = str(dst)
-    (tel / "x").unlink(missing_ok=True)
     for f in tel.glob("*.mulaw.wav"):
         f.unlink()
 

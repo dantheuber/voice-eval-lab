@@ -5,7 +5,6 @@ import io
 import os
 import re
 import subprocess
-import tempfile
 import threading
 import time
 import wave
@@ -273,9 +272,3 @@ def make_tts(name: str, lfm_url: str | None = None, side: int = 0):
         lang = {"pocket": "english_7m_2026-10", "pocket-2m": "english_2m_2026-10", "pocket-18m": "english_18m_2026-10"}[name]
         return PocketTTS(lang, ("marius", "anna")[side])
     raise SystemExit(f"unknown tts {name}")
-
-
-def tmp_wav() -> str:
-    fd, path = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    return path

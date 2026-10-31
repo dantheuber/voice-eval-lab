@@ -42,7 +42,7 @@ LLMS = {
 CALL = ["caller-greeting", "caller-lookup", "caller-refund", "caller-question"]
 
 
-def llm_args(name: str, parallel: int = 1) -> list[str]:
+def llm_args(name: str, parallel: int = 1) -> list[str]:  # 16 K context per slot
     model, sampling = LLMS[name]
     return ["-m", str(model), "--jinja", "--reasoning", "off", "-c", str(16384 * parallel), "-ngl", "999", "-np", str(parallel), *sampling]
 

@@ -18,6 +18,8 @@ Each number is end of caller speech to first bot audio, and includes 420 to 520 
 1. **One human talking to the bot live is viable** on every stack above. Recommended: `local-quality`, Qwen3-ASR plus Qwen3.5-4B plus Phonon, about 830 ms on plain turns. Tool turns need a spoken filler, since they reach 2 s.
 2. **Two bots both running live at once is viable. Turn-based is not required.** On the recommended LLM, a 2-minute call ran 11 turns at 1462 ms median and 2192 ms max, with 0 late windows, 0 underruns, GPU 9% mean and 78% peak, CPU 5% mean, 5.5 GB of GPU memory.
 
+Everything loaded at once, the live stack plus LFM3-Audio, Whisper large-v3, and the judge, uses 29.8 GB of GPU memory and leaves 59 GB of system memory free, so no model needs to be swapped out between a call and its evaluation.
+
 The design risks are correctness, not speed:
 
 - Bot-to-bot calls failed on content. No live call reached a refund, because `AC9077` spoken by TTS arrived as "SN977" or "AC nineteen seventy seven". Spell IDs digit by digit in TTS input.
@@ -61,7 +63,7 @@ Each clip has a telephone copy: ffmpeg to 8 kHz mu-law, then back to 16 kHz. Kno
 
 **Live two-bot calls.** `scripts/bench/bench_two_bots.py` runs a real call. Audio crosses an 8 kHz mu-law line at wall-clock pace in both directions, each side runs its own VAD on what it hears, and a clock thread checks that 32 ms windows go out on time. "Late windows" counts clock misses. "Underruns" counts a reply that ran dry mid-turn.
 
-**Contamination control.** Benchmarks ran one at a time. Ollama had no model loaded. Model downloads ran in the background during some runs, using network and disk but under 3% of one core.
+**Contamination control.** Benchmarks ran one at a time, and results from the one accidental overlap were discarded and rerun. Ollama had no model loaded except for its own reference run. Model downloads ran in the background during some runs, using network and disk but under 3% of one core. Another agent's Chrome used about one core at times.
 
 ## Results by role
 
@@ -90,7 +92,7 @@ Realtime through `/v1/realtime`, Q8, Vulkan, 2 runs of 4 clips per mode. Timed f
 | `["audio"]` | | 46 | 5.1 | Broken. Gibberish, 2 of 8 empty |
 | `["text"]` | 40 | | | Emits a `<think>` block first, 4.7 to 16.5 s total. Not usable for live turns |
 
-Long session: 60 turns in one session, 934 s of speech, `-c 32768`, no errors, generation stayed at 4.1x or better. Audio went in faster than real time in that test, so its first-audio numbers are not comparable. Context use per minute was not measured directly. The turn count puts a 32K context beyond this length.
+Long session: 60 turns in one session, 934 s of speech, `-c 32768`, no errors, generation stayed at 4.1x or better. Audio went in faster than real time in that test, so its first-audio numbers are not comparable. Context use per minute was not measured directly, but 15.6 minutes fit in 32K.
 
 Two instances at once, both answering at the same moment, 3 runs each:
 
@@ -142,6 +144,14 @@ Tool calls from speech, on the same telephone clips, 12 sessions each. This is t
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | qwen3.8-27b-ud-q4 | llama.cpp b12017 Vulkan | off | 13.0 | 271 | 37.5 | 2/2 | 10/10 |
 | qwen3.8-27b-ud-q4 | llama.cpp b12017 Vulkan | on | 13.0 | 301 | 98.4 | 2/2 | 10/10 |
+| qwen3.8:27b-mtp-q8_0 | Ollama API, read-only | off | 25.4 | 267 | 36.0 | 1/1 | 5/5 |
+| qwen3.8:27b-mtp-q8_0 | Ollama API, read-only | on | 22.4 | 565 | 49.4 | 1/1 | 5/5 |
+
+Valid JSON comes from `response_format` with a `json_schema`, so the grammar enforces it, and Ollama's `format` does the same. The test transcript has 5 criteria and 2 planted failures: wrong refund timing and no help with an email problem. All 6 runs got all 5 verdicts right and marked the call as failed. This is one transcript, so it shows the plumbing works, not that the judge is accurate in general.
+
+llama.cpp used 18.7 GB of GPU memory for the UD-Q4_K_M. Time per transcript is 35 to 111 s, which is fine for post-call work. Plan one LLM call per evaluator, not one per criterion.
+
+Ollama's `qwen3.8:27b-mtp-q8_0` ran about 75% faster than the plain Q4 GGUF. It uses a multi-token prediction draft model. llama.cpp can do the same with `ggml-org/Qwen3.8-27B-GGUF` `mtp-Qwen3.8-27B-Q4_0.gguf`, 1.68 GB, which I did not test. Reference run through the API only, and the model was unloaded afterward.
 
 ### STT
 
@@ -168,7 +178,7 @@ Tool calls from speech, on the same telephone clips, 12 sessions each. This is t
 
 ### TTS
 
-Same 6 sentences, 2 repetitions, CPU unless noted, with 16 threads available. Critical tokens are 15 across the sentences, checked by Qwen3-ASR hearing the saved audio. It is a proxy: it says the words came out, not that they sound good. I did not listen to any of this audio.
+Same 6 sentences, 2 repetitions, CPU with 16 threads available unless the row says otherwise. Qwen3-TTS on ROCm used 3 sentences with the codec on CPU. It has no streaming, so its TTFA is a full chunk. Critical tokens are 15 across the sentences, checked by Qwen3-ASR hearing the saved audio. It is a proxy: it says the words came out, not that they sound good. I did not listen to any of this audio.
 
 | Engine | RTF | TTFA ms | TTFA max ms | Streams | WER heard | Critical |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -179,6 +189,9 @@ Same 6 sentences, 2 repetitions, CPU unless noted, with 16 threads available. Cr
 | pocket-2m | 37.76 | 12 | 14 | yes | 0.265 | 4/15 |
 | pocket-7m | 21.36 | 20 | 22 | yes | 0.154 | 8/15 |
 | pocket-default | 3.81 | 100 | 130 | yes | 0.116 | 12/15 |
+| qwen-gguf-vulkan | 2.93 | 1904 | 1962 | yes | 0.010 | 15/15 |
+| qwen3-tts-0.6B-rocm | 1.09 | 5688 | 9539 | no | 0.000 | 6/6 |
+| qwen3-tts-1.7B-rocm | 0.86 | 6734 | 11621 | no | 0.000 | 6/6 |
 
 Voice counts: Phonon has 102 voices, 37 English. Kokoro has 54, 28 English. LFM3 has 2 on `/tts`, and 1 in realtime. Pocket has 27 presets. Qwen3-TTS CustomVoice has 9.
 
@@ -192,7 +205,7 @@ Pocket preset names hide their sources, read from `pocket_tts/utils/utils.py`:
 | `jean` | `ears/` | Non-commercial, do not use |
 | `alba`, `bill_boerst`, `peter_yearsley`, `stuart_bell`, `caro_davy`, `estelle` | `alba-mackenna/`, `voice-zero/`, `unmute-prod-website/` | Terms unclear per the research doc, exclude until checked |
 
-Cloning the 228 donated CC0 voices needs the gated weights.
+Cloning the 228 donated CC0 voices with Pocket needs the gated weights. Qwen3-TTS on Vulkan can clone from a WAV without them, at the speed in the table.
 
 Phonon loads its 64.5 MB model in 71 s on first use here because it downloaded. Pocket first-use load times also include a download. Later loads are short, but they were not timed separately.
 
@@ -200,7 +213,7 @@ Phonon loads its 64.5 MB model in 71 s on first use here because it downloaded. 
 
 **No model tested beats chance. Do not ship a listener that claims to hear delivery.**
 
-Method, `scripts/bench/bench_listener.py`. Four base clips, two voices, each in six conditions: normal, rushed at 1.7x, dragging at 0.65x, chopped with the audio gated off 5 times a second, noisy with white noise, robotic with phase removed. That makes 24 trials per question. All were strong, plainly audible edits by design. Trial A is a six-way choice, chance 1/6, so 4 of 24 is the chance score. Trial B asks yes or no whether anything is wrong. Trial C gives the intended text with 4 clips holding a planted wrong word and 4 clean controls: "forty five" for "forty nine", "Fernhole" for "Fernhill", "eye nap" and "mix" for "IMAP" and "MX", "robin" for "refund".
+Method, `scripts/bench/bench_listener.py`. Four base clips, two voices, each in six conditions: normal, rushed at 1.7x, dragging at 0.65x, chopped with the audio gated off every other 200 ms, noisy with white noise, robotic with phase removed. That makes 24 trials per question. All were strong, plainly audible edits by design. Trial A is a six-way choice, chance 1/6, so 4 of 24 is the chance score. Trial B asks yes or no whether anything is wrong. Trial C gives the intended text with 4 clips holding a planted wrong word and 4 clean controls: "forty five" for "forty nine", "Fernhole" for "Fernhill", "eye nap" and "mix" for "IMAP" and "MX", "robin" for "refund".
 
 | Model, llama.cpp Vulkan | Six-way correct | p vs chance | Defects found, of 20 | Any-problem hits, of 20 | False alarms, of 4 | Wrong-word hits, of 4 | Wrong-word false alarms, of 4 | Named the word, of 4 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -211,7 +224,7 @@ Method, `scripts/bench/bench_listener.py`. Four base clips, two voices, each in 
 | ASR diff, Whisper turbo | | | | | | 4 | 1 | 4 |
 | ASR diff, Parakeet | | | | | | 4 | 2 | 4 |
 
-Every model answered "normal" and "no" on every clip, including audio chopped 5 times a second with white noise over it. The 4/24 is just the four normal clips. In trial C, LFM3 and Gemma said "no" to all eight clips, so their 4 of 4 hits come with 4 of 4 false alarms and mean nothing. Gemma did name "forty five" correctly, so it hears words, but it also flagged correct clips. Voxtral separated slightly, 3 hits against 2 false alarms, far too few trials to call a signal.
+The models answered "normal" and "no" on nearly every clip, including audio that cut out every 200 ms and audio under loud hiss. The one exception was Gemma picking "rushed" for a chopped clip, which was also wrong. The 4/24 is just the four normal clips. In trial C, LFM3 and Gemma said "no" to all eight clips, so their 4 of 4 hits come with 4 of 4 false alarms and mean nothing. Gemma did name "forty five" correctly, so it hears words, but it also flagged correct clips. Voxtral separated slightly, 3 hits against 2 false alarms, far too few trials to call a signal.
 
 LFM3 was also asked open-ended tone questions. It called flat TTS reading angry words "frustrated" and "upset", and rated rushed, dragging, chopped, noisy, and robotic clips "calm" and "neutral". It reads the words, not the voice.
 
@@ -225,16 +238,18 @@ Recommendation: ship no audio-model listener for delivery. Use signal checks for
 
 | Loaded so far | GPU total GB | Process RSS GB | System used, change GB |
 | --- | --- | --- | --- |
-| parakeet vulkan | 0.8 | 0.12 | 0.9 |
-| qwen3.5-4b q4_k_m -np 2 | 5.4 | 0.20 | 5.4 |
-| lfm3-audio q4_k_m | 7.6 | 0.18 | 7.7 |
-| phonon in this process | 7.6 | n/a | 7.9 |
-| pocket 7m in this process | 7.6 | n/a | 8.0 |
-| whisper large-v3 turbo q5 | 8.5 | 0.10 | 8.9 |
-| judge llm | 27.1 | 0.22 | 27.7 |
-| after one request each | 27.2 | n/a | 28.1 |
+| qwen3-asr 0.6b q8 -np 2 | 2.6 | 0.16 | 3.2 |
+| qwen3.5-4b q4_k_m -np 2 | 7.1 | 0.20 | 7.9 |
+| lfm3-audio q4_k_m | 9.4 | 0.18 | 10.3 |
+| phonon in this process | 9.4 | n/a | 10.7 |
+| pocket 18m in this process | 9.4 | n/a | 10.4 |
+| whisper large-v3 q5 | 11.1 | 0.10 | 12.1 |
+| judge llm | 29.7 | 0.22 | 25.5 |
+| after one request each | 29.8 | n/a | 26.0 |
 
-Free system memory with everything loaded: 58 GB.
+Free system memory with everything loaded: 59 GB.
+
+GPU numbers are the system-wide GTT plus VRAM counters, measured with everything from `local-quality`, the LFM3 alternative, eval STT, and the judge resident. System figures move with other work on the box, so read them as approximate. Phonon and Pocket ran in the measuring process, so their RSS is included in the system column only. `local-fast` alone needs 2.4 GB of GPU memory.
 
 ## End to end
 
@@ -255,7 +270,7 @@ VAD is the biggest single cost in every row: 420 to 520 ms for a 300 ms hang, or
 
 Per stage, plain turns: STT 27 to 60 ms for Parakeet, about 100 ms for Qwen3-ASR. LLM to first sentence 136 to 240 ms for LFM3-1.7B, 230 to 420 ms for Qwen3.5-4B. TTS first audio 20 to 35 ms for Phonon and Pocket, 75 to 100 ms for LFM3 `/tts`, and 270 to 990 ms for Kokoro.
 
-Tool turns are the weak spot of Qwen3.5-4B. Each tool round is a full LLM pass, and `caller-lookup` runs two. That gives about 2.4 s to first audio, and 1.8 to 2.1 s with one round. The engine should play a short filler if no sentence has arrived by about 700 ms. LFM3-1.7B stays near 1.1 s.
+Tool turns are the weak spot of Qwen3.5-4B. Reaching the first spoken sentence takes the tool call and then a new LLM pass, 1.8 s of LLM time on a successful turn at 65 t/s. That gives about 2.4 s end to end with Parakeet. The Qwen3-ASR row reads lower only because its lookup failed and the turn ended after one short round. The engine should play a short filler if no sentence has arrived by about 700 ms. LFM3-1.7B stays near 1.1 s because it generates at 153 t/s.
 
 ## Live two-bot calls
 
@@ -268,13 +283,15 @@ Audio crossing the 8 kHz mu-law line at wall-clock pace in both directions. Ever
 | Parakeet, LFM3-1.7B, LFM3 `/tts` both | 5 | 1157 | 1410 | 0 | 0 | 19 / 87 | 5 / 39 | 5.3 |
 | LFM3 realtime, two processes | 10 | 557 | 648 | 0 | 0 | 23 / 85 | 6 / 26 | 6.7 |
 
+These calls used Pocket 7M for the caller because they ran before the accuracy scoring. Use Pocket 18M instead: it has 13/15 critical tokens against 8/15 and still runs 12.4x, but it was not run in a live call.
+
 The E2E clock here starts at the last window with speech energy on the line, which runs higher than the single-side numbers since TTS tails and the line itself delay the VAD. These are 1 call each with 5 to 11 turns, so treat the medians as rough.
 
 Hardware was never the limit. The calls did show content failures that matter more:
 
 - **IDs do not survive TTS plus STT.** The caller's TTS said `AC9077`, and support's STT heard "SN977", "SE ninety seven seven", "AC nineteen seventy seven". No call on any stack reached a refund for this reason. The caller bot must spell IDs digit by digit before TTS.
 - **LFM3 realtime as a caller slips into the agent role.** It answered "I understand you are following the required process". Do not use it for caller personas.
-- **Caller and support both apologize at each other.** LFM3-1.7B and Qwen3.5-4B callers drifted with the fact sheet alone. The brief's ordered beats are needed.
+- **Callers drift with a fact sheet alone.** LFM3-1.7B and Qwen3.5-4B callers apologized, invented lines, and at times spoke as the agent. The brief's ordered beats are needed.
 
 
 ## `/v1/realtime` protocol notes
@@ -394,7 +411,7 @@ The support bot and caller for normal use. Live is viable.
 | LLM, support and caller | Qwen3.5-4B Q4_K_M, llama.cpp Vulkan, `-np 2` | 92 ms warm TTFT, 65.5 t/s, 12/12 tool sessions from speech, 4.0 GB | MIT | Apache-2.0 |
 | Support TTS | Phonon 31m q8, `ptts` on CPU | 23 ms TTFA, 10.5x, 14/15 critical, streams | MIT or Apache-2.0 | Apache-2.0 |
 | Caller TTS | Phonon catalog first, Pocket 18M presets from the safe list for more voices | Pocket: 29 ms, 12.4x, 13/15 | MIT | Apache-2.0, CC-BY-4.0, CC0 voices |
-| VAD | Silero, 300 ms hang measured | 0.1 ms per window, CPU | MIT | MIT |
+| VAD | Silero, 300 ms hang measured | 0.6 ms per 32 ms window, CPU | MIT | MIT |
 | Eval STT | Whisper large-v3 q5_0, whisper.cpp Vulkan | 16.9x on short clips, 22x on a 300 s clip, WER 0.006 on human speech, 28/32 critical | MIT | MIT |
 | Judge | Qwen3.8-27B UD-Q4_K_M, llama.cpp Vulkan | 13 t/s, 35 to 111 s per call, 4/4 valid JSON, 20/20 verdicts, 18.7 GB | MIT | Apache-2.0 |
 
@@ -413,6 +430,10 @@ The lowest latency cascade and the smallest GPU footprint, at the cost of tool r
 | TTS | Phonon 31m q8 for both sides | as above | MIT or Apache-2.0 | Apache-2.0 |
 
 End to end: plain turn 681 ms median, 737 ms max. Tool turn 1123 ms median, 1147 ms max. GPU 2.4 GB.
+
+### Slower TTS for turn-based calls and persona voices
+
+Qwen3-TTS 1.7B through `llama-server` `/tts` on Vulkan had the best accuracy of any engine, 15/15, and clones from a WAV with no gated weights. At 2.9x real time it keeps up, but first audio is 1.9 s, so it does not fit a live turn. It suits turn-based runs and pre-generated persona reference clips. It is over 3x faster than the same model on ROCm, so use Vulkan and not the `qwen-tts` package. Apache-2.0 weights, MIT code. Run it with `-m Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf -mm mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf -c 4096 -np 1 -ngl 999` and pass `speaker_ref_b64` to `/tts`.
 
 ### Alternative: LFM3 realtime
 
@@ -499,6 +520,18 @@ $PY summarize.py
 ```
 
 Setup steps are in `scripts/bench/download_models.sh` and `scripts/bench/build_whisper_cpp.sh`. The bench venv needs: `numpy soundfile websockets httpx "openai[realtime]" jiwer psutil onnxruntime kokoro-onnx onnx-asr sherpa-onnx pocket-tts silero-vad pyarrow ptts scipy`.
+
+## Answers to open questions in the research doc
+
+- LFM3-Audio on Vulkan on an AMD GPU: works, on RADV with Mesa 25.2.8.
+- Two realtime sessions on one server: works at 2.0x to 2.4x. Two processes do better at 2.6x to 3.1x.
+- `response.cancel` flush: 2 more audio deltas arrive after the cancel, within 17 to 30 ms.
+- Audio-only mode: issue #31436 reproduced here.
+- `words[].confidence` in NeMo-Speech.cpp: constant 1.0, no information.
+- NeMo-Speech.cpp v0.3.0 Vulkan tarball on RADV: works as shipped, 0.8 GB for Parakeet.
+- x86 speed: Phonon 31m 10.5x, Pocket 18M 12.4x, Pocket 7M 21.4x, Pocket 2M 37.8x, Kokoro 7.5x, all with 16 threads available.
+- Gemma Vulkan prefill anomaly: not seen. E2B prefilled at 1407 t/s.
+- Download total for this work: 38 GiB under `.runtime/models`, plus 0.5 GiB of Phonon and Pocket weights in `.runtime/hf`. That is over the 35 GB target and near the 40 GB limit, because Whisper large-v3 and the listener models were added late.
 
 ## Not verified
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import base64
 import json
 import re
 import statistics as st
@@ -18,7 +19,7 @@ from pathlib import Path
 import httpx
 import numpy as np
 
-from common import BENCH, LFM_Q4, LFM_Q4_MM, LlamaServer, critical_hits, save_result, wer
+from common import BENCH, LFM_Q4, LFM_Q4_MM, MODELS, LlamaServer, critical_hits, save_result, wer
 from rt_client import write_pcm16
 from speech_backends import KokoroTTS, open_stt
 
@@ -137,6 +138,34 @@ class Lfm:
                     yield (np.clip(np.frombuffer(data[:n], dtype="<f4"), -1, 1) * 32767).astype("<i2")
 
 
+class QwenGguf:
+    """Qwen3-TTS 1.7B GGUF on Vulkan through llama-server /tts, cloning a CC0 donated voice."""
+    rate = 24000
+
+    def __init__(self):
+        m = MODELS / "ggml-org__Qwen3-TTS-12Hz-1.7B-Base-GGUF"
+        self.server = LlamaServer(["-m", str(m / "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf"), "-mm", str(m / "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"), "-c", "4096", "-np", "1", "-ngl", "999"], name="tts-qwen-gguf")
+        self.server.__enter__()
+        atexit.register(self.server.__exit__, None, None, None)
+        self.ref = base64.b64encode((MODELS / "tts-voices" / "0a67.wav").read_bytes()).decode()
+
+    def warm(self):
+        list(self.stream("Warm up."))
+
+    def stream(self, text):
+        body = {"input": text, "lang": "en", "stream": True, "response_format": "pcm", "speaker_ref_b64": self.ref}
+        with httpx.stream("POST", self.server.url + "/tts", json=body, timeout=300) as r:
+            r.raise_for_status()
+            self.rate = int(r.headers.get("content-type", "rate=24000").split("rate=")[1].split(";")[0])
+            left = b""
+            for chunk in r.iter_bytes():
+                data = left + chunk
+                n = len(data) // 4 * 4
+                left = data[n:]
+                if n:
+                    yield (np.clip(np.frombuffer(data[:n], dtype="<f4"), -1, 1) * 32767).astype("<i2")
+
+
 def score() -> int:
     from common import RT
     import subprocess
@@ -187,6 +216,7 @@ def main() -> int:
         "pocket-2m": lambda: Pocket("english_2m_2026-10", threads=args.threads),
         "pocket-donation": lambda: Pocket("english_7m_2026-10", voice=args.voice_file, threads=args.threads),
         "lfm3": Lfm,
+        "qwen-gguf-vulkan": QwenGguf,
     }
     for name in args.engines or list(makers):
         try:
