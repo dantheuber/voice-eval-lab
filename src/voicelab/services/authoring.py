@@ -214,6 +214,18 @@ async def list_voices(stack: ProviderStack) -> list[dict[str, str]]:
     ]
 
 
+async def voiceless_personas(stack: ProviderStack, personas: list[Persona]) -> list[str]:
+    """Personas this profile has no voice for. A persona's voice belongs to one TTS, unless it's a
+    `default_*` alias, and the call would only fail once its first line came up. The fake TTS
+    takes any name, so it has no map and nothing to check."""
+    tts = stack.tts_caller
+    aliases = getattr(tts, "voice_map", None)
+    if aliases is None:
+        return []
+    known = {voice.id for voice in await tts.voices()} | set(aliases)
+    return [f"{p.name} ({p.voice.voice_id})" for p in personas if p.voice.voice_id not in known]
+
+
 async def preview_voice(
     stack: ProviderStack, text: str, voice: VoiceRef, line: LineConditions | None
 ) -> bytes:

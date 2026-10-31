@@ -10,6 +10,7 @@ from voicelab.api import mapping
 from voicelab.api.routes.calls import since
 from voicelab.api.schemas import PresetBody, RunBody, Svc
 from voicelab.core.models import LineConditions
+from voicelab.services import authoring
 from voicelab.services.compare import ComparedCall, compare_runs
 from voicelab.services.errors import Invalid, NotFound
 from voicelab.services.runs import RunPlan
@@ -56,6 +57,12 @@ async def create_run(body: RunBody, svc: Svc) -> dict[str, Any]:
     profile = body.profile or svc.profiles.active_id
     if profile is None:
         raise Invalid("no model profile in config/profiles")
+    personas = [svc.catalog.persona(pair.persona_id) for pair in body.pairs]
+    stack = svc.profiles.stack(svc.profiles.require(profile))
+    voiceless = await authoring.voiceless_personas(stack, [p for p in personas if p is not None])
+    if voiceless:
+        names = ", ".join(sorted(set(voiceless)))
+        raise Invalid(f"{profile} has no voice for {names}. Pick one of its voices on the persona.")
     plan = RunPlan(
         pairs=[(pair.scenario_id, pair.persona_id) for pair in body.pairs],
         reps=body.reps,

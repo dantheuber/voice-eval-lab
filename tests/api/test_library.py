@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import io
+from types import SimpleNamespace
 
 import pytest
 import soundfile as sf
 from fakes import fake_stack
 
-from voicelab.core.models import Verdict
+from voicelab.core.models import Persona, Verdict, VoiceRef
+from voicelab.providers.base import VoiceInfo
+from voicelab.services import authoring
 
 PERSONA = {
     "name": "Ann",
@@ -387,3 +390,18 @@ def test_prompt_preview_is_the_real_prompt_for_an_unsaved_form(client):
     saved = client.get(f"/api/personas/{created['id']}/prompt").json()["prompt"]
     assert client.post("/api/personas/prompt", json=PERSONA).json()["prompt"] == saved
     assert "fact sheet" in saved
+
+
+async def test_a_persona_with_another_engines_voice_is_named_before_any_call():
+    class PhononLike:
+        voice_map = {"default_female_1": "Juniper"}
+
+        async def voices(self):
+            return [VoiceInfo(id="Easton", label="Easton")]
+
+    def persona(name, voice_id):
+        return Persona(name=name, voice=VoiceRef(voice_id=voice_id))
+
+    personas = [persona("Ann", "default_female_1"), persona("Bo", "Easton"), persona("Cy", "vera")]
+    stack = SimpleNamespace(tts_caller=PhononLike())
+    assert await authoring.voiceless_personas(stack, personas) == ["Cy (vera)"]
