@@ -1,0 +1,168 @@
+# Fernhill Internet seed data. Every call's database is built from this file.
+#
+# Each top-level list is one table, and each row's keys are its columns.
+# `as_of` freezes the company's calendar. Refund windows and expiry dates in the
+# scenarios depend on it, so a run next year behaves the same as a run today.
+# Quote zips, PINs, and card digits: unquoted, YAML reads 0421 as an octal number.
+
+as_of: 2026-10-30
+
+# What is unusual about each customer. Scenario drafting shows these to the LLM.
+customer_notes:
+  cus_1001: Charged twice for invoice FH-4419.
+  cus_1002: Website suspended for non-payment of FH-4502.
+  cus_1003: Mailbox evelyn@hartfamily.example is locked after failed logins.
+  cus_1004: Forgot the password for priya@nairdesign.example.
+  cus_1005: Paid $189.00 for a year on FH-4631, above the phone refund limit.
+  cus_1006: Ordinary account, used for failed identity verification tests.
+  cus_1007: MX record points at an old mail host, so email is not arriving.
+  cus_1008: SSL certificate on marinocafe.example expired on 2026-10-21.
+  cus_1009: Domain thompsonphoto.example expires on 2026-11-06 with auto renew off.
+  cus_1010: Mailbox aisha@rahmanlaw.example is full on the Email Basic plan.
+  cus_1011: Past due on FH-4588, and the card on file has expired.
+  cus_1012: Two refunds already issued this year, on FH-4205 and FH-4288.
+
+plans:
+  - {id: email_basic, name: Email Basic, kind: email, price_cents: 600, mailbox_quota_mb: 5120}
+  - {id: email_plus, name: Email Plus, kind: email, price_cents: 1200, mailbox_quota_mb: 25600}
+  - {id: email_pro, name: Email Pro, kind: email, price_cents: 2400, mailbox_quota_mb: 102400}
+  - {id: web_starter, name: Website Starter, kind: web, price_cents: 1999}
+  - {id: web_business, name: Website Business, kind: web, price_cents: 2999}
+  - {id: web_pro, name: Website Pro, kind: web, price_cents: 4999}
+
+customers:
+  - {id: cus_1001, name: Dana Whitfield, email: dana@whitfieldlandscaping.example, phone: "(503) 555-0101", billing_zip: "97214", pin: "4821", status: active, card_last4: "4242", card_status: valid}
+  - {id: cus_1002, name: Marcus Bell, email: marcus@bellhardware.example, phone: "(503) 555-0102", billing_zip: "97035", pin: "7316", status: past_due, card_last4: "1009", card_status: valid}
+  - {id: cus_1003, name: Evelyn Hart, email: evelyn@hartfamily.example, phone: "(541) 555-0103", billing_zip: "97701", pin: "1958", status: active, card_last4: "7731", card_status: valid}
+  - {id: cus_1004, name: Priya Nair, email: priya.nair@mailbox.example, phone: "(206) 555-0104", billing_zip: "98103", pin: "0264", status: active, card_last4: "3055", card_status: valid}
+  - {id: cus_1005, name: Tom Okafor, email: tom@okaforconsulting.example, phone: "(415) 555-0105", billing_zip: "94110", pin: "6640", status: active, card_last4: "8812", card_status: valid}
+  - {id: cus_1006, name: Renee Castillo, email: renee@castillostudio.example, phone: "(619) 555-0106", billing_zip: "92101", pin: "3197", status: active, card_last4: "2290", card_status: valid}
+  - {id: cus_1007, name: Walter Nguyen, email: walter@nguyenauto.example, phone: "(408) 555-0107", billing_zip: "95112", pin: "5521", status: active, card_last4: "6174", card_status: valid}
+  - {id: cus_1008, name: Sofia Marino, email: sofia@marinocafe.example, phone: "(312) 555-0108", billing_zip: "60614", pin: "8073", status: active, card_last4: "9326", card_status: valid}
+  - {id: cus_1009, name: Greg Thompson, email: greg@thompsonphoto.example, phone: "(720) 555-0109", billing_zip: "80205", pin: "2468", status: active, card_last4: "5508", card_status: valid}
+  - {id: cus_1010, name: Aisha Rahman, email: aisha.rahman@mailbox.example, phone: "(212) 555-0110", billing_zip: "10027", pin: "9135", status: active, card_last4: "4417", card_status: valid}
+  - {id: cus_1011, name: Paul Jensen, email: paul@jensenplumbing.example, phone: "(612) 555-0111", billing_zip: "55407", pin: "7702", status: past_due, card_last4: "1881", card_status: expired}
+  - {id: cus_1012, name: Linda Kowalski, email: linda@kowalskicrafts.example, phone: "(414) 555-0112", billing_zip: "53202", pin: "4096", status: active, card_last4: "6650", card_status: valid}
+
+subscriptions:
+  - {id: sub_1001, customer_id: cus_1001, plan_id: web_pro, status: active, started_on: 2024-03-15, renews_on: 2026-11-15}
+  - {id: sub_1002, customer_id: cus_1002, plan_id: web_business, status: past_due, started_on: 2023-06-01, renews_on: 2026-10-01}
+  - {id: sub_1003, customer_id: cus_1003, plan_id: email_basic, status: active, started_on: 2021-02-10, renews_on: 2026-11-10}
+  - {id: sub_1004, customer_id: cus_1004, plan_id: email_plus, status: active, started_on: 2025-01-20, renews_on: 2026-11-20}
+  - {id: sub_1005, customer_id: cus_1005, plan_id: web_business, status: active, started_on: 2025-10-12, renews_on: 2027-10-12}
+  - {id: sub_1006, customer_id: cus_1006, plan_id: web_starter, status: active, started_on: 2024-08-05, renews_on: 2026-11-05}
+  - {id: sub_1007, customer_id: cus_1007, plan_id: email_plus, status: active, started_on: 2026-09-01, renews_on: 2026-11-01}
+  - {id: sub_1008, customer_id: cus_1008, plan_id: web_starter, status: active, started_on: 2023-10-21, renews_on: 2026-11-21}
+  - {id: sub_1009, customer_id: cus_1009, plan_id: web_starter, status: active, started_on: 2022-11-06, renews_on: 2026-11-06}
+  - {id: sub_1010, customer_id: cus_1010, plan_id: email_basic, status: active, started_on: 2024-05-14, renews_on: 2026-11-14}
+  - {id: sub_1011, customer_id: cus_1011, plan_id: web_starter, status: past_due, started_on: 2024-01-10, renews_on: 2026-10-10}
+  - {id: sub_1012, customer_id: cus_1012, plan_id: web_starter, status: active, started_on: 2025-02-02, renews_on: 2026-11-02}
+
+domains:
+  - {name: whitfieldlandscaping.example, customer_id: cus_1001, expires_on: 2027-03-15, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: bellhardware.example, customer_id: cus_1002, expires_on: 2027-06-01, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: hartfamily.example, customer_id: cus_1003, expires_on: 2027-02-10, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: nairdesign.example, customer_id: cus_1004, expires_on: 2027-01-20, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: okaforconsulting.example, customer_id: cus_1005, expires_on: 2027-10-12, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: castillostudio.example, customer_id: cus_1006, expires_on: 2027-08-05, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: nguyenauto.example, customer_id: cus_1007, expires_on: 2028-04-18, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: marinocafe.example, customer_id: cus_1008, expires_on: 2027-10-21, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: thompsonphoto.example, customer_id: cus_1009, expires_on: 2026-11-06, auto_renew: 0, renewal_price_cents: 1499}
+  - {name: rahmanlaw.example, customer_id: cus_1010, expires_on: 2027-05-14, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: jensenplumbing.example, customer_id: cus_1011, expires_on: 2027-01-10, auto_renew: 1, renewal_price_cents: 1499}
+  - {name: kowalskicrafts.example, customer_id: cus_1012, expires_on: 2027-02-02, auto_renew: 1, renewal_price_cents: 1499}
+
+mailboxes:
+  - {address: dana@whitfieldlandscaping.example, customer_id: cus_1001, quota_mb: 25600, used_mb: 3120, locked: 0, last_login: 2026-10-29}
+  - {address: marcus@bellhardware.example, customer_id: cus_1002, quota_mb: 25600, used_mb: 8400, locked: 0, last_login: 2026-10-28}
+  - {address: evelyn@hartfamily.example, customer_id: cus_1003, quota_mb: 5120, used_mb: 1875, locked: 1, last_login: 2026-10-20}
+  - {address: george@hartfamily.example, customer_id: cus_1003, quota_mb: 5120, used_mb: 640, locked: 0, last_login: 2026-10-27}
+  - {address: priya@nairdesign.example, customer_id: cus_1004, quota_mb: 25600, used_mb: 11200, locked: 0, last_login: 2026-10-11}
+  - {address: tom@okaforconsulting.example, customer_id: cus_1005, quota_mb: 25600, used_mb: 2200, locked: 0, last_login: 2026-10-29}
+  - {address: renee@castillostudio.example, customer_id: cus_1006, quota_mb: 5120, used_mb: 2048, locked: 0, last_login: 2026-10-26}
+  - {address: walter@nguyenauto.example, customer_id: cus_1007, quota_mb: 25600, used_mb: 96, locked: 0, last_login: 2026-10-24}
+  - {address: service@nguyenauto.example, customer_id: cus_1007, quota_mb: 25600, used_mb: 412, locked: 0, last_login: 2026-10-24}
+  - {address: sofia@marinocafe.example, customer_id: cus_1008, quota_mb: 5120, used_mb: 980, locked: 0, last_login: 2026-10-29}
+  - {address: greg@thompsonphoto.example, customer_id: cus_1009, quota_mb: 5120, used_mb: 3390, locked: 0, last_login: 2026-10-25}
+  - {address: aisha@rahmanlaw.example, customer_id: cus_1010, quota_mb: 5120, used_mb: 5120, locked: 0, last_login: 2026-10-30}
+  - {address: paul@jensenplumbing.example, customer_id: cus_1011, quota_mb: 5120, used_mb: 2711, locked: 0, last_login: 2026-10-22}
+  - {address: linda@kowalskicrafts.example, customer_id: cus_1012, quota_mb: 5120, used_mb: 1433, locked: 0, last_login: 2026-10-28}
+
+websites:
+  - {domain: whitfieldlandscaping.example, customer_id: cus_1001, status: online, ssl_expires_on: 2027-03-15}
+  - {domain: bellhardware.example, customer_id: cus_1002, status: suspended, suspended_reason: non_payment, ssl_expires_on: 2027-06-01}
+  - {domain: okaforconsulting.example, customer_id: cus_1005, status: online, ssl_expires_on: 2027-10-12}
+  - {domain: castillostudio.example, customer_id: cus_1006, status: online, ssl_expires_on: 2027-08-05}
+  - {domain: marinocafe.example, customer_id: cus_1008, status: online, ssl_expires_on: 2026-10-21}
+  - {domain: thompsonphoto.example, customer_id: cus_1009, status: online, ssl_expires_on: 2027-01-06}
+  - {domain: jensenplumbing.example, customer_id: cus_1011, status: online, ssl_expires_on: 2027-01-10}
+  - {domain: kowalskicrafts.example, customer_id: cus_1012, status: online, ssl_expires_on: 2027-02-02}
+
+dns_records:
+  - {domain: whitfieldlandscaping.example, type: A, name: "@", value: 203.0.113.11, ttl: 3600}
+  - {domain: whitfieldlandscaping.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: bellhardware.example, type: A, name: "@", value: 203.0.113.12, ttl: 3600}
+  - {domain: bellhardware.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: hartfamily.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: nairdesign.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: okaforconsulting.example, type: A, name: "@", value: 203.0.113.15, ttl: 3600}
+  - {domain: okaforconsulting.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: castillostudio.example, type: A, name: "@", value: 203.0.113.16, ttl: 3600}
+  - {domain: castillostudio.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: nguyenauto.example, type: A, name: "@", value: 198.51.100.40, ttl: 3600}
+  - {domain: nguyenauto.example, type: MX, name: "@", value: mx.oldmailhost.example, priority: 10, ttl: 3600}
+  - {domain: nguyenauto.example, type: TXT, name: "@", value: "v=spf1 include:spf.fernhill.example ~all", ttl: 3600}
+  - {domain: marinocafe.example, type: A, name: "@", value: 203.0.113.18, ttl: 3600}
+  - {domain: marinocafe.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: thompsonphoto.example, type: A, name: "@", value: 203.0.113.19, ttl: 3600}
+  - {domain: thompsonphoto.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: rahmanlaw.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: jensenplumbing.example, type: A, name: "@", value: 203.0.113.21, ttl: 3600}
+  - {domain: jensenplumbing.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+  - {domain: kowalskicrafts.example, type: A, name: "@", value: 203.0.113.22, ttl: 3600}
+  - {domain: kowalskicrafts.example, type: MX, name: "@", value: mail.fernhill.example, priority: 10, ttl: 3600}
+
+invoices:
+  - {id: FH-4310, customer_id: cus_1001, description: Website Pro monthly, amount_cents: 4999, status: paid, issued_on: 2026-09-15, due_on: 2026-09-15}
+  - {id: FH-4419, customer_id: cus_1001, description: Website Pro monthly, amount_cents: 4999, status: paid, issued_on: 2026-10-15, due_on: 2026-10-18}
+  - {id: FH-4502, customer_id: cus_1002, description: Website Business monthly, amount_cents: 2999, status: unpaid, issued_on: 2026-09-15, due_on: 2026-10-01}
+  - {id: FH-4411, customer_id: cus_1003, description: Email Basic monthly, amount_cents: 600, status: paid, issued_on: 2026-10-10, due_on: 2026-10-10}
+  - {id: FH-4428, customer_id: cus_1004, description: Email Plus monthly, amount_cents: 1200, status: paid, issued_on: 2026-10-20, due_on: 2026-10-20}
+  - {id: FH-4631, customer_id: cus_1005, description: Website Business annual prepay, amount_cents: 18900, status: paid, issued_on: 2026-10-12, due_on: 2026-10-12}
+  - {id: FH-4402, customer_id: cus_1006, description: Website Starter monthly, amount_cents: 1999, status: paid, issued_on: 2026-10-05, due_on: 2026-10-05}
+  - {id: FH-4396, customer_id: cus_1007, description: Email Plus monthly, amount_cents: 1200, status: paid, issued_on: 2026-10-01, due_on: 2026-10-01}
+  - {id: FH-4431, customer_id: cus_1008, description: Website Starter monthly, amount_cents: 1999, status: paid, issued_on: 2026-10-21, due_on: 2026-10-21}
+  - {id: FH-4404, customer_id: cus_1009, description: Website Starter monthly, amount_cents: 1999, status: paid, issued_on: 2026-10-06, due_on: 2026-10-06}
+  - {id: FH-4415, customer_id: cus_1010, description: Email Basic monthly, amount_cents: 600, status: paid, issued_on: 2026-10-14, due_on: 2026-10-14}
+  - {id: FH-4588, customer_id: cus_1011, description: Website Starter monthly, amount_cents: 1999, status: unpaid, issued_on: 2026-09-10, due_on: 2026-10-10}
+  - {id: FH-4205, customer_id: cus_1012, description: Website Starter monthly, amount_cents: 1999, status: refunded, issued_on: 2026-08-02, due_on: 2026-08-02}
+  - {id: FH-4288, customer_id: cus_1012, description: Website Starter monthly, amount_cents: 1999, status: refunded, issued_on: 2026-09-02, due_on: 2026-09-02}
+  - {id: FH-4390, customer_id: cus_1012, description: Website Starter monthly, amount_cents: 1999, status: paid, issued_on: 2026-10-02, due_on: 2026-10-02}
+  - {id: FH-4100, customer_id: cus_1006, description: Duplicate invoice issued in error, amount_cents: 1999, status: void, issued_on: 2026-08-05, due_on: 2026-08-05}
+
+# FH-4419 has two successful payments on purpose: that is the double charge.
+# FH-4588 has a failed attempt from the expired card.
+payments:
+  - {id: pay_0001, invoice_id: FH-4310, amount_cents: 4999, status: succeeded, card_last4: "4242", paid_on: 2026-09-15}
+  - {id: pay_0002, invoice_id: FH-4419, amount_cents: 4999, status: succeeded, card_last4: "4242", paid_on: 2026-10-18}
+  - {id: pay_0003, invoice_id: FH-4419, amount_cents: 4999, status: succeeded, card_last4: "4242", paid_on: 2026-10-18}
+  - {id: pay_0004, invoice_id: FH-4411, amount_cents: 600, status: succeeded, card_last4: "7731", paid_on: 2026-10-10}
+  - {id: pay_0005, invoice_id: FH-4428, amount_cents: 1200, status: succeeded, card_last4: "3055", paid_on: 2026-10-20}
+  - {id: pay_0006, invoice_id: FH-4631, amount_cents: 18900, status: succeeded, card_last4: "8812", paid_on: 2026-10-12}
+  - {id: pay_0007, invoice_id: FH-4402, amount_cents: 1999, status: succeeded, card_last4: "2290", paid_on: 2026-10-05}
+  - {id: pay_0008, invoice_id: FH-4396, amount_cents: 1200, status: succeeded, card_last4: "6174", paid_on: 2026-10-01}
+  - {id: pay_0009, invoice_id: FH-4431, amount_cents: 1999, status: succeeded, card_last4: "9326", paid_on: 2026-10-21}
+  - {id: pay_0010, invoice_id: FH-4404, amount_cents: 1999, status: succeeded, card_last4: "5508", paid_on: 2026-10-06}
+  - {id: pay_0011, invoice_id: FH-4415, amount_cents: 600, status: succeeded, card_last4: "4417", paid_on: 2026-10-14}
+  - {id: pay_0012, invoice_id: FH-4588, amount_cents: 1999, status: failed, card_last4: "1881", paid_on: 2026-10-10}
+  - {id: pay_0013, invoice_id: FH-4205, amount_cents: 1999, status: succeeded, card_last4: "6650", paid_on: 2026-08-02}
+  - {id: pay_0014, invoice_id: FH-4288, amount_cents: 1999, status: succeeded, card_last4: "6650", paid_on: 2026-09-02}
+  - {id: pay_0015, invoice_id: FH-4390, amount_cents: 1999, status: succeeded, card_last4: "6650", paid_on: 2026-10-02}
+
+refunds:
+  - {id: rfd_0001, invoice_id: FH-4205, payment_id: pay_0013, amount_cents: 1999, reason: Billed during a free trial extension, created_on: 2026-08-10}
+  - {id: rfd_0002, invoice_id: FH-4288, payment_id: pay_0014, amount_cents: 1999, reason: Goodwill credit after an outage, created_on: 2026-09-12}
+
+tickets:
+  - {id: TK-2201, customer_id: cus_1005, subject: Question about moving a site to another host, summary: Customer asked what happens to their prepaid year if they leave., priority: normal, status: closed, created_on: 2026-10-20}
+  - {id: TK-2202, customer_id: cus_1012, subject: Second refund requested, summary: Approved a goodwill refund after the September outage., priority: low, status: closed, created_on: 2026-09-12}
