@@ -547,3 +547,23 @@ def test_summary_explains_a_commission_past_a_missed_beat():
     text = summary_for(artifact, criteria=[beat("approve", "fail"), no_change_failed()])
     assert text.startswith("Verdict: fail.")
     assert "Why: the bot did something forbidden" in text
+
+
+def test_a_broken_no_change_says_what_was_broken():
+    decision = decide(linked(), criteria=[no_change_failed()])
+    assert decision.reasons[0] == "the bot did something forbidden, which broke: left alone"
+
+
+def test_a_missed_beat_is_named_when_it_doesn_t_excuse_a_commission():
+    decision = decide(linked(), criteria=[beat("approve", "fail"), no_change_failed()])
+    assert decision.reasons[-1] == (
+        "the caller also missed a required checkpoint, which doesn't excuse this: beat approve"
+    )
+
+
+def test_a_summary_reads_cleanly_when_criteria_end_in_a_period():
+    failed = criterion("must", "fail", "c1", "Say goodbye.")
+    decision = decide(criteria=[failed])
+    text = write_summary(decision, scripted(), [failed], [], [])
+    assert "Why: failed must: Say goodbye." in text
+    assert ".;" not in text and ".." not in text

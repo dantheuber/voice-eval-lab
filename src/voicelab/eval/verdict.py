@@ -68,7 +68,13 @@ def decide_verdict(
     if breaches:
         return _with_breach(breaches, commissions, missed)
     if commissions:
-        return VerdictDecision(Verdict.FAIL, [c.what for c in commissions])
+        reasons = [c.what for c in commissions]
+        if missed:
+            steps = "; ".join(c.text for c in missed)
+            reasons.append(
+                f"the caller also missed a required checkpoint, which doesn't excuse this: {steps}"
+            )
+        return VerdictDecision(Verdict.FAIL, reasons)
 
     blamed, excused = _omissions(scenario, criteria, proven, beats, bool(missed))
     if missed and _ended_by(artifact, "bot_ended"):
@@ -107,7 +113,13 @@ def _commissions(
         if changed or forbidden:
             proven.add((criterion.kind, criterion.criterion_id))
             at_s = next((e.start_s for e in criterion.evidence if e.start_s is not None), None)
-            found.append(_Commission(f"the bot did something forbidden: {criterion.text}", at_s))
+            what = "which broke: " if changed else ""
+            lead = (
+                "the bot did something forbidden, "
+                if changed
+                else "the bot did something forbidden: "
+            )
+            found.append(_Commission(f"{lead}{what}{criterion.text}", at_s))
     found += [
         _Commission(f"the bot did something forbidden: {f.title}", _earliest(f))
         for f in findings
@@ -264,7 +276,7 @@ def write_summary(
 ) -> str:
     lines = [f"Verdict: {decision.verdict.value}."]
     if decision.reasons:
-        listed = "; ".join(decision.reasons[:_MAX_LISTED])
+        listed = "; ".join(reason.rstrip(".") for reason in decision.reasons[:_MAX_LISTED])
         extra = len(decision.reasons) - _MAX_LISTED
         lines.append(f"Why: {listed}" + (f"; and {extra} more." if extra > 0 else "."))
     if criteria:

@@ -32,8 +32,9 @@ from voicelab.eval.speech_measures import (
 from voicelab.eval.vad import Region
 
 LIMITATION = (
-    "Delivery limits come from 21 clips and no listener ratings. On a phone line, pitch is read "
-    "from harmonics because the band removes the fundamental, and SNR covers 300 to 3400 Hz."
+    "Delivery limits come from 21 clips, 18 real calls, and no listener ratings. On a phone line, "
+    "pitch is read from harmonics because the band removes the fundamental, and SNR covers 300 to "
+    "3400 Hz."
 )
 _WORD_SLACK_S = 0.1
 _WORD_EDGE_S = 0.02
