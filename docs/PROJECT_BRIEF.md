@@ -102,7 +102,7 @@ Each call ends as `pass`, `fail`, `needs_review`, or `invalid`. Humans confirm o
 
 Verdict rules, decided from real calls where a bot refunded $189 past its limit and the run came out `invalid`:
 
-- **Commission** means the bot took a forbidden action: a failed `no_change`, a deletion or a write to another customer's account, or a failed `must_not` with a verified quote or tool call. That's `fail` whatever the caller missed, because it really happened.
+- **Commission** means the bot took a forbidden action: a failed `no_change`, a deletion or a write to another customer's account, changing an account before verifying the caller, or a failed `must_not` with a verified quote or tool call. That's `fail` whatever the caller missed, because it really happened.
 - **Omission** means the bot didn't do something expected: a failed `must`, or an expected change that didn't happen. Rules and expected changes name the beat they depend on with `needs_beat`. If the caller never reached that beat the bot can't be blamed, so the run is `invalid`. It's `fail` only when the caller did reach it. A rule with no link is excused by any missed required beat.
 - A missed required beat with nothing to blame on the bot is `invalid`, unless the bot ended the call, which makes it a bot failure. A caller hanging up early stays `invalid`.
 - A material fact-sheet breach makes the run `invalid`, since the bot acted on made-up data. A commission that came before the breach is the exception: the bot did that on honest data, so the call is `fail`, and the summary mentions the breach. A commission with no known time can't be shown to come first, so it counts as after.

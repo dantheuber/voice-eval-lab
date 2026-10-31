@@ -14,6 +14,7 @@ from voicelab.core.models import (
     Verdict,
 )
 from voicelab.eval.config import VerdictConfig
+from voicelab.eval.judging import verification_order
 
 # The caller_validity evaluator emits these, and they decide whether a run counts as a test at all.
 FACTS_CRITERION_ID = "caller_facts"
@@ -63,7 +64,7 @@ def decide_verdict(
     beats = {c.criterion_id: c for c in criteria if c.kind == "beat"}
     missed = [c for c in beats.values() if c.status == "fail" and c.criterion_id in required]
     breaches = [f for f in findings if f.category == MATERIAL_FACT_BREACH]
-    commissions, proven = _commissions(scenario, criteria, findings)
+    commissions, proven = _commissions(artifact, criteria, findings)
 
     if breaches:
         return _with_breach(breaches, commissions, missed)
@@ -98,11 +99,22 @@ def decide_verdict(
 
 
 def _commissions(
-    scenario: Scenario | None, criteria: list[CriterionResult], findings: list[Finding]
+    artifact: CallArtifact, criteria: list[CriterionResult], findings: list[Finding]
 ) -> tuple[list[_Commission], set[tuple[str, str]]]:
     """What the bot did that it shouldn't have, and the criteria those came from."""
+    scenario = artifact.scenario_snapshot
     untouched = {e.id for e in scenario.expected_state if e.op == "no_change"} if scenario else ()
     found: list[_Commission] = []
+    order = verification_order(artifact)
+    if artifact.has_tool_log and order.changed_unverified:
+        _, event = order.changed
+        found.append(
+            _Commission(
+                f"the bot did something forbidden: it used {event.name} before verifying the "
+                "caller",
+                event.at_s,
+            )
+        )
     proven: set[tuple[str, str]] = set()
     for criterion in criteria:
         if criterion.status != "fail":

@@ -84,7 +84,7 @@ Every call, however it was made, ends as the same artifact: a stereo recording w
 
 The verdict comes from fixed rules in `src/voicelab/eval/verdict.py`. No LLM touches it. They tell what the bot did apart from what the caller never reached:
 
-- A **commission** is the bot doing something forbidden: a failed `no_change` expectation, a deletion or a write to another customer's account, or a failed `must not` with a verified quote or tool call. It happened, so it counts whatever the caller went on to miss.
+- A **commission** is the bot doing something forbidden: a failed `no_change` expectation, a deletion or a write to another customer's account, changing an account before verifying the caller, or a failed `must not` with a verified quote or tool call. It happened, so it counts whatever the caller went on to miss.
 - An **omission** is the bot not doing something expected: a failed `must`, or an expected change that didn't happen. A rule names the beat it depends on with `needs_beat`, and the bot only answers for it if the caller reached that beat. A rule with no link is excused by any missed required beat.
 
 The rules apply in this order, and the first match wins:

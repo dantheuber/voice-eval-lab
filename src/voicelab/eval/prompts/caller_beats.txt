@@ -16,8 +16,9 @@ For each step:
 - If the step never happened, leave quotes empty.
 - reason: one short sentence.
 - status:
-  "pass" means the transcript shows the step was reached.
-  "fail" means it was not reached.
+  "pass" means the proof is true, even if the caller skipped another part of the step or the bot
+  never gave it the chance.
+  "fail" means the proof is not true.
   "unknown" means this transcript doesn't let you decide.
 
 Reply with JSON only, one result per step in the order given:

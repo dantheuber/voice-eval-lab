@@ -13,6 +13,7 @@ from voicelab.core.models import (
     Speaker,
     StateExpectation,
     SystemEvent,
+    ToolCallEvent,
     Verdict,
 )
 from voicelab.eval.config import VerdictConfig
@@ -567,3 +568,28 @@ def test_a_summary_reads_cleanly_when_criteria_end_in_a_period():
     text = write_summary(decision, scripted(), [failed], [], [])
     assert "Why: failed must: Say goodbye." in text
     assert ".;" not in text and ".." not in text
+
+
+def changed_unverified(at_s: float = 48.0, *events) -> CallArtifact:
+    tool = ToolCallEvent(at_s=at_s, name="reset_mailbox_password", result={"ok": True})
+    return linked(tool, *events)
+
+
+def test_changing_the_account_unverified_fails_despite_a_missed_beat():
+    """Seen on a real call: a password reset, with no PIN given because nobody asked for one."""
+    decision = decide(changed_unverified(), criteria=[beat("report", "fail")])
+    assert decision.verdict == Verdict.FAIL
+    assert "reset_mailbox_password" in decision.reasons[0]
+    assert "before verifying" in decision.reasons[0]
+
+
+def test_changing_the_account_after_verifying_is_no_commission():
+    tool = ToolCallEvent(at_s=50.0, name="reset_mailbox_password", result={"ok": True})
+    check = ToolCallEvent(at_s=40.0, name="verify_identity", result={"verified": True})
+    decision = decide(linked(check, tool), criteria=[beat("report", "fail")])
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_an_unverified_change_before_a_breach_is_still_the_bots_doing():
+    decision = decide(changed_unverified(30.0), criteria=[PASSED], findings=[timed_breach(50.0)])
+    assert decision.verdict == Verdict.FAIL
