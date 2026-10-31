@@ -35,7 +35,10 @@ export function PersonasScreen() {
   );
 }
 
-const blank = (): PersonaInput => ({ name: "", summary: "", age: null, temperament: "neutral", speakingStyle: "", patience: 3, verbosity: 3, techSavviness: 3, interruptionRate: 0, voice: { provider: null, voiceId: "mary", style: null }, line: { codec: "mulaw_8k", noise: "none", snrDb: 20, packetLossPct: 0, oneWayLatencyMs: 80 } });
+/* `default_female_1` and the like stand for a matching voice on whichever TTS the profile uses, so a persona works on all of them. */
+const voiceLabel = (id: string) => (id.startsWith("default_") ? `${id.slice(8).replace("_", " ")}, the profile's own voice` : id);
+
+const blank = (): PersonaInput => ({ name: "", summary: "", age: null, temperament: "neutral", speakingStyle: "", patience: 3, verbosity: 3, techSavviness: 3, interruptionRate: 0, voice: { provider: null, voiceId: "default_female_1", style: null }, line: { codec: "mulaw_8k", noise: "none", snrDb: 20, packetLossPct: 0, oneWayLatencyMs: 80 } });
 
 /* Editor state is keyed by resource id, so jumping from one persona to another never carries the previous form over. */
 export function PersonaEditorScreen() {
@@ -114,7 +117,7 @@ function PersonaEditor({ id }: { id: string | undefined }) {
                     <div className="form-row">
                       <Field label="TTS voice"><select className="in" value={`${form.voice.provider ?? ""}|${form.voice.voiceId}`} onChange={(e) => { const [provider, voiceId] = e.target.value.split("|"); up("voice", { ...form.voice, provider: provider || null, voiceId }); }}>
                         {voices.data?.items.map((v) => <option key={`${v.provider}|${v.voiceId}`} value={`${v.provider}|${v.voiceId}`}>{v.label}</option>)}
-                        {!voices.data?.items.some((v) => v.voiceId === form.voice.voiceId) && <option value={`${form.voice.provider ?? ""}|${form.voice.voiceId}`}>{form.voice.voiceId}</option>}
+                        {!voices.data?.items.some((v) => v.voiceId === form.voice.voiceId) && <option value={`${form.voice.provider ?? ""}|${form.voice.voiceId}`}>{voiceLabel(form.voice.voiceId)}</option>}
                       </select></Field>
                       <Field label="Delivery hint" help="Free text for providers that take one."><input className="in" value={form.voice.style ?? ""} onChange={(e) => up("voice", { ...form.voice, style: e.target.value || null })} /></Field>
                     </div>
