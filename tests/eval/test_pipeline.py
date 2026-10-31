@@ -263,16 +263,30 @@ async def test_missed_required_beat_invalidates_the_call(store):
     assert result.verdict == Verdict.INVALID
 
 
-async def test_wrong_amount_in_the_audio_fails_the_call(store):
-    artifact, paths = write_call(store, scripted_call(), **SPANS)
-    wrong = FakeSTT(
+def stt_hearing(amount: str) -> FakeSTT:
+    return FakeSTT(
         make_transcript((CALLER_SAID, 0.0)),
-        make_transcript(("your refund of $59.99 is done goodbye", 4.5)),
+        make_transcript((f"your refund of {amount} is done goodbye", 4.5)),
     )
-    result = await run_evaluation(artifact, paths, EvalDeps(stt=wrong, judge=friendly_judge()))
-    assert result.verdict == Verdict.FAIL
-    mismatch = next(f for f in result.findings if f.category == "critical_token_mismatch")
+
+
+async def test_wrong_amount_from_one_asr_goes_to_review(store):
+    artifact, paths = write_call(store, scripted_call(), **SPANS)
+    deps = EvalDeps(stt=stt_hearing("$59.99"), judge=friendly_judge())
+    result = await run_evaluation(artifact, paths, deps)
+    assert result.verdict == Verdict.NEEDS_REVIEW
+    mismatch = next(f for f in result.findings if f.category == "critical_token_asr_only")
     assert mismatch.clip_start_s is not None
+
+
+async def test_wrong_amount_heard_by_two_engines_fails_the_call(store):
+    artifact = scripted_call()
+    artifact.timeline[1].heard_text = "your refund of $59.99 is done goodbye"
+    artifact, paths = write_call(store, artifact, **SPANS)
+    deps = EvalDeps(stt=stt_hearing("$59.99"), judge=friendly_judge())
+    result = await run_evaluation(artifact, paths, deps)
+    assert result.verdict == Verdict.FAIL
+    assert "critical_token_corroborated" in {f.category for f in result.findings}
 
 
 async def test_advisory_listening_alone_cannot_fail_a_call(store):

@@ -3,7 +3,11 @@
 A reference can be display text ("$49.99", "FH-4419") or the TTS form that `agents.speech` builds
 ("forty nine dollars and ninety nine cents", "F H dash 4 4 1 9"), and an ASR can return either.
 All of them become the same tokens. Digits compare one at a time, so one wrong digit in a long
-number is one substitution, and money words are dropped so "forty nine ninety nine" still matches.
+number is one substitution.
+
+Amounts keep their decimal point as a token, because $5.50 and $550 are not the same money. A
+symbol or unit word only says it's money: $5, 5.00, and "five dollars" all read as 5. A bare
+"forty nine ninety nine" has no unit, and can't be told from a year, so it stays a plain number.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ _SENTENCE_END = (".", "?", "!", ":")
 _NUMERIC = re.compile(r"^\$?\d[\d,.\-:/]*(st|nd|rd|th|%)?$")
 _NUMBER_WITH_UNIT = re.compile(r"^(\d+)([A-Za-z]{2,})$")
 _ISO_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_DECIMAL = re.compile(r"^\$?(\d[\d,]*)\.(\d+)%?$")
 _ALPHANUMERIC_ID = re.compile(r"^[A-Za-z]{1,6}-?\d[\d-]*$")
 _EMAIL = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
 _DOMAIN = re.compile(r"^(https?://)?([\w-]+\.)+([a-z]{2,})(/\S*)?$", re.IGNORECASE)
@@ -99,18 +104,21 @@ class Token:
 
 
 class _SpokenNumber:
-    """Reads number words as digits, in the groups people say them.
+    """Reads numbers as digits, in the groups people say them, with an optional fraction.
 
     "twenty twenty four" is 2024 and "two thousand twenty four" is the same number. A word that
     can't extend the current group starts a new one, and groups are written side by side, which
-    also covers digit strings like "five five five oh one".
+    also covers digit strings like "five five five oh one". After "dollars" or "point", digits go
+    to the fraction, so "$5.50" and "five dollars and fifty cents" both come out as 5.50.
     """
 
     def __init__(self) -> None:
-        self.digits = ""
+        self._digits = ""
         self._thousands = 0
         self._value: int | None = None
-        self._group_start = 0
+        self._fraction_at: int | None = None
+        self._cents = False  # the fraction is cents, so five of them is .05 and not .50
+        self.complete = False  # a finished amount: another number after it is a new number
 
     def add_word(self, word: str) -> None:
         if word == "thousand":
@@ -137,31 +145,46 @@ class _SpokenNumber:
 
     def add_digits(self, digits: str) -> None:
         self._close_group()
-        self._group_start = len(self.digits)
-        self.digits += digits
+        self._digits += digits
 
-    def pad_cents(self) -> None:
-        """ "five dollars and five cents" is 505, not 55."""
+    def add_decimal(self, whole: str, fraction: str) -> None:
+        self.add_digits(whole)
+        self._fraction_at = len(self._digits)
+        self._digits += fraction
+        self.complete = True
+
+    def start_fraction(self, *, cents: bool) -> None:
+        """A "dollars" or "point" boundary: whatever comes next is after the decimal point."""
         self._close_group()
-        group = self.digits[self._group_start :]
-        self.digits = self.digits[: self._group_start] + group.zfill(2)
+        if self._fraction_at is None:
+            self._fraction_at = len(self._digits)
+            self._cents = cents
+
+    def end_cents(self) -> None:
+        """A "cents" word. With no dollars before it, the amount is under a dollar."""
+        self._close_group()
+        if self._fraction_at is None:
+            self._digits, self._fraction_at = f"0{self._digits}", 1
+        self._cents = True
+        self.complete = True
 
     def finish(self) -> str:
         self._close_group()
-        return self.digits
+        if self._fraction_at is None:
+            return self._digits
+        whole, fraction = self._digits[: self._fraction_at], self._digits[self._fraction_at :]
+        fraction = fraction.zfill(2) if self._cents else fraction.ljust(2, "0")
+        return f"{whole}.{fraction}" if fraction.strip("0") else whole
 
     def _close_group(self) -> None:
         if self._thousands or self._value is not None:
-            self._group_start = len(self.digits)
-            self.digits += str(self._thousands + (self._value or 0))
+            self._digits += str(self._thousands + (self._value or 0))
         self._thousands, self._value = 0, None
 
 
 def _numeric_digits(word: str) -> str:
-    if word.startswith("$") and word.endswith(".00") or word.endswith(":00"):
+    if word.endswith(":00"):
         word = word[:-3]
-    if word.startswith("$0."):
-        word = word[3:]
     return re.sub(r"\D", "", word)
 
 
@@ -172,23 +195,42 @@ def _consume_number(words: Sequence[str], start: int) -> tuple[int, str, bool]:
     i = start
     while i < len(words):
         word = words[i]
-        if _NUMERIC.match(word):
-            number.add_digits(_numeric_digits(word))
+        if number.complete and _starts_number(word):
+            break
+        decimal = _DECIMAL.match(word)
+        if decimal:
+            number.add_decimal(decimal.group(1).replace(",", ""), decimal.group(2))
             money = money or word.startswith("$")
+        elif _NUMERIC.match(word):
+            number.add_digits(_numeric_digits(word))
+            if word.startswith("$"):
+                money = True
+                number.start_fraction(cents=True)
         elif word in _NUMBER_WORDS:
             number.add_word(word)
         elif word in _MONEY_WORDS and i > start:
             money = True
             if word in _CENT_WORDS:
-                number.pad_cents()
+                number.end_cents()
+            else:
+                number.start_fraction(cents=True)
         elif word in _NUMBER_UNITS and i > start:
             pass
-        elif word in _NUMBER_JOINERS and i + 1 < len(words) and _starts_number(words[i + 1]):
-            pass
+        elif word in _NUMBER_JOINERS and _joins_number(words, i, number):
+            if word == "point":
+                number.start_fraction(cents=False)
         else:
             break
         i += 1
     return i, number.finish(), money
+
+
+def _joins_number(words: Sequence[str], i: int, number: _SpokenNumber) -> bool:
+    """Whether "and" or "point" continues this number. "$5 and $20" are two amounts."""
+    if number.complete or i + 1 >= len(words):
+        return False
+    following = words[i + 1]
+    return _starts_number(following) and not following.startswith("$")
 
 
 def _starts_number(word: str) -> bool:

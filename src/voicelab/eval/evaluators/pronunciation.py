@@ -1,5 +1,9 @@
 """What the bot was meant to say against what an independent ASR heard.
 
+One ASR disagreeing with the script is a suspicion, because ASRs make mistakes on their own. So a
+critical mismatch is advisory unless a second engine confirms it: the live STT, recorded as
+`heard_text`, has to have heard the same wrong token. Then it's corroborated and can fail a call.
+
 The comparison runs over the whole call at once, not utterance by utterance. ASR timestamps drift,
 and cutting the words into per-utterance windows would turn that drift into false mismatches on
 the very tokens that fail a call.
@@ -7,13 +11,14 @@ the very tokens that fail a call.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from voicelab.core.models import CallMode, Evidence, Finding, Speaker, Utterance, Word
 from voicelab.eval.config import PronunciationConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
 from voicelab.eval.normalize import Aligned, Lexicon, Token, align, tokenize
+from voicelab.providers.base import Transcript
 
 LIMITATION = (
     "This compares against an ASR, which can silently correct a mispronounced word to the one it "
@@ -29,6 +34,16 @@ class _Spoken:
 
     utterance: Utterance
     words: list[str]
+    tokens: list[Token] = field(default_factory=list)
+    offset: int = 0  # where these tokens start in the whole call's reference
+
+
+@dataclass(frozen=True)
+class _Confirmation:
+    """Whether a second engine backs up a mismatch, and what to tell the reviewer about it."""
+
+    corroborated: bool
+    note: str
 
 
 @dataclass
@@ -136,15 +151,65 @@ def _groups(aligned: list[Aligned], owners: list[_Spoken], kept: list[bool]) -> 
     return groups
 
 
-def _mismatch_finding(group: _Group, heard: str, span: tuple[float, float]) -> Finding:
+def _canonical(words: list[str], lexicon: Lexicon) -> str:
+    """One string for a token however it was written, so "$49.98" equals its spoken form."""
+    return "".join(t.norm for t in tokenize(words, lexicon=lexicon))
+
+
+def _live_words(group: _Group, lexicon: Lexicon) -> list[str] | None:
+    """What the live STT heard where this token belongs. None if it left no transcript."""
+    heard_text = group.spoken.utterance.heard_text
+    if not heard_text or not heard_text.strip():
+        return None
+    words = heard_text.split()
+    aligned = align(group.spoken.tokens, tokenize(words, lexicon=lexicon))
+    start = group.position - group.spoken.offset
+    items = aligned[start : start + len(group.items)]
+    indices = sorted({i for item in items for h in item.hyp for i in range(h.start, h.end)})
+    return [words[i] for i in indices]
+
+
+def _same_engine(ctx: EvalContext, transcript: Transcript) -> bool:
+    live = ctx.artifact.providers.get("stt_live")
+    evaluated = transcript.model or (ctx.deps.stt.name if ctx.deps.stt else "")
+    return bool(live and evaluated) and live.rsplit("/", 1)[-1] == evaluated.rsplit("/", 1)[-1]
+
+
+def _confirm(
+    group: _Group, heard: list[Word], ctx: EvalContext, transcript: Transcript, lexicon: Lexicon
+) -> _Confirmation:
+    live = _live_words(group, lexicon)
+    if live is None:
+        return _Confirmation(False, "ASR only: no second engine heard this utterance.")
+    if _same_engine(ctx, transcript):
+        note = "ASR only: the live and eval transcripts came from the same engine, so their "
+        return _Confirmation(False, note + "agreement isn't independent.")
+    live_text = _canonical(live, lexicon)
+    if live_text == _canonical(group.expected.split(), lexicon):
+        return _Confirmation(False, "ASR only: the live engine heard it as scripted.")
+    eval_text = _canonical([w.text for w in heard], lexicon)
+    if eval_text and live_text == eval_text:
+        note = f'Corroborated: the live and eval engines both heard "{" ".join(live)}".'
+        return _Confirmation(True, note)
+    return _Confirmation(
+        False, f'ASR only: the live engine heard "{" ".join(live) or "nothing"}" instead.'
+    )
+
+
+def _mismatch_finding(
+    group: _Group, heard: str, span: tuple[float, float], confirmation: _Confirmation
+) -> Finding:
+    corroborated = confirmation.corroborated
+    label = "corroborated" if corroborated else "asr_only"
     return Finding(
         evaluator="pronunciation",
-        category="critical_token_mismatch",
+        category=f"critical_token_{label}",
         severity="major",
+        advisory=not corroborated,
         title=f"Critical {group.kind} differs from the script: {group.expected}",
         detail=(
             f'The bot was meant to say "{group.expected}". The independent ASR heard '
-            f'"{heard or "nothing"}".'
+            f'"{heard or "nothing"}". {confirmation.note}'
         ),
         evidence=[Evidence(quote=heard, speaker=Speaker.BOT, start_s=span[0], end_s=span[1])],
     )
@@ -253,7 +318,7 @@ class PronunciationEvaluator:
         spoken = _spoken_utterances(ctx)
 
         if spoken:
-            self._compare(ctx, out, spoken, words, hyp, lexicon, cfg)
+            self._compare(ctx, out, spoken, transcript, hyp, lexicon, cfg)
         else:
             out.metrics["compared"] = False
         if not spoken or ctx.artifact.mode in _CONFIDENCE_ONLY_MODES:
@@ -264,19 +329,21 @@ class PronunciationEvaluator:
         ctx: EvalContext,
         out: EvaluatorOutput,
         spoken: list[_Spoken],
-        words: list[Word],
+        transcript: Transcript,
         hyp: list[Token],
         lexicon: Lexicon,
         cfg: PronunciationConfig,
     ) -> None:
+        words = transcript.words
         names = _known_names(ctx)
         watch = ctx.scenario.pronunciation_watch if ctx.scenario else []
         ref: list[Token] = []
         owners: list[_Spoken] = []
         for item in spoken:
-            tokens = tokenize(item.words, lexicon=lexicon, known_names=names, watch=watch)
-            ref.extend(tokens)
-            owners.extend([item] * len(tokens))
+            item.tokens = tokenize(item.words, lexicon=lexicon, known_names=names, watch=watch)
+            item.offset = len(ref)
+            ref.extend(item.tokens)
+            owners.extend([item] * len(item.tokens))
         aligned = align(ref, hyp)
 
         kept = [True] * len(aligned)
@@ -298,6 +365,7 @@ class PronunciationEvaluator:
 
         groups = _groups(aligned, owners, kept)
         by_kind: dict[str, dict[str, int]] = {}
+        corroborated = 0
         for group in groups:
             tally = by_kind.setdefault(group.kind, {"total": 0, "mismatched": 0})
             tally["total"] += 1
@@ -306,12 +374,15 @@ class PronunciationEvaluator:
             if group.mismatched:
                 tally["mismatched"] += 1
                 text = " ".join(w.text for w in heard)
-                out.findings.append(_mismatch_finding(group, text, span))
+                confirmation = _confirm(group, heard, ctx, transcript, lexicon)
+                corroborated += confirmation.corroborated
+                out.findings.append(_mismatch_finding(group, text, span, confirmation))
             elif any(w.confidence is not None and w.confidence < cfg.low_confidence for w in heard):
                 out.findings.append(_low_confidence_critical_finding(group, heard, span))
 
         counted = [a for a, keep in zip(aligned, kept, strict=True) if keep]
         out.metrics.update(_comparison_metrics(counted, groups, by_kind))
+        out.metrics["critical_corroborated"] = corroborated
 
     def _confidence_pass(
         self, out: EvaluatorOutput, words: list[Word], hyp: list[Token], cfg: PronunciationConfig

@@ -33,9 +33,7 @@ def matches(ref: str, hyp: str, **kwargs) -> bool:
     ("written", "spoken"),
     [
         ("$49.99", "forty nine dollars and ninety nine cents"),
-        ("$49.99", "forty-nine ninety-nine"),
         ("$49.99", "forty nine dollars ninety nine"),
-        ("$14.99", "fourteen ninety nine"),
         ("$100.00", "one hundred dollars"),
         ("$100", "a hundred dollars"),
         ("$1,200.00", "one thousand two hundred dollars"),
@@ -74,8 +72,9 @@ def test_written_and_spoken_forms_match(written, spoken):
 @pytest.mark.parametrize(
     ("written", "heard"),
     [
-        ("$49.99", "forty nine ninety eight"),
-        ("$49.99", "fifty nine ninety nine"),
+        ("$49.99", "forty nine dollars and ninety eight cents"),
+        ("$49.99", "fifty nine dollars and ninety nine cents"),
+        ("$49.99", "forty nine ninety nine"),
         ("4821", "four eight two two"),
         ("FH-4419", "FH 4491"),
         ("fernhill.example", "fern hills dot example"),
@@ -170,10 +169,11 @@ def test_real_lexicon_file_loads_terms_units_and_endings():
         ("five oh three", "503"),
         ("forty nine", "49"),
         ("forty nine ninety nine", "4999"),
-        ("five dollars and five cents", "505"),
-        ("one dollar and five cents", "105"),
-        ("ninety nine cents", "99"),
-        ("five cents", "05"),
+        ("five dollars and five cents", "5.05"),
+        ("one dollar and five cents", "1.05"),
+        ("ninety nine cents", "0.99"),
+        ("five cents", "0.05"),
+        ("one point five", "1.50"),
         ("twenty four seven", "247"),
         ("thirty first", "31"),
         ("twentieth", "20"),
@@ -185,7 +185,7 @@ def test_spoken_numbers_read_as_the_digits_people_mean(words, digits):
 
 @pytest.mark.parametrize(
     ("written", "digits"),
-    [("$5.05", "505"), ("$0.99", "99"), ("$0.05", "05"), ("$100.00", "100"), ("3:00", "3")],
+    [("$5.05", "5.05"), ("$0.99", "0.99"), ("$0.05", "0.05"), ("$100.00", "100"), ("3:00", "3")],
 )
 def test_written_numbers_drop_what_speech_leaves_out(written, digits):
     assert "".join(norms(written)) == digits
@@ -246,16 +246,16 @@ async def test_clean_call_has_no_findings_and_notes_the_asr_limitation(store):
     assert out.metrics["limitation"] == LIMITATION
 
 
-async def test_wrong_amount_is_a_major_non_advisory_finding_with_timing(store):
+async def test_wrong_amount_is_a_major_finding_with_timing(store):
     artifact = call(bot_utterance("Your total is $49.99 today.", 1.0, 5.0))
     out = await evaluate(
         store, artifact, "your total is forty nine dollars and fifty nine cents today"
     )
     assert len(out.findings) == 1
     finding = out.findings[0]
-    assert finding.category == "critical_token_mismatch"
+    assert finding.category == "critical_token_asr_only"
     assert finding.severity == "major"
-    assert finding.advisory is False
+    assert finding.advisory is True
     assert "$49.99" in finding.title
     assert "forty nine dollars and fifty nine cents" in finding.detail
     assert finding.evidence[0].start_s == pytest.approx(2.2)
@@ -274,7 +274,9 @@ async def test_each_kind_of_critical_mismatch_is_major(store):
     assert kinds["name"]["mismatched"] == 1
     assert kinds["url"]["mismatched"] == 1
     assert kinds["acronym"]["mismatched"] == 1
-    assert all(f.severity == "major" and not f.advisory for f in out.findings)
+    critical = [f for f in out.findings if f.category.startswith("critical_token")]
+    assert len(critical) == 4
+    assert all(f.severity == "major" for f in critical)
 
 
 async def test_watch_terms_are_held_to_the_critical_standard(store):
@@ -291,7 +293,7 @@ async def test_persona_name_is_critical_even_at_sentence_start(store):
         bot_utterance("Dana, I can help with that.", 1.0, 4.0), persona_snapshot=persona
     )
     out = await evaluate(store, artifact, "dina I can help with that")
-    assert [f.category for f in out.findings] == ["critical_token_mismatch"]
+    assert [f.category for f in out.findings] == ["critical_token_asr_only"]
 
 
 async def test_ordinary_word_mismatch_is_advisory(store):
@@ -329,7 +331,9 @@ async def test_cut_off_utterance_compares_against_what_was_spoken(store):
             spoken_text="Your balance is $49.99 and",
         )
     )
-    out = await evaluate(store, artifact, "your balance is forty nine ninety nine and")
+    out = await evaluate(
+        store, artifact, "your balance is forty nine dollars and ninety nine cents and"
+    )
     assert out.findings == []
 
 
@@ -339,7 +343,9 @@ async def test_cut_off_without_spoken_text_ignores_the_unspoken_tail(store):
             "Your balance is $49.99 and your renewal is $14.99 next.", 1.0, 3.0, interrupted=True
         )
     )
-    out = await evaluate(store, artifact, "your balance is forty nine ninety nine")
+    out = await evaluate(
+        store, artifact, "your balance is forty nine dollars and ninety nine cents"
+    )
     assert out.findings == []
     assert out.metrics["critical_tokens"] == 1
 
@@ -348,7 +354,7 @@ async def test_word_missing_from_the_recording_is_a_mismatch(store):
     artifact = call(bot_utterance("Your total is $49.99 today", 1.0, 4.0))
     out = await evaluate(store, artifact, "your total is today")
     finding = out.findings[0]
-    assert finding.category == "critical_token_mismatch"
+    assert finding.category == "critical_token_asr_only"
     assert "nothing" in finding.detail
     assert finding.evidence[0].start_s == pytest.approx(2.2)
     assert finding.evidence[0].end_s == pytest.approx(2.2)
@@ -422,3 +428,143 @@ async def test_skips_without_a_bot_transcript(store):
         await PronunciationEvaluator().run(
             EvalContext(artifact, paths, EvalDeps()), EvaluatorOutput()
         )
+
+
+# An ASR's word against the script is suspicion. Two engines agreeing is evidence -----------------
+
+
+async def compare_with_live(store, heard_eval, heard_live, *, providers=None, model="eval-stt"):
+    artifact = call(
+        bot_utterance("Your total is $49.99 today", 1.0, 5.0, heard_text=heard_live),
+        providers=providers or {},
+    )
+    artifact, paths = write_call(store, artifact, duration_s=10.0)
+    ctx = EvalContext(artifact, paths, EvalDeps())
+    words = timed_words(heard_eval, 1.0)
+    ctx.transcripts[Speaker.BOT] = Transcript(text=heard_eval, words=words, model=model)
+    out = EvaluatorOutput()
+    await PronunciationEvaluator().run(ctx, out)
+    return out
+
+
+def critical_findings(out: EvaluatorOutput):
+    return [f for f in out.findings if f.category.startswith("critical_token")]
+
+
+async def test_asr_mismatch_alone_is_advisory_even_at_low_confidence(store):
+    artifact = call(bot_utterance("Your total is $49.99 today", 1.0, 5.0))
+    out = await evaluate(store, artifact, "your total is $49.98 today", confidence=0.2)
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_asr_only"
+    assert finding.severity == "major"
+    assert finding.advisory is True
+    assert "no second engine" in finding.detail
+
+
+@pytest.mark.parametrize(
+    "live",
+    ["your total is $49.98 today", "your total is forty nine dollars and ninety eight cents today"],
+)
+async def test_two_engines_hearing_the_same_wrong_token_is_corroborated(store, live):
+    out = await compare_with_live(store, "your total is $49.98 today", live)
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_corroborated"
+    assert finding.severity == "major"
+    assert finding.advisory is False
+    assert "both" in finding.detail
+    assert out.metrics["critical_corroborated"] == 1
+
+
+async def test_live_engine_hearing_the_script_does_not_corroborate(store):
+    out = await compare_with_live(store, "your total is $49.98 today", "your total is $49.99 today")
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_asr_only"
+    assert finding.advisory is True
+    assert "live engine heard it as scripted" in finding.detail
+
+
+async def test_engines_hearing_different_wrong_tokens_do_not_corroborate(store):
+    out = await compare_with_live(store, "your total is $49.98 today", "your total is $49.97 today")
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_asr_only"
+    assert finding.advisory is True
+
+
+async def test_both_engines_hearing_nothing_is_not_a_wrong_token(store):
+    out = await compare_with_live(store, "your total is today", "your total is today")
+    assert critical_findings(out)[0].advisory is True
+
+
+async def test_the_same_engine_twice_is_not_independent(store):
+    out = await compare_with_live(
+        store,
+        "your total is $49.98 today",
+        "your total is $49.98 today",
+        providers={"stt_live": "local/whisper-large"},
+        model="whisper-large",
+    )
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_asr_only"
+    assert finding.advisory is True
+    assert "same engine" in finding.detail
+
+
+async def test_different_recorded_engines_can_corroborate(store):
+    out = await compare_with_live(
+        store,
+        "your total is $49.98 today",
+        "your total is $49.98 today",
+        providers={"stt_live": "local/parakeet"},
+        model="whisper-large",
+    )
+    assert critical_findings(out)[0].category == "critical_token_corroborated"
+
+
+# Money reads the same however it's written, and different amounts stay different -----------------
+
+
+@pytest.mark.parametrize(
+    ("written", "heard"),
+    [
+        ("$5.00", "5.00"),
+        ("$5.00", "$5"),
+        ("$5", "5.00"),
+        ("$5.00", "five dollars"),
+        ("$5.00", "5 dollars"),
+        ("5.00", "five dollars"),
+        ("$49.90", "49.90"),
+        ("$49.90", "49.9"),
+        ("$49.90", "forty nine dollars and ninety cents"),
+        ("$49.90", "49 dollars and 90 cents"),
+        ("$0.99", "99 cents"),
+        ("$0.99", "ninety nine cents"),
+        ("$0.99", "0.99"),
+        ("$0.05", "five cents"),
+        ("$1,200.00", "1200.00"),
+        ("$1,200.00", "1,200 dollars"),
+        ("$1,200.50", "one thousand two hundred dollars and fifty cents"),
+        ("1.5", "one point five"),
+        ("5.5%", "five point five percent"),
+    ],
+)
+def test_the_same_amount_matches_in_every_format(written, heard):
+    assert matches(written, heard), (norms(written), norms(heard))
+
+
+@pytest.mark.parametrize(
+    ("written", "heard"),
+    [
+        ("$5.00", "$500"),
+        ("$5.50", "$550"),
+        ("$550", "$5.50"),
+        ("$5.50", "five hundred fifty dollars"),
+        ("$5.05", "$5.50"),
+        ("$49.90", "$49.09"),
+        ("$49.99", "4999"),
+        ("$5", "$50"),
+        ("$0.50", "$50"),
+        ("5.05", "5.5"),
+    ],
+)
+def test_genuinely_different_amounts_stay_different(written, heard):
+    assert not matches(written, heard), (norms(written), norms(heard))

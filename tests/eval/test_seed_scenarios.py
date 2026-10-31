@@ -309,7 +309,7 @@ async def test_wrong_amount_against_tts_text_is_major(store):
     out = await pronunciation_on(
         store, tts_utterance("That comes to $49.99 today."), heard="That comes to $59.99 today."
     )
-    assert [f.category for f in out.findings] == ["critical_token_mismatch"]
+    assert [f.category for f in out.findings] == ["critical_token_asr_only"]
 
 
 async def test_ordinary_phrase_that_is_also_a_lexicon_form_cannot_fail_a_call(store):
