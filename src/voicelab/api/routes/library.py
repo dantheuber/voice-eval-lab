@@ -70,6 +70,12 @@ def create_persona(svc: Svc, body: JsonBody) -> dict[str, Any]:
     return mapping.to_api(svc.catalog.add_persona(persona))
 
 
+@router.post("/personas/prompt")
+def preview_persona_prompt(body: JsonBody) -> dict[str, str]:
+    """The same text as the saved route, for a form that hasn't been saved yet."""
+    return {"prompt": authoring.persona_prompt(mapping.from_api(Persona, _body_fields(body)))}
+
+
 @router.get("/personas/{persona_id}")
 def get_persona(persona_id: str, svc: Svc) -> dict[str, Any]:
     persona = _persona(svc, persona_id)

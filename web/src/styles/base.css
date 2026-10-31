@@ -101,7 +101,7 @@ hr { border: 0; border-top: 1px solid var(--line-1); margin: var(--s-3) 0; }
 .rail a.item .count.hot { color: var(--review); }
 .rail .spacer { flex: 1; }
 .rail .foot { padding: var(--s-2); font-size: var(--fs-0); color: var(--ink-3); border-top: 1px solid var(--line-1); margin-top: var(--s-2); }
-.rail .foot .row { display: flex; justify-content: space-between; align-items: center; gap: var(--s-2); margin-top: 4px; }
+.rail .foot .row { display: flex; justify-content: space-between; align-items: center; gap: var(--s-2); margin-top: 4px; white-space: nowrap; }
 
 .main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 .topbar {

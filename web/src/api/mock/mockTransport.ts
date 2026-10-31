@@ -146,6 +146,7 @@ export function createMockTransport(): Transport {
     { method: "DELETE", re: /^\/api\/calls\/([^/]+)$/, fn: (m) => { const i = calls.findIndex((c) => c.id === m[1]); if (i >= 0) calls.splice(i, 1); return undefined; } },
 
     { method: "GET", re: /^\/api\/personas$/, fn: () => ({ items: personas.map((p) => ({ ...p, usage: usage((c) => c.personaId === p.id) })) }) },
+    { method: "POST", re: /^\/api\/personas\/prompt$/, fn: (_m, body) => ({ prompt: renderPrompt(body as T.Persona) }) },
     { method: "GET", re: /^\/api\/personas\/([^/]+)\/prompt$/, fn: (m) => { const p = personas.find((x) => x.id === m[1]); if (!p) throw notFound("persona"); return { prompt: renderPrompt(p) }; } },
     { method: "GET", re: /^\/api\/personas\/([^/]+)$/, fn: (m) => { const p = personas.find((x) => x.id === m[1]); if (!p) throw notFound("persona"); return { ...p, usage: usage((c) => c.personaId === p.id), recentCalls: allCalls().filter((c) => c.personaId === p.id).slice(0, 8) }; } },
     { method: "POST", re: /^\/api\/personas$/, fn: (_m, body) => { const p = { ...(body as T.PersonaInput), id: newId("per"), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; personas.unshift(p); persist(); return p; } },

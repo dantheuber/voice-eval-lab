@@ -380,3 +380,10 @@ def test_a_voice_the_caller_tts_refuses_is_a_clear_400(client, rig, monkeypatch)
     response = client.post("/api/tts/preview", json={"text": "Hi", "voice": voice, "line": None})
     assert response.status_code == 400
     assert "license-safe" in response.json()["error"]["message"]
+
+
+def test_prompt_preview_is_the_real_prompt_for_an_unsaved_form(client):
+    created = client.post("/api/personas", json=PERSONA).json()
+    saved = client.get(f"/api/personas/{created['id']}/prompt").json()["prompt"]
+    assert client.post("/api/personas/prompt", json=PERSONA).json()["prompt"] == saved
+    assert "fact sheet" in saved

@@ -21,6 +21,7 @@ export const endpoints = {
   updatePersona: (id: string, body: T.Persona) => api.put<T.Persona>(`/api/personas/${id}`, body),
   deletePersona: (id: string) => api.del(`/api/personas/${id}`),
   personaPrompt: (id: string) => api.get<{ prompt: string }>(`/api/personas/${id}/prompt`),
+  personaPromptPreview: (body: T.PersonaInput) => api.post<{ prompt: string }>("/api/personas/prompt", body),
   voices: () => api.get<{ items: T.Voice[] }>("/api/voices"),
   ttsPreview: (body: { text: string; voice: T.VoiceRef; line: T.LineConditions | null }) => api.blob("/api/tts/preview", "POST", body),
 

@@ -191,7 +191,8 @@ Server → client messages while a call is running or evaluating, then the socke
 - `DELETE /api/personas/:id` → 204, or 409 `conflict` if a running batch uses it
 - `GET /api/voices` → `{ "items": [ { "provider": "qwen3_tts", "voiceId": "default_male_1", "label": "Default male 1", "language": "en-US" } ] }`
 - `POST /api/tts/preview` body `{ "text": string, "voice": VoiceRef, "line": LineConditions | null }` → `audio/wav`. Returns 503 `model_not_ready` while TTS loads.
-- `GET /api/personas/:id/prompt` → `{ "prompt": string }` the exact caller instructions rendered from the persona, for the "how this reads to the caller model" panel.
+- `GET /api/personas/:id/prompt` → `{ "prompt": string }` the exact caller instructions rendered from the persona.
+- `POST /api/personas/prompt` body as for create → `{ "prompt": string }`. The same text for a form that isn't saved yet, for the "how this reads to the caller model" panel.
 
 ## Scenarios
 

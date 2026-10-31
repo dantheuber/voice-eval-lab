@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMutation } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
 import { Button, Empty, Field, HealthDot, Icon, Kbd, ModeBadge, Note, Panel, PassRate, QueryState, Scale, Skeleton, VerdictBadge } from "@/components/ui";
 import { keys, useInvalidate, usePersona, usePersonas, useVoices } from "@/api/queries";
@@ -35,7 +35,7 @@ export function PersonasScreen() {
   );
 }
 
-const blank = (): PersonaInput => ({ name: "", summary: "", age: null, temperament: "neutral", speakingStyle: "", patience: 3, verbosity: 3, techSavviness: 3, interruptionRate: 0, voice: { provider: null, voiceId: "default_female_1", style: null }, line: { codec: "mulaw_8k", noise: "none", snrDb: 20, packetLossPct: 0, oneWayLatencyMs: 80 } });
+const blank = (): PersonaInput => ({ name: "", summary: "", age: null, temperament: "neutral", speakingStyle: "", patience: 3, verbosity: 3, techSavviness: 3, interruptionRate: 0, voice: { provider: null, voiceId: "mary", style: null }, line: { codec: "mulaw_8k", noise: "none", snrDb: 20, packetLossPct: 0, oneWayLatencyMs: 80 } });
 
 /* Editor state is keyed by resource id, so jumping from one persona to another never carries the previous form over. */
 export function PersonaEditorScreen() {
@@ -68,7 +68,10 @@ function PersonaEditor({ id }: { id: string | undefined }) {
   });
   useHotkeys({ "Ctrl+s": () => save.mutate(), "Ctrl+p": () => preview.mutate() });
 
-  const prompt = useMemo(() => form ? renderPrompt(form) : "", [form]);
+  // The server renders it, so this is the caller's real prompt and not a retelling of it.
+  const [promptForm, setPromptForm] = useState(form);
+  useEffect(() => { const t = setTimeout(() => setPromptForm(form), 300); return () => clearTimeout(t); }, [form]);
+  const prompt = useQuery({ queryKey: ["personaPrompt", promptForm], queryFn: () => endpoints.personaPromptPreview(promptForm!), enabled: !!promptForm, placeholderData: keepPreviousData });
   const title = isNew ? "New persona" : q.data?.name ?? "…";
   return (
     <Shell crumbs={[<Link key="p" to="/personas">Personas</Link>, title]} keys={[["Save", "Ctrl S"], ["Preview voice", "Ctrl P"]]}>
@@ -131,7 +134,7 @@ function PersonaEditor({ id }: { id: string | undefined }) {
                 </Panel>
               </div>
               <div className="stack sticky-col">
-                <Panel title="How this reads to the caller model"><div className={s.personaPrev}>{prompt}</div></Panel>
+                <Panel title="How this reads to the caller model"><div className={s.personaPrev}>{prompt.data?.prompt ?? (prompt.isError ? (prompt.error as Error).message : "…")}</div></Panel>
                 {!isNew && q.data && (
                   <Panel flush title="Recent calls as this persona" actions={<Link className="faint" to={`/calls?persona=${id}`}>all</Link>}>
                     {q.data.recentCalls.length === 0 ? <Empty title="No calls yet" /> : <table className="t"><tbody>{q.data.recentCalls.map((c) => <tr key={c.id} tabIndex={0} onClick={() => nav(`/calls/${c.id}`)}><td className="id">{c.id}</td><td>{c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v="evaluating" />}</td><td><ModeBadge mode={c.mode} /></td></tr>)}</tbody></table>}
@@ -144,11 +147,4 @@ function PersonaEditor({ id }: { id: string | undefined }) {
       </div>
     </Shell>
   );
-}
-
-export function renderPrompt(p: PersonaInput): string {
-  const pat = ["hang up if stalled for more than one turn", "hang up if stalled for more than two turns", "give the agent a fair chance", "wait patiently", "wait as long as it takes"][p.patience - 1];
-  const verb = ["answer in a word or two", "keep answers short", "answer normally", "add detail and asides", "ramble and tell stories"][p.verbosity - 1];
-  const intr = p.interruptionRate >= 0.75 ? "You interrupt whenever you have something to say, even mid-sentence." : p.interruptionRate >= 0.25 ? "You sometimes cut in before the agent finishes." : "You let the agent finish speaking.";
-  return `You are ${p.name || "the caller"}${p.age ? `, ${p.age}` : ""}. You are ${p.temperament}: you ${pat}. You ${verb}. ${p.speakingStyle} ${intr} You stick to the fact sheet and never invent account details.`;
 }
