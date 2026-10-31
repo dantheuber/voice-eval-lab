@@ -2,6 +2,7 @@
    Caller is the left channel, bot the right, matching the recorder. */
 import { useEffect, useRef } from "react";
 import { useReview } from "@/store/review";
+import { toast } from "@/store/toast";
 
 export function useAudio(src: string | null, durationS: number) {
   const el = useRef<HTMLAudioElement | null>(null);
@@ -89,7 +90,10 @@ export function useAudio(src: string | null, durationS: number) {
       const g = ensureGraph(); if (g && g.ctx.state === "suspended") await g.ctx.resume().catch(() => undefined);
       const s = useReview.getState();
       clipEnd.current = s.clip && a.currentTime < s.clip[1] ? s.clip[1] : null;
-      await a.play().catch(() => undefined);
+      await a.play().catch((e: DOMException) => {
+        if (e?.name === "NotAllowedError") toast("The browser blocked audio until you click somewhere on the page.", 3000);
+        else if (e?.name !== "AbortError") toast(`Could not play: ${e?.message ?? e}`, 3000);
+      });
     },
     pause: () => el.current?.pause(),
     toggle: async () => { const a = el.current; if (!a) return; if (a.paused) await controls.play(); else a.pause(); },

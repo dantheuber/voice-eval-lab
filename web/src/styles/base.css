@@ -291,8 +291,8 @@ textarea.in { height: auto; padding: 6px 8px; min-height: 60px; resize: vertical
 .rail a.item.cur .item-inner { background: var(--accent-soft); color: var(--ink-1); }
 .rail a.item.cur .ico { color: var(--accent); }
 .rail a.item:hover { text-decoration: none; }
-.dialog-pos { position: fixed; top: 10vh; left: 50%; transform: translateX(-50%); }
-.overlay.show { display: block; }
+.dialog-pos { position: fixed; top: 10vh; left: 50%; transform: translateX(-50%); z-index: 50; }
+.overlay.show { display: block; z-index: 40; }
 .jump-row { display: flex; justify-content: space-between; gap: var(--s-3); padding: 8px var(--s-4); cursor: pointer; font-size: var(--fs-2); }
 .jump-row.sel, .jump-row:hover { background: var(--accent-soft); }
 .tooltip { background: var(--bg-4); color: var(--ink-1); border: 1px solid var(--line-2); border-radius: var(--r-2); padding: 6px 8px; font-size: var(--fs-1); max-width: 320px; box-shadow: var(--shadow); z-index: 60; }

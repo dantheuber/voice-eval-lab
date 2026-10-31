@@ -13,19 +13,41 @@ const clone = <X>(x: X): X => JSON.parse(JSON.stringify(x)) as X;
 const notFound = (what: string) => new ApiError(404, { code: "not_found", message: `${what} not found` }, "not found");
 const newId = (p: string) => `${p}_${Math.random().toString(16).slice(2, 14)}`;
 
+/* Mutations survive a reload within the tab, so navigating away and back keeps decisions and saved forms. */
+interface Persisted {
+  personas: T.Persona[]; scenarios: T.Scenario[]; versions: Record<string, number>; activeProfile: string; thresholds: T.Thresholds;
+  decisions: Record<string, Record<string, { humanVerdict: T.HumanVerdict | null; humanNote: string; humanAt: string | null }>>;
+  verdicts: Record<string, T.Verdict>;
+}
+const STORE_KEY = "vl-mock-state";
+function loadPersisted(): Partial<Persisted> {
+  try { const raw = sessionStorage.getItem(STORE_KEY); return raw ? (JSON.parse(raw) as Partial<Persisted>) : {}; } catch { return {}; }
+}
+
 export function createMockTransport(): Transport {
   // ---- state ----
-  const personas = clone(FX.personas);
-  const scenarios = clone(FX.scenarios);
-  const versions: Record<string, number> = Object.fromEntries(scenarios.map((s) => [s.id, 3]));
+  const saved = loadPersisted();
+  const personas = saved.personas ?? clone(FX.personas);
+  const scenarios = saved.scenarios ?? clone(FX.scenarios);
+  const versions: Record<string, number> = saved.versions ?? Object.fromEntries(scenarios.map((s) => [s.id, 3]));
   const runs = clone(FX.runs);
   const calls = clone(FX.calls);
   const reviews: Record<string, T.ReviewPayload> = { [FX.reviewA.call.id]: clone(FX.reviewA), [FX.reviewB.call.id]: clone(FX.reviewB) };
   const health = clone(FX.health);
   const roles = clone(FX.roles);
   const profiles = clone(FX.profiles);
-  let activeProfile = "local-default";
-  let thresholds = clone(FX.thresholds);
+  let activeProfile = saved.activeProfile ?? "local-default";
+  let thresholds = saved.thresholds ?? clone(FX.thresholds);
+  const decisions = saved.decisions ?? {};
+  const verdicts = saved.verdicts ?? {};
+  const persist = () => { try { sessionStorage.setItem(STORE_KEY, JSON.stringify({ personas, scenarios, versions, activeProfile, thresholds, decisions, verdicts } satisfies Persisted)); } catch { /* quota or private mode */ } };
+  const applyDecisions = (r: T.ReviewPayload) => {
+    const d = decisions[r.call.id];
+    if (d && r.eval) r.eval.findings.forEach((f) => { const x = d[f.id]; if (x) Object.assign(f, x); });
+    const v = verdicts[r.call.id]; if (v) r.summary.humanVerdict = v;
+  };
+  calls.forEach((c) => { const v = verdicts[c.id]; if (v) c.humanVerdict = v; });
+  Object.values(reviews).forEach(applyDecisions);
   const runCalls: Record<string, T.CallSummary[]> = {};
   const audioUrls: Record<string, string> = {};
   const presets: unknown[] = [];
@@ -50,6 +72,8 @@ export function createMockTransport(): Transport {
       const s = calls.find((c) => c.id === id) ?? Object.values(runCalls).flat().find((c) => c.id === id);
       if (!s) throw notFound("call");
       reviews[id] = FX.genericReview(s);
+      applyDecisions(reviews[id]);
+      recount(id);
     }
     return reviews[id];
   };
@@ -110,25 +134,26 @@ export function createMockTransport(): Transport {
       const r = review(m[1]); const b = body as { humanVerdict: T.HumanVerdict | null; humanNote: string };
       const f = r.eval?.findings.find((x) => x.id === m[2]); if (!f) throw notFound("finding");
       f.humanVerdict = b.humanVerdict; f.humanNote = b.humanNote ?? f.humanNote; f.humanAt = b.humanVerdict ? new Date().toISOString() : null;
-      recount(m[1]); return f;
+      (decisions[m[1]] ??= {})[f.id] = { humanVerdict: f.humanVerdict, humanNote: f.humanNote, humanAt: f.humanAt };
+      recount(m[1]); persist(); return f;
     } },
-    { method: "POST", re: /^\/api\/calls\/([^/]+)\/verdict$/, fn: (m, body) => { const s = summaryOf(m[1]); if (!s) throw notFound("call"); s.humanVerdict = (body as { verdict: T.Verdict }).verdict; return s; } },
+    { method: "POST", re: /^\/api\/calls\/([^/]+)\/verdict$/, fn: (m, body) => { const s = summaryOf(m[1]); if (!s) throw notFound("call"); s.humanVerdict = (body as { verdict: T.Verdict }).verdict; verdicts[m[1]] = s.humanVerdict; persist(); return s; } },
     { method: "POST", re: /^\/api\/calls\/([^/]+)\/reevaluate$/, fn: () => ({ accepted: true }) },
     { method: "DELETE", re: /^\/api\/calls\/([^/]+)$/, fn: (m) => { const i = calls.findIndex((c) => c.id === m[1]); if (i >= 0) calls.splice(i, 1); return undefined; } },
 
     { method: "GET", re: /^\/api\/personas$/, fn: () => ({ items: personas.map((p) => ({ ...p, usage: usage((c) => c.personaId === p.id) })) }) },
     { method: "GET", re: /^\/api\/personas\/([^/]+)\/prompt$/, fn: (m) => { const p = personas.find((x) => x.id === m[1]); if (!p) throw notFound("persona"); return { prompt: renderPrompt(p) }; } },
     { method: "GET", re: /^\/api\/personas\/([^/]+)$/, fn: (m) => { const p = personas.find((x) => x.id === m[1]); if (!p) throw notFound("persona"); return { ...p, usage: usage((c) => c.personaId === p.id), recentCalls: allCalls().filter((c) => c.personaId === p.id).slice(0, 8) }; } },
-    { method: "POST", re: /^\/api\/personas$/, fn: (_m, body) => { const p = { ...(body as T.PersonaInput), id: newId("per"), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; personas.unshift(p); return p; } },
-    { method: "PUT", re: /^\/api\/personas\/([^/]+)$/, fn: (m, body) => { const i = personas.findIndex((x) => x.id === m[1]); if (i < 0) throw notFound("persona"); personas[i] = { ...(body as T.Persona), id: m[1], updatedAt: new Date().toISOString() }; return personas[i]; } },
-    { method: "DELETE", re: /^\/api\/personas\/([^/]+)$/, fn: (m) => { const i = personas.findIndex((x) => x.id === m[1]); if (i >= 0) personas.splice(i, 1); return undefined; } },
+    { method: "POST", re: /^\/api\/personas$/, fn: (_m, body) => { const p = { ...(body as T.PersonaInput), id: newId("per"), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; personas.unshift(p); persist(); return p; } },
+    { method: "PUT", re: /^\/api\/personas\/([^/]+)$/, fn: (m, body) => { const i = personas.findIndex((x) => x.id === m[1]); if (i < 0) throw notFound("persona"); personas[i] = { ...(body as T.Persona), id: m[1], updatedAt: new Date().toISOString() }; persist(); return personas[i]; } },
+    { method: "DELETE", re: /^\/api\/personas\/([^/]+)$/, fn: (m) => { const i = personas.findIndex((x) => x.id === m[1]); if (i >= 0) personas.splice(i, 1); persist(); return undefined; } },
     { method: "GET", re: /^\/api\/voices$/, fn: () => ({ items: FX.voices }) },
 
     { method: "GET", re: /^\/api\/scenarios$/, fn: () => ({ items: scenarios.map((s) => ({ ...s, version: versions[s.id] ?? 1, usage: usage((c) => c.scenarioId === s.id) })) }) },
     { method: "GET", re: /^\/api\/scenarios\/([^/]+)$/, fn: (m) => { const s = scenarios.find((x) => x.id === m[1]); if (!s) throw notFound("scenario"); return { ...s, version: versions[s.id] ?? 1, usage: usage((c) => c.scenarioId === s.id), recentCalls: allCalls().filter((c) => c.scenarioId === s.id).slice(0, 8) }; } },
-    { method: "POST", re: /^\/api\/scenarios$/, fn: (_m, body) => { const s = { ...(body as T.ScenarioInput), id: newId("scn"), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; scenarios.unshift(s); versions[s.id] = 1; return s; } },
-    { method: "PUT", re: /^\/api\/scenarios\/([^/]+)$/, fn: (m, body) => { const i = scenarios.findIndex((x) => x.id === m[1]); if (i < 0) throw notFound("scenario"); scenarios[i] = { ...(body as T.Scenario), id: m[1], updatedAt: new Date().toISOString() }; versions[m[1]] = (versions[m[1]] ?? 1) + 1; return scenarios[i]; } },
-    { method: "DELETE", re: /^\/api\/scenarios\/([^/]+)$/, fn: (m) => { const i = scenarios.findIndex((x) => x.id === m[1]); if (i >= 0) scenarios.splice(i, 1); return undefined; } },
+    { method: "POST", re: /^\/api\/scenarios$/, fn: (_m, body) => { const s = { ...(body as T.ScenarioInput), id: newId("scn"), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; scenarios.unshift(s); versions[s.id] = 1; persist(); return s; } },
+    { method: "PUT", re: /^\/api\/scenarios\/([^/]+)$/, fn: (m, body) => { const i = scenarios.findIndex((x) => x.id === m[1]); if (i < 0) throw notFound("scenario"); scenarios[i] = { ...(body as T.Scenario), id: m[1], updatedAt: new Date().toISOString() }; versions[m[1]] = (versions[m[1]] ?? 1) + 1; persist(); return scenarios[i]; } },
+    { method: "DELETE", re: /^\/api\/scenarios\/([^/]+)$/, fn: (m) => { const i = scenarios.findIndex((x) => x.id === m[1]); if (i >= 0) scenarios.splice(i, 1); persist(); return undefined; } },
     { method: "POST", re: /^\/api\/scenarios\/draft$/, fn: async (_m, body) => { await sleep(1400); return draft(body as { description: string; customerId: string | null }); } },
     { method: "POST", re: /^\/api\/scenarios\/([^/]+)\/dry-run$/, fn: async (m) => {
       await sleep(900); const s = scenarios.find((x) => x.id === m[1]); if (!s) throw notFound("scenario");
@@ -144,7 +169,7 @@ export function createMockTransport(): Transport {
 
     { method: "GET", re: /^\/api\/matrix$/, fn: () => ({ cells: FX.matrix }) },
     { method: "GET", re: /^\/api\/profiles$/, fn: () => ({ items: profiles, activeId: activeProfile }) },
-    { method: "PUT", re: /^\/api\/profiles\/active$/, fn: (_m, body) => { activeProfile = (body as { id: string }).id; return profiles.find((p) => p.id === activeProfile); } },
+    { method: "PUT", re: /^\/api\/profiles\/active$/, fn: (_m, body) => { activeProfile = (body as { id: string }).id; persist(); return profiles.find((p) => p.id === activeProfile); } },
     { method: "POST", re: /^\/api\/runs$/, fn: (_m, body) => {
       const b = body as T.RunRequest;
       if (!b.pairs.length) throw new ApiError(400, { code: "invalid", message: "Select at least one scenario and persona pair." }, "invalid");
@@ -207,7 +232,7 @@ export function createMockTransport(): Transport {
     { method: "POST", re: /^\/api\/benchmark$/, fn: () => ({ accepted: true }) },
     { method: "GET", re: /^\/api\/system$/, fn: () => FX.system },
     { method: "GET", re: /^\/api\/thresholds$/, fn: () => thresholds },
-    { method: "PUT", re: /^\/api\/thresholds$/, fn: (_m, body) => { thresholds = { ...(body as T.Thresholds), audioListeningMode: "advisory" }; return thresholds; } },
+    { method: "PUT", re: /^\/api\/thresholds$/, fn: (_m, body) => { thresholds = { ...(body as T.Thresholds), audioListeningMode: "advisory" }; persist(); return thresholds; } },
     { method: "GET", re: /^\/api\/aws$/, fn: () => ({ region: "us-west-2", credentials: "not_found", testedAgainstLive: false }) },
     { method: "POST", re: /^\/api\/aws\/test$/, fn: () => ({ ok: false, message: "No AWS credentials found. Set AWS_PROFILE or keys in .env." }) },
 

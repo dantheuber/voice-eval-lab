@@ -18,7 +18,7 @@
 .rateRow .pct { font-family: var(--font-mono); text-align: right; font-weight: 600; }
 
 .filters { display: flex; gap: var(--s-2); align-items: center; flex-wrap: wrap; padding: var(--s-2) 0 var(--s-3); }
-.filters select.in { width: auto; min-width: 120px; height: 26px; font-size: var(--fs-1); }
+.filters select:global(.in) { width: auto; min-width: 120px; height: 26px; font-size: var(--fs-1); }
 
 .launch { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: var(--s-3); align-items: start; }
 .matrix { border-collapse: separate; border-spacing: 0; font-size: var(--fs-1); width: 100%; }

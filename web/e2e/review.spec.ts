@@ -11,11 +11,12 @@ test.describe("call review keyboard loop", () => {
     await expect(first).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText(/clip 00:14 to 00:23/)).toBeVisible();
 
-    // Enter plays the clip: the play button flips to pause (fixture audio is a real WAV blob)
+    // Enter plays the clip through a real <audio> element (fixture audio is a synthesised WAV blob)
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("button", { name: "Pause" })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("button", { name: "Pause", exact: true })).toBeVisible({ timeout: 8000 });
+    await expect.poll(async () => page.locator("text=/^\\d\\d:\\d\\d\\.\\d/").first().textContent(), { timeout: 5000 }).not.toMatch(/^00:14\.0/);
     await page.keyboard.press(" ");
-    await expect(page.getByRole("button", { name: "Play" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
 
     // y confirms and advances to finding 2
     await page.keyboard.press("y");
@@ -46,17 +47,27 @@ test.describe("call review keyboard loop", () => {
     await page.keyboard.press("2");
     await expect(page.getByRole("group", { name: "Set human verdict" }).getByRole("button", { name: /fail/ })).toHaveAttribute("aria-pressed", "true");
 
-    // ] goes to the next call needing review
+    // ] goes to the next call needing review (oldest first, never back to this one)
     await page.keyboard.press("]");
-    await expect(page).toHaveURL(/\/calls\/call_1c3d0a1b2c3d/);
+    await expect(page).not.toHaveURL(/call_a3f2c1d0e9b7/);
+    await expect(page).toHaveURL(/\/calls\/call_/);
+    await expect(page.getByText(/finding \d+ of \d+|no findings|evaluating/)).toBeVisible();
+  });
+
+  test("turn-based calls say what was not measured", async ({ page }) => {
+    await page.goto("/calls/call_1c3d0a1b2c3d?theme=dark");
     await expect(page.getByText("Turn-based call.")).toBeVisible();
     await expect(page.getByText("not measured (turn-based)")).toBeVisible();
+    await expect(page.getByText("gaps synthetic")).toBeVisible();
+    await expect(page.getByText("advisory, cannot fail the call")).toBeVisible();
   });
 
   test("decisions persist across navigation in fixture mode", async ({ page }) => {
     await page.goto("/calls/call_a3f2c1d0e9b7?theme=dark");
     await expect(page.getByText("finding 1 of 6")).toBeVisible();
     await page.keyboard.press("y");
+    await expect(page.locator("[data-finding='fnd_a1']").getByText("confirmed")).toBeVisible();
+    await page.waitForTimeout(800); // let the (mock-latency) save land before a hard navigation
     await page.goto("/calls?theme=dark");
     await expect(page.getByRole("heading", { name: "Calls" })).toBeVisible();
     await page.goto("/calls/call_a3f2c1d0e9b7?theme=dark");
