@@ -45,6 +45,7 @@ from voicelab.providers.base import STT
 logger = logging.getLogger(__name__)
 
 _END_SLACK_S = 0.1  # the output drops a partial last chunk
+_TRANSCRIPT_IN_FLIGHT_S = 0.25  # already in the queue, so this only has to outlast a busy loop
 _HOLD_ON = re.compile(r"(?:one moment|let me check that)[.!,]?\s*$", re.IGNORECASE)
 
 
@@ -171,7 +172,7 @@ class Brain(FrameProcessor):
         elif isinstance(frame, UserStartedSpeakingFrame):
             await self.on_far_side_started()
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            await self.on_far_side_finished()
+            self.create_task(self._finish_far_side_turn())
         elif isinstance(frame, InterruptionFrame):
             await self.on_interrupted()
         elif isinstance(frame, BotStartedSpeakingFrame) and direction == FrameDirection.UPSTREAM:
@@ -191,6 +192,18 @@ class Brain(FrameProcessor):
             return False
         made = sum(segment.produced_s for segment in segments)
         return all(s.finished for s in segments) and self.ledger.played_s >= made - _END_SLACK_S
+
+    async def _finish_far_side_turn(self) -> None:
+        """Wait for the words of the turn that just ended, if they're on their way.
+
+        `UserStoppedSpeakingFrame` is a system frame and a transcript isn't, so it overtakes one.
+        That happens whenever STT is what the turn was waiting for, which on a real call meant a
+        6 s sentence with the GPU busy. The turn looked empty, and the bot never answered it.
+        """
+        deadline = asyncio.get_running_loop().time() + _TRANSCRIPT_IN_FLIGHT_S
+        while not self.heard_parts and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
+        await self.on_far_side_finished()
 
     def begin_turn(self) -> None:
         self.ledger.reset()

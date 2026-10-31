@@ -6,8 +6,9 @@ import pytest
 from voicelab.core.audio import AudioClip
 from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
+from voicelab.engine.live.brains import Brain
 from voicelab.engine.live.log import LiveLog
-from voicelab.engine.live.parts import WrappedTTS, _smart_turn
+from voicelab.engine.live.parts import LiveSettings, WrappedTTS, _smart_turn
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.tool_checks import tool_call_problem
 from voicelab.providers.base import ToolCall, ToolDef
@@ -426,3 +427,30 @@ async def test_a_mic_callers_turn_goes_out_without_waiting_for_anyone(tmp_path):
 def test_an_unsure_turn_does_not_sit_through_pipecats_three_seconds():
     analyzer = _smart_turn()[0]._turn_analyzer
     assert analyzer.params.stop_secs == 1.0
+
+
+class _RecordingBrain(Brain):
+    speaker = Speaker.BOT
+
+    def __init__(self) -> None:
+        super().__init__(log=None, ledger=PlayoutLedger(), settings=LiveSettings(), fail=None)
+        self.turns: list[str] = []
+
+    async def on_far_side_finished(self) -> None:
+        self.turns.append(self.take_heard())
+
+
+async def test_a_turn_end_that_overtakes_its_transcript_still_gets_the_words():
+    """On a real call the stop frame won this race and the bot never answered a 6 s sentence."""
+    brain = _RecordingBrain()
+    finishing = asyncio.ensure_future(brain._finish_far_side_turn())
+    await asyncio.sleep(0.02)
+    brain.heard_parts.append("Can you explain how refunds work?")
+    await finishing
+    assert brain.turns == ["Can you explain how refunds work?"]
+
+
+async def test_a_turn_with_no_words_still_ends():
+    brain = _RecordingBrain()
+    await brain._finish_far_side_turn()
+    assert brain.turns == [""]

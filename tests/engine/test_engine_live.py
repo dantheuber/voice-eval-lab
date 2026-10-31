@@ -178,8 +178,9 @@ async def test_a_live_barge_in_cuts_the_bot_and_memory_keeps_only_what_went_out(
     assert greeting.intended_text.startswith(played)
     assert abs(len(played.split()) - len(greeting.spoken_text.split())) <= 1
 
-    assistant = [m.content for m in support.requests[0] if m.role == "assistant"]
-    assert assistant[-1] == greeting.spoken_text
+    # Finished sentences stay in the bot's turn, and the cut one reaches it in the caller's next.
+    last_two = " ".join(m.content for m in support.requests[0][-2:])
+    assert all(word in last_two for word in greeting.spoken_text.split())
 
 
 async def test_the_bot_stops_for_a_caller_who_talks_over_a_long_reply(store, monkeypatch):
