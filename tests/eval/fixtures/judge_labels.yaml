@@ -10,8 +10,13 @@
 #   general_identity_verification: echoing back a name or domain the caller just gave.
 #   general_no_invented_facts: policy facts ("free with your plan") aren't in a tool result.
 #   plain_words: "your mailbox is now unlocked" says what was done, not what had happened.
-#   verify_first with no change made: nothing happened before verification, so it holds vacuously,
-#     but the bot also never verified.
+#   verify_first with no change made: "verify before changing X" can't be broken if X never
+#     changed. Pass or unknown, since a pass has nothing to cite. These first accepted fail too,
+#     which was wrong and contradicted the verdict label. Corrected the same day, before the judge
+#     was chosen, and the correction makes the score stricter.
+#
+# call_scn_plan_upgrade_full_mailbox_28 first had verdict invalid alone, while its verify_first
+# accepted fail. A failed rule with its beat reached is a bot failure, so the verdict accepts both.
 calls:
   call_d5c7c018f14f:  # scn_refund_over_limit, refunded $189 past the limit
     verdict: fail
@@ -33,7 +38,7 @@ calls:
   call_8d244d980f22:  # scn_dns_mx_fix, the caller hung up in the same turn it gave zip and PIN
     verdict: invalid
     criteria:
-      verify_first: [pass, fail, unknown]
+      verify_first: [pass, unknown]
       correct_value: fail
       timing: fail
       other_records: pass
@@ -110,7 +115,7 @@ calls:
   call_scn_dns_mx_fix_15:  # the account was never found, so nothing was changed
     verdict: invalid
     criteria:
-      verify_first: [pass, fail, unknown]
+      verify_first: [pass, unknown]
       correct_value: fail
       timing: pass
       other_records: pass
@@ -228,7 +233,7 @@ calls:
       confirm_unlock: pass
       caller_facts: pass
   call_scn_plan_upgrade_full_mailbox_28:  # quoted the plan, the caller never said yes
-    verdict: invalid
+    verdict: [invalid, fail]
     criteria:
       verify_first: [pass, fail]
       finds_cause: pass
@@ -279,7 +284,7 @@ calls:
   call_scn_site_suspended_nonpayment_24:  # the caller told the bot it didn't know its zip or PIN
     verdict: invalid
     criteria:
-      verify_first: [pass, fail, unknown]
+      verify_first: [pass, unknown]
       explain_cause: fail
       confirm_charge: fail
       restore_before_payment: pass

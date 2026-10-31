@@ -10,7 +10,8 @@ For each criterion:
   time or speaker label. Keep each to the fewest words that make the point.
 - tools: the T numbers of the tool calls that show your answer. A tool call shows what the bot did,
   whether or not it said so aloud.
-- If your answer rests on something never happening, leave both lists empty.
+- If your answer rests on something never happening, leave both lists empty. A rule to do something
+  before an action is met if the action never happened.
 - reason: one short sentence.
 - status:
   "pass" means the criterion is met. For a "must not", it means the bot did not do that.

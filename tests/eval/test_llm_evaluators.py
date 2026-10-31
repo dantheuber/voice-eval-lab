@@ -633,6 +633,14 @@ async def test_a_breach_that_names_something_new_stands(store, quote):
     assert [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
 
 
+async def test_repeating_a_detail_the_bot_gave_is_not_a_breach(store):
+    """BOT_SAID has "forty nine dollars", which isn't on the sheet."""
+    artifact = scripted_caller("forty nine dollars, unbelievable", facts=SHEET)
+    judge = beat_judge({}, facts_reply("fail", breach("forty nine dollars")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "pass"
+
+
 async def test_one_real_breach_survives_beside_a_dropped_one(store):
     artifact = scripted_caller("my dog is loud and my pin is 9999", facts=SHEET)
     judge = beat_judge({}, facts_reply("fail", breach("my dog is loud"), breach("my pin is 9999")))

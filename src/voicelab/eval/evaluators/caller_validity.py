@@ -180,7 +180,17 @@ class CallerValidityEvaluator:
             out.criteria.append(_facts_criterion("unknown", f"judge failed: {exc}", []))
             return
         listed = [b for b in payload.get("breaches") or [] if isinstance(b, dict)]
-        breaches = [b for b in listed if _names_something_new(b.get("quote"), ctx.scenario.facts)]
+        known = _known_details(ctx.scenario.facts, ctx.transcripts.get(Speaker.BOT))
+
+        def worth_keeping(breach: dict[str, Any]) -> bool:
+            # A quote that isn't the caller's stays, so verification can throw the reply out.
+            quote = breach.get("quote")
+            found = index.locate(quote, Speaker.CALLER) if isinstance(quote, str) else None
+            if found is None or found.speaker != Speaker.CALLER:
+                return True
+            return _names_something_new(quote, known)
+
+        breaches = [b for b in listed if worth_keeping(b)]
         cited = {**payload, "quotes": [b.get("quote") for b in breaches]}
         if listed and not breaches:
             cited = {
@@ -227,21 +237,26 @@ def _sheet(facts: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _names_something_new(quote: Any, facts: dict[str, str]) -> bool:
-    """Whether a claimed breach states a concrete detail that isn't on the sheet.
+def _known_details(facts: dict[str, str], bot: Transcript | None) -> str:
+    """Everything the caller is entitled to say: its sheet, and what the bot told it."""
+    sheet = [*facts.values(), *(normalize(value).spoken for value in facts.values())]
+    told = [word.text for word in bot.words] if bot else []
+    words = [*" ".join(sheet).split(), *told]
+    return "".join(t.norm for t in tokenize(words, lexicon=Lexicon.load()))
 
-    A breach has to be a number, an id, an address, or a name the sheet doesn't have. A judge left
-    to itself calls a question about the price or a dog a breach, and a breach voids the test.
+
+def _names_something_new(quote: Any, known: str) -> bool:
+    """Whether a claimed breach states a concrete detail the caller had no way to have.
+
+    A breach has to be a number, an id, an address, or a name. A judge left to itself calls a
+    question about the price or a dog a breach, and a breach voids the test.
     """
     if not isinstance(quote, str):
         return False
     lexicon = Lexicon.load()
-    sheet = " ".join([*facts.values(), *(normalize(v).spoken for v in facts.values())])
-    known = "".join(t.norm for t in tokenize(sheet.split(), lexicon=lexicon))
     words = quote.split()
-    tokens = tokenize(words, lexicon=lexicon)
     details: dict[tuple[int, int], list[str]] = {}
-    for token in tokens:
+    for token in tokenize(words, lexicon=lexicon):
         if token.critical in _DETAIL_KINDS:
             details.setdefault((token.start, token.end), []).append(token.norm)
     if any("".join(detail) not in known for detail in details.values()):
