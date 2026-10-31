@@ -59,7 +59,7 @@ export function SettingsScreen() {
             <Panel title="Swap a provider">
               <Note kind="warn"><b>Bedrock adapters are untested against live AWS.</b> There is no Bedrock access on this machine. Adapters were unit tested against mocks only. Choosing one shows this label on every call made with it, and on every result in Compare.</Note>
               <div className="form-row" style={{ marginTop: 12 }}>
-                <Field label="AWS region" help="set AWS_PROFILE or keys in .env to enable"><input className="in" value={aws.data?.region ?? ""} disabled /></Field>
+                <Field label="AWS region" help="set AWS_PROFILE or AWS keys in the environment before starting"><input className="in" value={aws.data?.region ?? ""} disabled /></Field>
                 <Field label="Credentials"><HealthDot state={aws.data?.credentials === "found" ? "ok" : "down"}>{aws.data?.credentials === "found" ? "found" : "not found"}</HealthDot></Field>
                 <Field label={<>&nbsp;</>}><Button disabled={aws.data?.credentials !== "found" || awsTest.isPending} onClick={() => awsTest.mutate()}>Test connection</Button>{awsTest.data && <span className="help" style={{ color: awsTest.data.ok ? "var(--pass)" : "var(--fail)" }}>{awsTest.data.message}</span>}</Field>
               </div>
