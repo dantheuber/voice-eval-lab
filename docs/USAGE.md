@@ -41,7 +41,7 @@ Useful variations:
 | --- | --- |
 | `./run.sh --fake` | No models. Rule-based bots and tone-coded audio, for a quick look at the dashboard. Its data stays in `data/fake`, away from real results |
 | `./run.sh --lazy` | Starts model servers only when a call needs them |
-| `./run.sh --profile local-fast` | Another stack. Run `scripts/setup.sh --profile local-fast` first |
+| `./run.sh --profile local-fast` | Another stack. Run `scripts/setup.sh --profile local-fast` first. The same goes for picking it on the settings screen, which says what's missing and the command to run, and changes nothing until it's all there |
 | `./run.sh --http-port 28080 --https-port 28443` | Other dashboard ports, when the defaults are taken |
 
 `--profile` also saves the choice as the active profile. A plain `./run.sh` always starts `local-default`, even if you switched on the settings screen last time.

@@ -10,7 +10,7 @@ This is the contract between `web/` and the FastAPI app in `src/voicelab/api`. T
 - Nullable means "not known or not measured". A null timing value is rendered as "n/a" with a reason. Never send `0` to mean "not measured".
 - Counts, not percentages. The UI computes pass rates and Wilson intervals from `{ pass, fail, needsReview, invalid }`. Invalid is always returned separately and never folded into fail.
 - Lists that can grow are paginated with `?cursor=&limit=` and return `{ items, nextCursor }`. `nextCursor` is null on the last page.
-- Errors: non-2xx with `{ "error": { "code": "not_found" | "invalid" | "conflict" | "profile_busy" | "model_not_ready" | "internal", "message": "...", "detail": {...} } }`. `model_not_ready` carries `detail: { role, model, elapsedS, usualS }` so the UI can show the loading state. `profile_busy` is a 409 that carries `detail: { profile, maxCalls, waitS }`, and `waitS` is null when the run has no finished call to estimate from.
+- Errors: non-2xx with `{ "error": { "code": "not_found" | "invalid" | "conflict" | "profile_busy" | "not_installed" | "profile_failed" | "model_not_ready" | "internal", "message": "...", "detail": {...} } }`. `model_not_ready` carries `detail: { role, model, elapsedS, usualS }` so the UI can show the loading state. `profile_busy` is a 409 that carries `detail: { profile, maxCalls, waitS }`, and `waitS` is null when the run has no finished call to estimate from. `not_installed` is a 400 that carries `detail: { profile, missing, setup }`, where `setup` is the command to run, or null if setup doesn't cover the profile. `profile_failed` is a 503 from a swap whose servers didn't start.
 - IDs are the model ids: `call_…`, `per_…`, `scn_…`, `fnd_…`, `batch_…`. The UI calls a batch a "run"; the API uses `run` in paths and `batchId` in fields, both meaning the same `batch_id` from `CallArtifact`.
 - Mutations are `POST` for create and actions, `PUT` for full replace. Responses return the updated resource.
 
@@ -280,9 +280,9 @@ Uploaded calls have `mode: "upload"`, `hasToolLog` and `hasIntendedText` from wh
 
 ## Models and settings
 
-- `GET /api/profiles` (above). `PUT /api/profiles/active` body `{ "id": string }` → `Profile`. Restarts only the servers whose adapter changed.
+- `GET /api/profiles` (above). `PUT /api/profiles/active` body `{ "id": string }` → `Profile`. Restarts only the servers whose adapter changed, and answers once they're ready, which can take as long as their `startup_timeout_s`. The selection is saved only then. Missing files give 400 `not_installed` before any server stops. Servers that don't start give 503 `profile_failed`, with the ones they replaced put back.
 - `GET /api/roles` → `{ "items": [ { "role": "support_bot_llm", "label": "support bot LLM", "interface": "LLM" | "STT" | "TTS" | "RealtimeVoice" | "AudioAnalyst" | "AudioQuality", "adapter": string, "options": [ { "id": string, "label": string, "untested": boolean, "license": string } ], "health": Health } ] }`
-- `PUT /api/roles/:role` body `{ "adapter": string }` → the role item. Writes the active profile YAML. 409 `conflict` while a run is in progress.
+- `PUT /api/roles/:role` body `{ "adapter": string }` → the role item. Writes the active profile YAML once the new server is up, with the same `not_installed` and `profile_failed` errors as a profile change. 409 `conflict` while a run is in progress.
 - `GET /api/health` → `{ "items": Health[], "ready": boolean }`. Polled every 5 s by the shell; also `WS /ws/health` sends `{ "type": "health", "items": Health[] }` on change.
 - `POST /api/servers/:role/restart` → `{ "accepted": true }`; `POST /api/servers/restart-all`; `POST /api/benchmark` → `{ "accepted": true }`, result lands in `Profile.benchmark`.
 - `GET /api/system` → `{ "gpu": { "device": string, "memoryUsedGb": number, "memoryTotalGb": number }, "servers": [ { "role", "kind", "port", "pid" } ], "urls": { "local": string, "lan": string }, "cert": "self-signed" }`

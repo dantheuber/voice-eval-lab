@@ -36,6 +36,19 @@ class ProfileBusy(Conflict):
     code = "profile_busy"
 
 
+class NotInstalled(Invalid):
+    """A profile needs files setup hasn't put here. `detail` names them and the command to run."""
+
+    code = "not_installed"
+
+
+class ProfileFailed(ServiceError):
+    """A profile's servers didn't come up, and the ones before them were put back."""
+
+    code = "profile_failed"
+    status = 503
+
+
 class ModelNotReady(ServiceError):
     code = "model_not_ready"
     status = 503

@@ -23,7 +23,15 @@ from voicelab.core.profiles import (
     ProviderStack,
     build_stack,
 )
-from voicelab.services.errors import Conflict, Invalid, ModelNotReady, NotFound
+from voicelab.services import install
+from voicelab.services.errors import (
+    Conflict,
+    Invalid,
+    ModelNotReady,
+    NotFound,
+    NotInstalled,
+    ProfileFailed,
+)
 from voicelab.services.settings import Settings
 from voicelab.services.supervisor import ServiceStatus, ServiceSupervisor
 from voicelab.services.system import aws_credentials_problem
@@ -113,6 +121,7 @@ class ProfileManager:
         self._stacks: dict[str, ProviderStack] = {}
         self._held: list[Profile] = []  # one entry per piece of work using a profile's servers
         self._calls: Counter[str] = Counter()  # calls on the line per profile, bot and mic alike
+        self._swapping: Profile | None = None  # its servers are coming up, so nothing else starts
         self._released = asyncio.Event()
         self.reload()
 
@@ -174,10 +183,12 @@ class ProfileManager:
 
     @property
     def in_use(self) -> bool:
-        return bool(self._held)
+        return bool(self._held) or self._swapping is not None
 
     def _clashing(self, profile: Profile) -> Profile | None:
         """A profile in use whose servers this one would have to replace."""
+        if self._swapping is not None and self._swapping.id != profile.id:
+            return self._swapping
         return next(
             (held for held in self._held if held.id != profile.id and _share_a_slot(held, profile)),
             None,
@@ -315,18 +326,58 @@ class ProfileManager:
     # Changes -------------------------------------------------------------------------------------
 
     def require_usable(self, profile: Profile) -> None:
-        """Refuse a cloud profile boto3 couldn't use. It has no local server to report down, so
-        it would look ready, and activating it would stop every model server for nothing."""
+        """Refuse a profile that can't run, before anything it would replace has stopped."""
+        self._require_credentials(profile)
+        root = self.settings.profiles_dir.parent.parent  # the checkout, which setup installs into
+        missing = install.missing_from_commands(profile.services, self.supervisor.cwd)
+        missing += install.missing_from_manifest(profile.id, root)
+        self._require_nothing_missing(profile, list(dict.fromkeys(missing)))
+
+    def _require_credentials(self, profile: Profile) -> None:
+        """A cloud profile has no local server to report down, so without this it would look
+        ready, and activating it would stop every model server for nothing."""
         problem = aws_credentials_problem() if profile.untested else None
         if problem:
             raise Invalid(f"{profile.label} can't start: {problem}")
 
+    def _require_nothing_missing(self, profile: Profile, missing: list[str]) -> None:
+        if not missing:
+            return
+        setup = install.setup_command(profile.id, self.settings.profiles_dir.parent.parent)
+        more = f", and {len(missing) - 1} more" if len(missing) > 1 else ""
+        fix = f"Run {setup}." if setup else "Install it, or fix the path in the profile."
+        raise NotInstalled(
+            f"{profile.label} isn't installed. Missing {missing[0]}{more}. {fix}",
+            {"profile": profile.id, "missing": missing, "setup": setup},
+        )
+
     async def activate(self, profile_id: str) -> Profile:
         profile = self.require(profile_id)
         self.require_usable(profile)
+        current = self.items.get(self.active_id or "")
+        await self._swap(profile, f"{current.label} stays active" if current else "nothing changed")
         self.catalog.set_setting("active_profile", profile.id)
-        await self.supervisor.apply(profile.services, start=True)
         return profile
+
+    async def _swap(self, target: Profile, on_failure: str) -> None:
+        """Start `target`'s servers, and drop what it doesn't use only once they're up. Servers
+        that hold one of its names or ports have to stop first, so if it fails those are put back,
+        and anything that wasn't in the way never stopped."""
+        before = self.supervisor.statuses()
+        self._swapping = target
+        try:
+            await self.supervisor.reconcile(target.services)
+            limit = max((service.startup_timeout_s for service in target.services), default=0.0)
+            failure = await self.supervisor.wait_up(target.services, limit)
+            if failure is None:
+                await self.supervisor.apply(target.services, start=True)
+                return
+            await self.supervisor.apply([s.service for s in before.values()], start=False)
+            self.supervisor.ensure_started(n for n, s in before.items() if s.state != "off")
+        finally:
+            self._swapping = None
+            self._released.set()
+        raise ProfileFailed(f"{target.label} didn't start, so {on_failure}. {failure}")
 
     def role_options(self, role: str) -> list[dict[str, Any]]:
         """What each role could use: every adapter any profile configures for it."""
@@ -369,17 +420,20 @@ class ProfileManager:
             source = self._profile_with_adapter(role, adapter)
             if source is None:
                 raise Invalid(f"no profile configures adapter {adapter!r} for {role}")
+            self._require_credentials(source)
             data["roles"][role] = source.roles[role]
             service = service_for(source, role)
             names = {s["name"] for s in data.get("services", [])}
             if service is not None and service.name not in names:
                 data.setdefault("services", []).append(service.model_dump())
         data["services"] = _services_still_used(data)
+        changed = Profile.model_validate(data)
+        missing = install.missing_from_commands(changed.services, self.supervisor.cwd)
+        self._require_nothing_missing(changed, list(dict.fromkeys(missing)))
+        await self._swap(changed, f"{ROLE_LABELS[role]} stays as it was")
         path.write_text(_leading_comments(path.read_text()) + yaml.safe_dump(data, sort_keys=False))
         self.reload()
-        profile = self.require(profile.id)
-        await self.supervisor.apply(profile.services, start=True)
-        return profile
+        return self.require(profile.id)
 
     def _profile_with_adapter(self, role: str, adapter: str) -> Profile | None:
         for profile in self.items.values():

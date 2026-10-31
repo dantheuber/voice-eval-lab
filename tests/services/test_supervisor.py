@@ -13,7 +13,7 @@ import yaml
 
 from voicelab.core.profiles import LocalService, Profile
 from voicelab.services import supervisor as supervisor_module
-from voicelab.services.errors import ModelNotReady
+from voicelab.services.errors import ModelNotReady, ServiceError
 from voicelab.services.profiles import ProfileManager
 from voicelab.services.settings import Settings
 from voicelab.services.supervisor import ServiceSupervisor, group_members
@@ -448,6 +448,259 @@ async def test_a_waiting_profile_runs_once_the_other_lets_go(supervisor, tmp_pat
     manager.release(manager.require("default"))
     await asyncio.wait_for(waiting, 10.0)
     assert supervisor.statuses()["llm"].state == "ok"
+
+
+# Swapping profiles -------------------------------------------------------------------------------
+
+
+def _crashes(port: int, name: str = "llm") -> LocalService:
+    return LocalService(name=name, command=[sys.executable, "-c", "raise SystemExit(3)"], port=port)
+
+
+def _checkout(tmp_path, supervisor, profiles, manifest: str = "") -> ProfileManager:
+    """A manager whose profiles sit in a checkout with a setup manifest, as the real ones do."""
+    root = tmp_path / "checkout"
+    directory = root / "config" / "profiles"
+    directory.mkdir(parents=True)
+    (root / "scripts" / "setup").mkdir(parents=True)
+    (root / "scripts" / "setup" / "manifest.tsv").write_text(manifest)
+    for profile in profiles:
+        (directory / f"{profile.id}.yaml").write_text(yaml.safe_dump(profile.model_dump()))
+    supervisor.cwd = root
+    settings = Settings(data_dir=tmp_path, profiles_dir=directory)
+    catalog = Catalog(Database(tmp_path / "x.sqlite3"))
+    return ProfileManager(settings, catalog, supervisor, stack_factory=lambda profile: profile)
+
+
+async def test_a_swap_waits_for_the_new_servers_and_then_saves(supervisor, tmp_path):
+    port = free_port()
+    first = _profile("default", service(port, name="llm"))
+    second = _profile("fast", service(port, "--ready-after", "0.3", name="llm"))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    await manager.activate("default")
+    await manager.activate("fast")
+    assert manager.active_id == "fast"
+    assert supervisor.statuses()["llm"].state == "ok"
+
+
+async def test_a_swap_that_cannot_start_puts_the_old_server_back(supervisor, tmp_path):
+    port = free_port()
+    first = _profile("default", service(port, name="llm"))
+    second = _profile("fast", _crashes(port))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    await manager.activate("default")
+
+    with pytest.raises(ServiceError, match="exited with code 3") as refused:
+        await manager.activate("fast")
+
+    assert "default" in refused.value.message
+    assert manager.active_id == "default"
+    assert await supervisor.wait_ready(manager.require("default").services, 10.0)
+    assert supervisor.statuses()["llm"].pid is not None
+
+
+async def test_a_failed_swap_leaves_servers_it_did_not_replace_running(supervisor, tmp_path):
+    kept_port, new_port = free_port(), free_port()
+    kept = service(kept_port, name="only-in-default")
+    first = _profile("default", kept)
+    second = _profile("fast", _crashes(new_port, "only-in-fast"))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    await manager.activate("default")
+    pid = supervisor.statuses()["only-in-default"].pid
+
+    with pytest.raises(ServiceError):
+        await manager.activate("fast")
+
+    assert supervisor.statuses()["only-in-default"].pid == pid
+    assert "only-in-fast" not in supervisor.statuses()
+
+
+async def test_a_good_swap_drops_servers_the_new_profile_does_not_use(supervisor, tmp_path):
+    first = _profile("default", service(free_port(), name="old"))
+    second = _profile("fast", service(free_port(), name="new"))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    await manager.activate("default")
+    pid = supervisor.statuses()["old"].pid
+    await manager.activate("fast")
+    assert set(supervisor.statuses()) == {"new"}
+    await until(lambda: not alive(pid))
+
+
+async def test_a_held_port_fails_a_swap_at_once_and_names_the_holder(supervisor, tmp_path):
+    held = free_port()
+    foreign = await foreign_server(held, "--ready-after", "0")
+    first = _profile("default", service(free_port(), name="llm"))
+    second = _profile("fast", service(held, name="asr"))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    try:
+        await manager.activate("default")
+        with pytest.raises(ServiceError, match=f"pid {foreign.pid}"):
+            await asyncio.wait_for(manager.activate("fast"), 5.0)
+        assert manager.active_id == "default"
+    finally:
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_a_failed_swap_does_not_start_what_was_never_running(supervisor, tmp_path):
+    """With --lazy nothing has started, and a failed swap shouldn't change that."""
+    idle = service(free_port(), name="idle")
+    first = _profile("default", idle)
+    second = _profile("fast", _crashes(free_port(), "broken"))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    await supervisor.apply([idle], start=False)
+    with pytest.raises(ServiceError):
+        await manager.activate("fast")
+    assert supervisor.statuses()["idle"].state == "off"
+    assert "broken" not in supervisor.statuses()
+
+
+async def test_nothing_else_uses_the_servers_during_a_swap(supervisor, tmp_path):
+    port = free_port()
+    first = _profile("default", service(port, name="llm"))
+    second = _profile("fast", service(port, "--ready-after", "0.4", name="llm"))
+    manager = _manager(tmp_path, supervisor, [first, second])
+    await manager.activate("default")
+    swap = asyncio.create_task(manager.activate("fast"))
+    await asyncio.sleep(0.05)
+    assert manager.in_use
+    with pytest.raises(ModelNotReady, match="in use"):
+        await manager.require_ready(manager.require("default"), ["llm_support"])
+    waiting = asyncio.create_task(manager.ready(manager.require("default"), 10.0))
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    await swap
+    await asyncio.wait_for(waiting, 10.0)
+
+
+async def test_a_missing_program_stops_nothing(supervisor, tmp_path):
+    port = free_port()
+    first = _profile("default", service(port, name="llm"))
+    binary = ".runtime/nemo/bin/nemo-speech"
+    broken = LocalService(name="llm", command=[binary, "serve"], port=port)
+    second = _profile("local-fast", broken)
+    manager = _checkout(tmp_path, supervisor, [first, second])
+    await manager.activate("default")
+    pid = supervisor.statuses()["llm"].pid
+
+    with pytest.raises(ServiceError, match="nemo-speech") as refused:
+        await manager.activate("local-fast")
+
+    assert refused.value.detail["missing"] == [binary]
+    assert manager.active_id == "default"
+    assert supervisor.statuses()["llm"].pid == pid
+
+
+async def test_a_missing_model_stops_nothing(supervisor, tmp_path):
+    port = free_port()
+    first = _profile("default", service(port, name="llm"))
+    model = ".runtime/models/LFM3.gguf"
+    swapped = service(port, name="llm")
+    swapped.command += ["-m", model]
+    manager = _checkout(tmp_path, supervisor, [first, _profile("local-fast", swapped)])
+    await manager.activate("default")
+    pid = supervisor.statuses()["llm"].pid
+    with pytest.raises(ServiceError, match="LFM3.gguf"):
+        await manager.activate("local-fast")
+    assert supervisor.statuses()["llm"].pid == pid
+
+
+MANIFEST = """\
+# need: required files stop run.sh.
+#profiles\tneed\tpath\tbytes\trepo\trevision\tfile\thash
+local-fast,local-realtime\trequired\t.runtime/hf/voice.safetensors\t4\tr\tv\tf\th
+local-fast\trequired\t.runtime/models/parakeet.gguf\t4\tr\tv\tf\th
+local-fast\ton-demand\t.runtime/hf/optional.safetensors\t4\tr\tv\tf\th
+local-default\trequired\t.runtime/models/qwen.gguf\t4\tr\tv\tf\th
+"""
+
+
+def _with_file(root: Path, path: str, text: str = "data") -> None:
+    (root / path).parent.mkdir(parents=True, exist_ok=True)
+    (root / path).write_text(text)
+
+
+async def test_required_files_come_from_the_setup_manifest(supervisor, tmp_path):
+    """Phonon's voices are named nowhere on its command line, so the command can't show them."""
+    fast = Profile(id="local-fast", label="Fast", roles={})
+    manager = _checkout(tmp_path, supervisor, [fast], MANIFEST)
+    _with_file(supervisor.cwd, ".runtime/models/parakeet.gguf", "short")
+
+    with pytest.raises(ServiceError) as refused:
+        await manager.activate("local-fast")
+
+    assert refused.value.detail == {
+        "profile": "local-fast",
+        "missing": [".runtime/hf/voice.safetensors", ".runtime/models/parakeet.gguf (incomplete)"],
+        "setup": "scripts/setup.sh --profile local-fast",
+    }
+    assert "scripts/setup.sh --profile local-fast" in refused.value.message
+    assert manager.catalog.setting("active_profile") is None
+
+
+async def test_a_complete_install_passes_and_on_demand_files_may_be_missing(supervisor, tmp_path):
+    fast = Profile(id="local-fast", label="Fast", roles={})
+    manager = _checkout(tmp_path, supervisor, [fast], MANIFEST)
+    _with_file(supervisor.cwd, ".runtime/hf/voice.safetensors")
+    _with_file(supervisor.cwd, ".runtime/models/parakeet.gguf")
+    await manager.activate("local-fast")
+    assert manager.active_id == "local-fast"
+
+
+async def test_a_profile_setup_does_not_cover_says_to_check_its_paths(supervisor, tmp_path):
+    custom = LocalService(name="x", command=["/no/such/server"], port=free_port())
+    manager = _checkout(tmp_path, supervisor, [_profile("mine", custom)], MANIFEST)
+    with pytest.raises(ServiceError, match="/no/such/server") as refused:
+        await manager.activate("mine")
+    assert refused.value.detail["setup"] is None
+    assert "setup.sh" not in refused.value.message
+
+
+async def test_a_program_on_the_path_counts_as_installed(supervisor, tmp_path):
+    on_path = LocalService(name="x", command=["sleep", "0"], port=free_port())
+    manager = _checkout(tmp_path, supervisor, [_profile("mine", on_path)])
+    manager.require_usable(manager.require("mine"))
+
+
+def _with_adapters(profile_id: str, service_: LocalService, model: str) -> Profile:
+    role = {"type": "fake", "model": model, "base_url": f"http://127.0.0.1:{service_.port}/v1"}
+    return Profile(id=profile_id, label=profile_id, roles={"stt_live": role}, services=[service_])
+
+
+async def test_a_role_on_a_model_that_isnt_installed_changes_nothing(supervisor, tmp_path):
+    port = free_port()
+    good = _with_adapters("default", service(port, name="asr"), "qwen")
+    absent = LocalService(name="parakeet", command=[".runtime/no-such-server"], port=free_port())
+    other = _with_adapters("fast", absent, "parakeet")
+    manager = _manager(tmp_path, supervisor, [good, other])
+    await manager.activate("default")
+    pid = supervisor.statuses()["asr"].pid
+    path = manager.paths["default"]
+    before = path.read_text()
+
+    with pytest.raises(ServiceError, match="no-such-server"):
+        await manager.set_role("stt_live", "fake:parakeet")
+
+    assert path.read_text() == before
+    assert supervisor.statuses()["asr"].pid == pid
+
+
+async def test_a_role_swap_that_cannot_start_keeps_the_yaml_and_the_server(supervisor, tmp_path):
+    port = free_port()
+    good = _with_adapters("default", service(port, name="asr"), "qwen")
+    other = _with_adapters("fast", _crashes(free_port(), "parakeet"), "parakeet")
+    manager = _manager(tmp_path, supervisor, [good, other])
+    await manager.activate("default")
+    pid = supervisor.statuses()["asr"].pid
+    path = manager.paths["default"]
+    before = path.read_text()
+
+    with pytest.raises(ServiceError, match="exited with code 3"):
+        await manager.set_role("stt_live", "fake:parakeet")
+
+    assert path.read_text() == before
+    assert supervisor.statuses()["asr"].pid == pid
+    assert "parakeet" not in supervisor.statuses()
 
 
 # Process groups ----------------------------------------------------------------------------------

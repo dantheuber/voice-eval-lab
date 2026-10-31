@@ -37,6 +37,7 @@ _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]")
 _GROUP_POLL_S = 0.05
 _DEAD_STATES = ("Z", "X")
 _LISTENING = "0A"
+_CRASHES_BEFORE_GIVING_UP = 2  # one can be a port still closing behind the server it replaced
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class _Entry:
     managed: bool = True
     loading_since: float | None = None
     restarts: int = 0
+    last_failure: str = ""
     process: asyncio.subprocess.Process | None = None
     task: asyncio.Task[None] | None = field(default=None, repr=False)
 
@@ -179,6 +181,29 @@ class ServiceSupervisor:
         entry = self._entries.get(service.name)
         return entry is not None and entry.service == service and entry.state == "ok"
 
+    async def wait_up(self, services: Iterable[LocalService], timeout_s: float) -> str | None:
+        """Wait for these to be ready. None if they are, or else what stopped them. Unlike
+        `wait_ready` this gives up early on a server that won't fix itself in time."""
+        wanted = list(services)
+        deadline = time.monotonic() + timeout_s
+        while not all(self._is_ready(service) for service in wanted):
+            failure = self._gave_up(wanted)
+            if failure is not None:
+                return failure
+            if time.monotonic() >= deadline:
+                return f"not ready after {timeout_s:.0f} s"
+            await asyncio.sleep(min(0.25, self.poll_s))
+        return None
+
+    def _gave_up(self, services: list[LocalService]) -> str | None:
+        for service in services:
+            entry = self._entries.get(service.name)
+            if entry is None or entry.state != "down":
+                continue
+            if not entry.managed or entry.restarts >= _CRASHES_BEFORE_GIVING_UP:
+                return f"{service.name}: {entry.last_failure or entry.detail}"
+        return None
+
     def why_down(self, services: Iterable[LocalService]) -> str | None:
         """What's wrong with the first of these that is down, as opposed to still loading."""
         for service in services:
@@ -203,6 +228,7 @@ class ServiceSupervisor:
             if healthy_s >= self.stable_s:
                 backoff = self.min_backoff_s
             entry.restarts += 1
+            entry.last_failure = reason
             logger.warning("service %s: %s", service.name, reason)
             self._set(entry, "down", f"{reason}, restarting in {backoff:.0f} s")
             await asyncio.sleep(backoff)

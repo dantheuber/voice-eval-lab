@@ -4,6 +4,7 @@ import os
 import socket
 import sqlite3
 import sys
+from pathlib import Path
 
 import pytest
 import yaml
@@ -77,17 +78,62 @@ def test_profile_change_conflicts_during_a_run(client, rig, start_run):
     assert client.put("/api/profiles/active", json={"id": "live"}).status_code == 409
 
 
+def _healthy_server(name: str) -> LocalService:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server = Path(__file__).parents[1] / "services" / "fake_server.py"
+    return LocalService(name=name, command=[sys.executable, str(server), str(port)], port=port)
+
+
 def test_profile_change_keeps_servers_that_did_not_change(client, rig):
-    kept = LocalService(name="stt", command=["sleep", "1"], port=18991)
-    dropped = LocalService(name="old", command=["sleep", "1"], port=18992)
+    kept = _healthy_server("stt")
+    dropped = _healthy_server("old")
     rig.services.profiles.require("local-default").services.extend([kept, dropped])
     rig.services.profiles.require("live").services.append(kept)
     supervisor = rig.services.supervisor
-    rig.run_on_loop(lambda: supervisor.apply([kept, dropped], start=False))
+    rig.run_on_loop(lambda: supervisor.apply([kept, dropped], start=True))
     entry = supervisor._entries["stt"]
-    client.put("/api/profiles/active", json={"id": "live"})
+    assert client.put("/api/profiles/active", json={"id": "live"}).status_code == 200
     assert supervisor._entries["stt"] is entry
     assert "old" not in supervisor._entries
+
+
+def test_a_profile_with_files_missing_says_what_and_how_to_get_them(client, rig):
+    missing = ".runtime/models/parakeet.gguf"
+    absent = LocalService(name="asr", command=["sleep", "1", missing], port=18994)
+    rig.services.profiles.require("live").services.append(absent)
+    response = client.put("/api/profiles/active", json={"id": "live"})
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "not_installed"
+    assert error["detail"]["missing"] == [missing]
+    assert missing in error["message"]
+    assert client.get("/api/profiles").json()["activeId"] == "local-default"
+
+
+def test_a_run_on_a_profile_with_files_missing_is_refused(client, rig):
+    absent = LocalService(name="asr", command=["/no/such/server"], port=18995)
+    rig.services.profiles.require("live").services.append(absent)
+    pair = {"scenarioId": "scn_dns_mx_fix", "personaId": "per_impatient_owner"}
+    body = {"pairs": [pair], "reps": 1, "profile": "live", "mode": "auto", "concurrency": 1}
+    response = client.post("/api/runs", json={**body, "line": "persona", "label": None})
+    assert response.status_code == 400
+    assert "/no/such/server" in response.json()["error"]["message"]
+
+
+def test_a_profile_whose_servers_fail_says_which_it_stayed_on(client, rig):
+    crashes = LocalService(
+        name="asr", command=[sys.executable, "-c", "raise SystemExit(3)"], port=18996
+    )
+    rig.services.profiles.require("live").services.append(crashes)
+    response = client.put("/api/profiles/active", json={"id": "live"})
+    assert response.status_code == 503
+    error = response.json()["error"]
+    assert error["code"] == "profile_failed"
+    assert "exited with code 3" in error["message"]
+    assert "Local" in error["message"]
+    assert client.get("/api/profiles").json()["activeId"] == "local-default"
 
 
 def test_health_covers_every_role(client):

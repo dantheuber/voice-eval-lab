@@ -4,10 +4,24 @@ import { Shell } from "@/components/Shell";
 import { Button, Field, HealthDot, Note, Panel, QueryState, Skeleton, Untested } from "@/components/ui";
 import { keys, useAws, useHealth, useInvalidate, useProfiles, useRoles, useSystem, useThresholds } from "@/api/queries";
 import { endpoints } from "@/api/client";
+import { ApiError } from "@/api/transport";
 import { toast } from "@/store/toast";
 import { fmtWhen } from "@/lib/format";
 import type { Thresholds } from "@/api/types";
 import s from "./screens.module.css";
+
+/* A swap changes nothing when it fails. This stays up until the next try, since what's missing takes a while to fix. */
+function SwapError({ error }: { error: unknown }) {
+  const failure = error instanceof ApiError && error.code === "not_installed" ? (error.detail as { missing: string[]; setup: string | null }) : null;
+  if (!failure) return <Note kind="err"><b>Not switched.</b> {(error as Error).message}</Note>;
+  return (
+    <Note kind="err">
+      <b>This isn't installed, so nothing changed.</b> Missing:
+      <span style={{ display: "block", maxHeight: 120, overflow: "auto", margin: "4px 0" }}>{failure.missing.map((path) => <span key={path} className="mono" style={{ display: "block" }}>{path}</span>)}</span>
+      {failure.setup ? <>Run <span className="mono">{failure.setup}</span>, then pick it again.</> : "Install it, or fix the path in the profile's YAML."}
+    </Note>
+  );
+}
 
 export function SettingsScreen() {
   const profiles = useProfiles();
@@ -17,8 +31,9 @@ export function SettingsScreen() {
   const thresholds = useThresholds();
   const aws = useAws();
   const invalidate = useInvalidate();
-  const setProfile = useMutation({ mutationFn: (id: string) => endpoints.setActiveProfile(id), onError: (e) => toast((e as Error).message, 7000), onSuccess: () => { invalidate(keys.profiles, keys.roles, keys.health); toast("Profile switched. Only changed servers restart."); } });
-  const setRole = useMutation({ mutationFn: ({ role, adapter }: { role: string; adapter: string }) => endpoints.setRole(role, adapter), onSuccess: (r) => { invalidate(keys.roles, keys.health, keys.profiles); toast(`${r.label} now uses ${r.options.find((o) => o.id === r.adapter)?.label ?? r.adapter}`); }, onError: (e) => toast((e as Error).message, 3000) });
+  const [swapError, setSwapError] = useState<unknown>(null);
+  const setProfile = useMutation({ mutationFn: (id: string) => endpoints.setActiveProfile(id), onMutate: () => setSwapError(null), onError: (e) => setSwapError(e), onSuccess: () => { invalidate(keys.profiles, keys.roles, keys.health); toast("Profile switched. Its servers are ready."); } });
+  const setRole = useMutation({ mutationFn: ({ role, adapter }: { role: string; adapter: string }) => endpoints.setRole(role, adapter), onMutate: () => setSwapError(null), onSuccess: (r) => { invalidate(keys.roles, keys.health, keys.profiles); toast(`${r.label} now uses ${r.options.find((o) => o.id === r.adapter)?.label ?? r.adapter}`); }, onError: (e) => setSwapError(e) });
   const restart = useMutation({ mutationFn: (role: string) => endpoints.restartServer(role), onSuccess: () => { invalidate(keys.health, keys.roles); toast("Restarting"); } });
   const restartAll = useMutation({ mutationFn: () => endpoints.restartAll(), onSuccess: () => { invalidate(keys.health, keys.roles); toast("Restarting all servers"); } });
   const bench = useMutation({ mutationFn: () => endpoints.benchmark(), onSuccess: () => toast("Benchmark started. Result lands on the profile when done.") });
@@ -37,7 +52,8 @@ export function SettingsScreen() {
         <div className="cols-main-side">
           <div className="stack">
             <Panel flush title="Active profile" meta={active ? <>{active.configPath} · {active.liveCapable ? "live mode ok" : "turn-based only"}{active.benchmark ? `, models alone answer in ${active.benchmark.botReplyP50S} s, before voice detection and turn waits, benchmark ${fmtWhen(active.benchmark.at)}` : ", no benchmark yet"}</> : ""}
-              actions={<select className="in" style={{ width: "auto", height: 26 }} value={profiles.data?.activeId ?? ""} onChange={(e) => setProfile.mutate(e.target.value)} aria-label="Active profile">{profiles.data?.items.map((p) => <option key={p.id} value={p.id}>{p.label}{p.untested ? " (untested)" : ""}</option>)}</select>}>
+              actions={<>{setProfile.isPending && <HealthDot state="loading">starting {setProfile.variables}</HealthDot>}<select className="in" style={{ width: "auto", height: 26 }} value={profiles.data?.activeId ?? ""} disabled={setProfile.isPending} onChange={(e) => setProfile.mutate(e.target.value)} aria-label="Active profile">{profiles.data?.items.map((p) => <option key={p.id} value={p.id}>{p.label}{p.untested ? " (untested)" : ""}</option>)}</select></>}>
+              {swapError != null && <div style={{ padding: 12 }}><SwapError error={swapError} /></div>}
               <div style={{ overflow: "auto" }}>
                 <QueryState q={roles} what="roles" skeleton={<div style={{ padding: 12 }}><Skeleton rows={8} /></div>}>
                   {(d) => (
@@ -46,7 +62,7 @@ export function SettingsScreen() {
                       <tbody>{d.items.map((r) => { const opt = r.options.find((o) => o.id === r.adapter); return (
                         <tr key={r.role}>
                           <td><b>{r.label}</b></td><td className="mono faint">{r.interface}</td>
-                          <td><span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}><select className="in" aria-label={`${r.label} adapter`} value={r.adapter} disabled={setRole.isPending} onChange={(e) => setRole.mutate({ role: r.role, adapter: e.target.value })}>{r.options.map((o) => <option key={o.id} value={o.id}>{o.label}{o.untested ? " (untested)" : ""}</option>)}</select>{opt?.untested && <Untested />}</span></td>
+                          <td><span style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}><select className="in" aria-label={`${r.label} adapter`} value={r.adapter} disabled={setRole.isPending || setProfile.isPending} onChange={(e) => setRole.mutate({ role: r.role, adapter: e.target.value })}>{r.options.map((o) => <option key={o.id} value={o.id}>{o.label}{o.untested ? " (untested)" : ""}</option>)}</select>{opt?.untested && <Untested />}</span></td>
                           <td>{r.health.state === "off" ? <span className="faint">off</span> : <HealthDot state={r.health.state}>{r.health.detail}{r.health.state === "loading" && r.health.elapsedS != null ? `, ${r.health.elapsedS} s` : ""}</HealthDot>}</td>
                           <td className="faint" style={{ fontSize: 11 }}>{opt?.license}</td>
                           <td>{r.health.state !== "off" && <Button size="sm" variant="ghost" onClick={() => restart.mutate(r.role)}>restart</Button>}</td>

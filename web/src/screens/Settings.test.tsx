@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import * as Tooltip from "@radix-ui/react-tooltip";
+import { ApiError } from "@/api/transport";
 import { endpoints } from "@/api/client";
 import type { AwsStatus, Health, Profile } from "@/api/types";
 import { SettingsScreen } from "./Settings";
@@ -26,6 +28,56 @@ function show({ aws = { region: null, credentials: "found", problem: null, teste
   vi.mocked(endpoints.aws).mockResolvedValue(aws);
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Tooltip.Provider><SettingsScreen /></Tooltip.Provider></MemoryRouter></QueryClientProvider>);
 }
+
+describe("switching profile", () => {
+  beforeEach(() => { vi.mocked(endpoints.setActiveProfile).mockReset(); });
+  const pick = async (user: ReturnType<typeof userEvent.setup>) => user.selectOptions(await screen.findByRole("combobox", { name: "Active profile" }), await screen.findByRole("option", { name: "local-fast" }));
+  const notInstalled = new ApiError(400, { code: "not_installed", message: "Fast isn't installed. Missing .runtime/models/parakeet.gguf, and 1 more. Run scripts/setup.sh --profile local-fast.", detail: { profile: "local-fast", missing: [".runtime/models/parakeet.gguf", ".runtime/models/lfm3.gguf"], setup: "scripts/setup.sh --profile local-fast" } }, "x");
+
+  it("names everything missing and the command that gets it, and it stays on screen", async () => {
+    vi.mocked(endpoints.setActiveProfile).mockRejectedValue(notInstalled);
+    const user = userEvent.setup();
+    show();
+    await pick(user);
+    expect(await screen.findByText(".runtime/models/parakeet.gguf")).toBeInTheDocument();
+    expect(screen.getByText(".runtime/models/lfm3.gguf")).toBeInTheDocument();
+    expect(screen.getByText("scripts/setup.sh --profile local-fast")).toBeInTheDocument();
+    expect(screen.getByText(/nothing changed/i)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Active profile" })).toHaveValue("local-default");
+  });
+
+  it("says what to fix when setup doesn't cover the profile", async () => {
+    vi.mocked(endpoints.setActiveProfile).mockRejectedValue(new ApiError(400, { code: "not_installed", message: "x", detail: { profile: "mine", missing: ["/no/such/server"], setup: null } }, "x"));
+    const user = userEvent.setup();
+    show();
+    await pick(user);
+    expect(await screen.findByText(/fix the path/i)).toBeInTheDocument();
+  });
+
+  it("shows why a swap failed and that the old profile stayed", async () => {
+    vi.mocked(endpoints.setActiveProfile).mockRejectedValue(new ApiError(503, { code: "profile_failed", message: "Fast didn't start, so Local stays active. llm: exited with code 1" }, "x"));
+    const user = userEvent.setup();
+    show();
+    await pick(user);
+    expect(await screen.findByText(/Local stays active/)).toBeInTheDocument();
+  });
+
+  it("holds the picker still while servers start, and clears the error on the next try", async () => {
+    vi.mocked(endpoints.setActiveProfile).mockRejectedValueOnce(notInstalled);
+    let finish = (_: Profile) => {};
+    vi.mocked(endpoints.setActiveProfile).mockImplementationOnce(() => new Promise<Profile>((resolve) => { finish = resolve; }));
+    const user = userEvent.setup();
+    show();
+    await pick(user);
+    await screen.findByText(/nothing changed/i);
+    await pick(user);
+    expect(await screen.findByText(/starting local-fast/i)).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Active profile" })).toBeDisabled();
+    expect(screen.queryByText(/nothing changed/i)).not.toBeInTheDocument();
+    finish(profile("local-fast"));
+    await vi.waitFor(() => expect(screen.getByRole("combobox", { name: "Active profile" })).toBeEnabled());
+  });
+});
 
 describe("model servers", () => {
   it("shows who holds a port in full, on as many lines as it takes", async () => {
