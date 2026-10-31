@@ -103,7 +103,9 @@ def _by_verification_order(ctx: EvalContext, item: _Item) -> _Settled | None:
     if order.changed_unverified:
         reference, event = order.changed
         reason = f"The bot used {event.name} at {event.at_s:.1f} s before verifying the caller."
-        return _Settled(item, "fail", reason, [tools.evidence(reference)])
+        # One fact is one finding, so a rule saying the same thing is the one that reports it.
+        report = item.decided_by == VERIFIED_BEFORE_CHANGE or not _has_order_rule(ctx)
+        return _Settled(item, "fail", reason, [tools.evidence(reference)], report=report)
     if item.decided_by != VERIFIED_BEFORE_CHANGE:
         return None  # a clean order proves nothing about what the bot said aloud
     if order.changed is None:
@@ -111,6 +113,12 @@ def _by_verification_order(ctx: EvalContext, item: _Item) -> _Settled | None:
     reference, _ = order.verified
     reason = "The bot verified the caller before changing anything."
     return _Settled(item, "pass", reason, [tools.evidence(reference)])
+
+
+def _has_order_rule(ctx: EvalContext) -> bool:
+    return ctx.scenario is not None and any(
+        rule.decided_by == VERIFIED_BEFORE_CHANGE for rule in ctx.scenario.must
+    )
 
 
 def _by_state(ctx: EvalContext, item: _Item) -> _Settled | None:

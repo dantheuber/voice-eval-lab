@@ -93,9 +93,11 @@ class DeliveryConfig(BaseModel):
     min_voiced_s: float = 0.6
     min_snr_db: float = 15.0
     snr_median_drop_db: float = 8.0
+    noise_relative_ceiling_db: float = 30.0  # above this it's clean, whatever the call's median
     abrupt_edge_ms: float = 9.0
     # Real Phonon starts read as abrupt one time in five, so only a pattern is worth a reviewer.
     abrupt_share_to_review: float = 0.5
+    abrupt_count_to_review: int = 3
     min_utterances_for_median: int = 3
 
 

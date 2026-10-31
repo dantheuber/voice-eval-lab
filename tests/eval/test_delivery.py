@@ -521,6 +521,24 @@ async def test_a_rare_abrupt_start_is_a_detail_and_a_common_one_is_not(store):
     assert onset.severity == "minor"
 
 
+async def test_clean_speech_is_not_noisy_however_far_it_sits_under_the_median(store):
+    """A real utterance read 38 dB in a call with a 48 dB median, and that isn't noise."""
+    config = EvalConfig()
+    config.delivery.min_snr_db = 2.0
+    config.delivery.noise_relative_ceiling_db = 5.0
+    clips = [clean(0), clean(1), clean(2), with_noise(clean(3), 12.0)]
+    out = await measure(build_context(store, clips, config=config))
+    assert "noisy" not in flags(out)[3]
+
+
+async def test_two_abrupt_starts_are_not_a_pattern(store):
+    out = await measure(
+        build_context(store, [hard_cut(clean(0)), hard_cut(clean(1)), clean(2), clean(3)])
+    )
+    edges = [f for f in out.findings if f.category == "abrupt_onset"]
+    assert edges and all(f.severity == "info" for f in edges)
+
+
 async def test_a_terrible_voice_reaches_review_and_never_fails(store):
     clips = [DEFECTS[d][0](i) for i, d in enumerate(DEFECTS)]
     ctx = build_context(store, clips)

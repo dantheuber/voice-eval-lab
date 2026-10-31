@@ -28,6 +28,7 @@ from voicelab.eval.judging import (
     verify_judgment,
 )
 from voicelab.eval.normalize import Lexicon, tokenize
+from voicelab.eval.rollup import roll_up
 from voicelab.eval.transcript import TranscriptIndex, estimate_words, render_transcript
 from voicelab.eval.vad import Region
 from voicelab.eval.verdict import FACTS_CRITERION_ID, MATERIAL_FACT_BREACH
@@ -112,6 +113,7 @@ class CallerValidityEvaluator:
         reached: list[str] = []
         missed: list[str] = []
         undecided: list[str] = []
+        missed_findings: list[Finding] = []
         for beat in scenario.beats:
             payload = replies.payloads.get(beat.id)
             if payload is None:
@@ -138,19 +140,27 @@ class CallerValidityEvaluator:
             )
             {"pass": reached, "fail": missed, "unknown": undecided}[judgment.status].append(beat.id)
             if judgment.status == "fail":
-                out.findings.append(
+                checkpoint = beat.checkpoint or beat.instruction
+                missed_findings.append(
                     Finding(
                         evaluator=self.name,
                         category="beat_missed",
                         severity="major" if beat.required else "minor",
                         # Verdict logic reads this as invalid. It says nothing about the bot.
                         advisory=True,
-                        title=f"Caller missed checkpoint: {beat.checkpoint or beat.instruction}",
-                        detail=judgment.reason,
+                        title=f"Caller missed checkpoint: {checkpoint}",
+                        detail=f"{checkpoint} {judgment.reason}",
                         evidence=judgment.evidence,
                         criterion_id=beat.id,
                     )
                 )
+        out.findings.extend(
+            roll_up(
+                missed_findings,
+                key=lambda f: f.category,
+                title=lambda group: f"Caller missed {len(group)} checkpoints",
+            )
+        )
         if scenario.facts:
             await self._check_facts(ctx, out)
         out.metrics.update({"reached": reached, "missed": missed, "unknown": undecided})

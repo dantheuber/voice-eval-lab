@@ -353,6 +353,15 @@ async def test_a_reached_claim_needs_real_evidence(store):
     assert out.metrics["unknown"] == [beat.id]
 
 
+async def test_missed_checkpoints_roll_up_with_every_occurrence(store):
+    beats = [Beat(instruction="step one"), Beat(instruction="step two")]
+    judge = beat_judge({"step one": verdict_json("fail"), "step two": verdict_json("fail")})
+    out = await run(CallerValidityEvaluator(), context(store, validity_call(beats=beats), judge))
+    [finding] = [f for f in out.findings if f.category == "beat_missed"]
+    assert finding.title == "Caller missed 2 checkpoints"
+    assert "step one" in finding.detail and "step two" in finding.detail
+
+
 async def test_optional_beat_missed_is_only_minor(store):
     beat = Beat(instruction="mention the weather", required=False)
     judge = beat_judge({"mention the weather": verdict_json("fail")})
@@ -722,6 +731,19 @@ async def test_a_change_before_verifying_settles_the_identity_rule_too(store):
     out = await run(TranscriptJudgeEvaluator(), context(store, decided_call(write(5.0)), judge))
     assert by_id(out, "general_identity_verification").status == "fail"
     assert "general_identity_verification" not in asked_lines(judge.prompts[0])
+
+
+async def test_one_unverified_change_is_one_finding_not_two(store):
+    out = await run(TranscriptJudgeEvaluator(), context(store, decided_call(write(5.0)), FakeLLM()))
+    assert by_id(out, "verify_first").status == "fail"
+    assert by_id(out, "general_identity_verification").status == "fail"
+    assert [f.criterion_id for f in out.findings] == ["verify_first"]
+
+
+async def test_with_no_rule_for_it_the_identity_criterion_reports_the_change(store):
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS, timeline=[write(5.0)])
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, FakeLLM()))
+    assert [f.criterion_id for f in out.findings] == ["general_identity_verification"]
 
 
 async def test_otherwise_the_judge_decides_the_identity_rule(store):

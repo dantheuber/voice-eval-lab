@@ -371,7 +371,7 @@ async def test_repeated_slow_turns_roll_up_and_keep_the_worst_severity(store):
 
 async def test_repeated_dead_air_rolls_up(store):
     found = await findings_for(
-        store, caller=[(1.0, 2.0), (20.0, 21.0), (40.0, 41.0)], bot=[], category="dead_air"
+        store, caller=[], bot=[(1.0, 2.0), (20.0, 21.0), (40.0, 41.0)], category="dead_air"
     )
     assert len(found) == 1
     assert len(found[0].evidence) >= 2
@@ -420,3 +420,23 @@ async def test_a_little_speech_off_the_timeline_says_nothing_about_the_line(stor
 async def test_a_call_with_no_timeline_is_measured_from_the_audio(store):
     out, _ = await evaluate(store, caller=[(1.0, 2.0)], bot=[(9.0, 12.0)], duration_s=21.0)
     assert "slow_response" in categories(out)
+
+
+async def test_a_slow_response_is_not_also_dead_air(store):
+    """One 8.4 s gap read as two findings on a real call."""
+    out, _ = await evaluate(store, caller=[(1.0, 3.0)], bot=[(11.4, 13.0)], duration_s=14.0)
+    assert categories(out) == ["slow_response"]
+    assert out.metrics["dead_air"]["count_over_threshold"] == 1
+
+
+async def test_an_unanswered_turn_is_not_also_dead_air(store):
+    out, _ = await evaluate(
+        store, caller=[(1.0, 3.0), (20.0, 22.0)], bot=[(24.0, 26.0)], duration_s=27.0
+    )
+    assert "unanswered_turn" in categories(out)
+    assert "dead_air" not in categories(out)
+
+
+async def test_silence_nobody_owed_an_answer_in_is_still_dead_air(store):
+    out, _ = await evaluate(store, bot=[(1.0, 2.0), (12.0, 13.0)], duration_s=14.0)
+    assert categories(out) == ["dead_air"]

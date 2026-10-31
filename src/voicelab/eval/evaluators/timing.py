@@ -29,6 +29,7 @@ _SYNTHETIC_REASON = (
     "timing_is_real is False: this was a turn-based call, so its pauses come from the scheduler"
 )
 _INFERRED_REASON = "channels were inferred from a mono recording, so they can't overlap"
+_WAITS = ("slow_response", "unanswered_turn")
 _NOISE_REASON = "noise on this line reads as speech on the bot channel, so its turns can't be timed"
 
 
@@ -219,8 +220,22 @@ def _rollup_title(group: list[Finding]) -> str:
 
 def _rolled_up(findings: list[Finding]) -> list[Finding]:
     """One finding per kind of problem, with the longest occurrence first."""
-    ordered = sorted(findings, key=_duration, reverse=True)
+    ordered = sorted(_without_repeats(findings), key=_duration, reverse=True)
     return roll_up(ordered, key=lambda f: f.category, title=_rollup_title)
+
+
+def _without_repeats(findings: list[Finding]) -> list[Finding]:
+    """A wait the bot owed an answer in is already reported, so it isn't dead air as well."""
+    waits = [f.evidence[0] for f in findings if f.category in _WAITS]
+
+    def explained(silence: Evidence) -> bool:
+        for wait in waits:
+            shared = min(silence.end_s, wait.end_s) - max(silence.start_s, wait.start_s)
+            if shared >= (silence.end_s - silence.start_s) / 2:
+                return True
+        return False
+
+    return [f for f in findings if f.category != "dead_air" or not explained(f.evidence[0])]
 
 
 def _duration(finding: Finding) -> float:

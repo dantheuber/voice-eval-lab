@@ -300,7 +300,11 @@ def _noise_flag(
         return None
     if snr < cfg.min_snr_db:
         why = f"under the {cfg.min_snr_db:.0f} dB limit"
-    elif typical is not None and snr <= typical - cfg.snr_median_drop_db:
+    elif (
+        typical is not None
+        and snr <= typical - cfg.snr_median_drop_db
+        and snr < cfg.noise_relative_ceiling_db
+    ):
         why = f"{typical - snr:.0f} dB under the call's median"
     else:
         return None
@@ -381,7 +385,10 @@ def _worth_a_reviewer(
         persona = ctx.artifact.persona_snapshot
         return persona is None or persona.line.noise == "none"
     if flag.kind in _EDGE_KINDS:
-        return counts[flag.kind] / max(1, utterances) >= cfg.abrupt_share_to_review
+        seen = counts[flag.kind]
+        return seen >= cfg.abrupt_count_to_review and (
+            seen / max(1, utterances) >= cfg.abrupt_share_to_review
+        )
     return True
 
 
