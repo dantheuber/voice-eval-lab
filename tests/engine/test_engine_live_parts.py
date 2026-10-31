@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
-from voicelab.engine.echo import STEP_S, EchoDetector, LevelContour
+from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
 from voicelab.engine.live.log import LiveLog
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.tool_checks import tool_call_problem
@@ -13,11 +13,19 @@ RATE = 16000
 
 
 def babble(seconds: float, seed: int, *, gain: float = 0.2) -> np.ndarray:
-    """Noise under a slow random level contour, which is all the detector looks at."""
+    """Noise whose energy moves between bands at random, as speech moves between formants."""
     rng = np.random.default_rng(seed)
     steps = round(seconds / 0.05)
-    contour = np.repeat(rng.uniform(0, 1, steps) ** 2, round(0.05 * RATE))
-    return (gain * contour * rng.standard_normal(len(contour))).astype(np.float32)
+    length = steps * round(0.05 * RATE)
+    freqs = np.fft.rfftfreq(length, 1 / RATE)
+    edges = np.geomspace(250, 3800, 9)
+    mixed = np.zeros(length)
+    for low, high in zip(edges, edges[1:], strict=False):
+        spectrum = np.fft.rfft(rng.standard_normal(length))
+        spectrum[(freqs < low) | (freqs >= high)] = 0
+        contour = np.repeat(rng.uniform(0, 1, steps) ** 2, length // steps)
+        mixed += contour * np.fft.irfft(spectrum, length)
+    return (gain * mixed / np.abs(mixed).max()).astype(np.float32)
 
 
 def frames(samples: np.ndarray, size: int = 320):
@@ -160,12 +168,68 @@ def test_echo_is_watched_for_just_after_the_bot_stops():
     assert not any(flags[-20:])
 
 
-def test_contours_work_for_any_frame_size():
-    contour = LevelContour(100)
-    steps = sum(contour.add(np.ones(77, dtype=np.float32), RATE) for _ in range(100))
+def test_the_watch_for_echo_ends_on_time_even_with_no_more_outgoing_audio():
+    detector = EchoDetector()
+    for out in frames(babble(0.3, seed=1)):  # the output sends nothing at all between replies
+        detector.add_outgoing(out, RATE)
 
-    assert steps == (77 * 100) // round(STEP_S * RATE)
-    assert contour.levels[-1] == pytest.approx(1.0)
+    person = babble(10.0, seed=2, gain=0.02)
+    flags = [detector.is_echo(heard, RATE) for heard in frames(person)]
+
+    assert not any(flags[15:])  # 300 ms is how long echo can keep arriving
+
+
+def test_a_quiet_person_cutting_in_as_the_bot_starts_is_not_blanked():
+    far = babble(1.0, seed=1, gain=0.4)
+    person = babble(1.0, seed=2, gain=0.03)
+    detector = EchoDetector()
+
+    flags = []
+    for out, heard in zip(frames(far), frames(person), strict=True):
+        detector.add_outgoing(out, RATE)
+        flags.append(detector.is_echo(heard, RATE))
+
+    assert np.mean(flags[3:15]) < 0.3
+    assert not any(flags[15:])
+
+
+def test_a_quiet_person_already_talking_when_the_bot_starts_is_not_blanked():
+    person = babble(2.0, seed=2, gain=0.03)
+    far = babble(1.0, seed=1, gain=0.4)
+    detector = EchoDetector()
+
+    flags = [detector.is_echo(heard, RATE) for heard in frames(person[: RATE])]
+    for out, heard in zip(frames(far), frames(person[RATE:]), strict=True):
+        detector.add_outgoing(out, RATE)
+        flags.append(detector.is_echo(heard, RATE))
+
+    assert not any(flags)
+
+
+def test_each_new_reply_is_caught_at_its_start_after_a_silent_gap():
+    detector = EchoDetector()
+    for out, heard in zip(frames(babble(1.0, seed=1)), frames(np.zeros(RATE)), strict=True):
+        detector.add_outgoing(out, RATE)
+        detector.is_echo(heard.astype(np.float32), RATE)
+    for heard in frames(np.zeros(RATE * 3, dtype=np.float32)):
+        detector.is_echo(heard, RATE)
+
+    far = babble(1.0, seed=4)
+    flags = []
+    for out, heard in zip(frames(far), frames(far * 0.2), strict=True):
+        detector.add_outgoing(out, RATE)
+        flags.append(detector.is_echo(heard, RATE))
+
+    assert all(flags[3:10])
+
+
+def test_contours_work_for_any_frame_size():
+    contour = BandContour(100)
+    noise = np.random.default_rng(0).standard_normal(77 * 100).astype(np.float32)
+    steps = sum(contour.add(noise[i : i + 77], RATE) for i in range(0, len(noise), 77))
+
+    assert steps == (77 * 100) // round(STEP_S * RATE) - 1  # each frame spans two steps
+    assert contour.levels[-1] == pytest.approx(np.ones(8), abs=0.7)
 
 
 # Tool checks -------------------------------------------------------------------------------------
