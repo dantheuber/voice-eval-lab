@@ -52,7 +52,7 @@ def matrix(svc: Svc, profile: str | None = None, window: str = "7d") -> dict[str
 
 
 @router.post("/runs", status_code=201)
-def create_run(body: RunBody, svc: Svc) -> dict[str, Any]:
+async def create_run(body: RunBody, svc: Svc) -> dict[str, Any]:
     profile = body.profile or svc.profiles.active_id
     if profile is None:
         raise Invalid("no model profile in config/profiles")
@@ -65,7 +65,7 @@ def create_run(body: RunBody, svc: Svc) -> dict[str, Any]:
         concurrency=body.concurrency,
         label=body.label,
     )
-    run_id, mode = svc.worker.create(plan)
+    run_id, mode = await svc.worker.submit(plan)
     summary = svc.worker.summary(run_id)
     return {"run": summary, "effectiveMode": mode.value, "estimateS": summary["etaS"]}
 

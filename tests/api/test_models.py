@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 import yaml
-from fakes import PROFILE_YAML, build_rig
+from fakes import PROFILE_YAML, build_rig, write_profiles
 
 from voicelab.core.models import (
     CallArtifact,
@@ -143,6 +143,24 @@ def test_setting_a_role_writes_the_active_profiles_yaml(client, rig):
     saved = yaml.safe_load((rig.settings.profiles_dir / "local-default.yaml").read_text())
     assert saved["roles"]["llm_support"]["model"] == "big-llm"
     assert saved["roles"]["llm_caller"]["model"] == "llm"
+
+
+def test_setting_a_role_keeps_the_header_comments(client, rig):
+    path = rig.settings.profiles_dir / "local-default.yaml"
+    path.write_text("# License terms to keep in view.\n" + path.read_text())
+    client.put("/api/roles/llm_support", json={"adapter": "fake:big-llm"})
+    assert path.read_text().startswith("# License terms to keep in view.\nid: local-default")
+
+
+def test_a_broken_profile_file_does_not_hide_the_others(tmp_path, caplog):
+    profiles = tmp_path / "profiles"
+    write_profiles(profiles)
+    (profiles / "aaa-broken.yaml").write_text("label: Local: not valid yaml\n")
+    rig = build_rig(tmp_path)
+    with rig.client as client:
+        ids = {item["id"] for item in client.get("/api/profiles").json()["items"]}
+    assert ids == {"local-default", "live"}
+    assert "aaa-broken.yaml" in caplog.text
 
 
 def test_a_required_role_cannot_be_emptied(client):

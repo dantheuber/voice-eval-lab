@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -81,6 +81,15 @@ def service_for(profile: Profile, role: str) -> LocalService | None:
     return next((s for s in profile.services if _uses_port(config, s.port)), None)
 
 
+def read_profile_files(directory: Path) -> Iterator[tuple[Path, Profile]]:
+    """Every profile that loads. One bad file shouldn't hide the ones that work."""
+    for path in sorted(directory.glob("*.yaml")):
+        try:
+            yield path, Profile.model_validate(yaml.safe_load(path.read_text()))
+        except Exception as exc:
+            logger.error("skipping unreadable profile %s: %s", path, exc)
+
+
 class ProfileManager:
     def __init__(
         self,
@@ -101,13 +110,7 @@ class ProfileManager:
 
     def reload(self) -> None:
         self.items, self.paths, self._stacks = {}, {}, {}
-        for path in sorted(self.settings.profiles_dir.glob("*.yaml")):
-            # One bad file shouldn't hide the profiles that work.
-            try:
-                profile = Profile.model_validate(yaml.safe_load(path.read_text()))
-            except Exception:
-                logger.exception("skipping unreadable profile %s", path)
-                continue
+        for path, profile in read_profile_files(self.settings.profiles_dir):
             self.items[profile.id] = profile
             self.paths[profile.id] = path
 
@@ -286,7 +289,7 @@ class ProfileManager:
             if service is not None and service.name not in names:
                 data.setdefault("services", []).append(service.model_dump())
         data["services"] = _services_still_used(data)
-        path.write_text(yaml.safe_dump(data, sort_keys=False))
+        path.write_text(_leading_comments(path.read_text()) + yaml.safe_dump(data, sort_keys=False))
         self.reload()
         profile = self.require(profile.id)
         await self.supervisor.apply(profile.services, start=True)
@@ -298,6 +301,16 @@ class ProfileManager:
             if config is not None and adapter_id(config) == adapter:
                 return profile
         return None
+
+
+def _leading_comments(text: str) -> str:
+    """PyYAML drops comments, and these files keep their license terms in the header."""
+    lines = []
+    for line in text.splitlines(keepends=True):
+        if not line.startswith("#"):
+            break
+        lines.append(line)
+    return "".join(lines)
 
 
 def _model_name(config: dict[str, Any]) -> str:

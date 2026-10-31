@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import shutil
+
 import pytest
 from conftest import PAIR
 from fakes import build_rig
+from starlette.websockets import WebSocketDisconnect
 
+from voicelab.api.routes import live
 from voicelab.core.models import CallStatus, LineConditions, Verdict
 
 
@@ -393,8 +397,6 @@ def test_call_stream_sends_eval_progress_and_closes(client, rig, finished_call, 
 
 
 def test_call_stream_of_a_finished_call_sends_status_and_closes(client, finished_call):
-    from starlette.websockets import WebSocketDisconnect
-
     call = finished_call()
     with client.websocket_connect(f"/ws/calls/{call['id']}") as socket:
         assert socket.receive_json() == {"type": "status", "status": "done"}
@@ -403,8 +405,6 @@ def test_call_stream_of_a_finished_call_sends_status_and_closes(client, finished
 
 
 def test_call_stream_of_a_failed_call_sends_status_and_closes(client, rig, finished_call):
-    from starlette.websockets import WebSocketDisconnect
-
     rig.runner.fail_with = RuntimeError("no")
     call = finished_call()
     with client.websocket_connect(f"/ws/calls/{call['id']}") as socket:
@@ -423,6 +423,65 @@ def test_call_stream_reports_a_failed_evaluation(client, rig, finished_call):
         rig.run_on_loop(release_evals(rig))
         messages = collect(socket, "error")
     assert "worker died" in messages[-1]["message"]
+
+
+class _LeftAlready:
+    """A socket whose browser has gone, as uvicorn presents it."""
+
+    async def accept(self):
+        pass
+
+    async def send_json(self, message):
+        raise WebSocketDisconnect(1006)
+
+    async def close(self):
+        raise WebSocketDisconnect(1006)
+
+
+@pytest.mark.parametrize(
+    ("handler", "item"),
+    [
+        (live.health_stream, None),
+        (live.call_stream, "call_missing"),
+        (live.run_stream, "batch_missing"),
+    ],
+)
+def test_a_client_leaving_is_not_an_error(rig, handler, item):
+    arguments = [_LeftAlready(), *([item] if item else []), rig.services]
+    rig.run_on_loop(lambda: handler(*arguments))
+
+
+def test_call_with_vanished_files_is_404(client, rig, finished_call):
+    call = finished_call()
+    shutil.rmtree(rig.services.store.paths(call["id"]).dir)
+    assert client.get(f"/api/calls/{call['id']}").status_code == 404
+
+
+def test_a_queued_call_with_vanished_files_fails_and_the_run_goes_on(
+    client, rig, start_run, waiter
+):
+    rig.runner.hold = True
+    run = start_run(reps=2)["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    queued = next(c for c in run_of(client, run["id"])["calls"] if c["status"] == "queued")
+    shutil.rmtree(rig.services.store.paths(queued["id"]).dir)
+    rig.run_on_loop(released(rig))
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert statuses(client, run["id"]) == ["done", "failed"]
+
+
+def test_a_bad_listener_does_not_end_the_eval_queue(client, rig, finished_call, waiter):
+    call = finished_call()
+
+    def broken(_):
+        raise RuntimeError("listener bug")
+
+    rig.services.evals.on_settled = broken
+    client.post(f"/api/calls/{call['id']}/reevaluate", json={})
+    waiter(lambda: len(rig.evals.jobs) == 2)
+    waiter(lambda: client.get(f"/api/calls/{call['id']}").json()["eval"] is not None)
+    client.post(f"/api/calls/{call['id']}/reevaluate", json={})
+    waiter(lambda: len(rig.evals.jobs) == 3)
 
 
 def test_call_stream_of_a_missing_call(client):

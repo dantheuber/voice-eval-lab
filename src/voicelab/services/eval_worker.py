@@ -16,10 +16,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from voicelab.core.profiles import Profile
 from voicelab.services.evaluation import deps_from_profile, evaluate_call, job_from_json
+from voicelab.services.profiles import read_profile_files
 from voicelab.store.artifacts import ArtifactStore
 
 _NICENESS = 10
@@ -33,8 +32,7 @@ def _emit(message: dict[str, Any]) -> None:
 def _load_profile(directory: Path, profile_id: str | None) -> Profile | None:
     if profile_id is None:
         return None
-    for path in sorted(directory.glob("*.yaml")):
-        profile = Profile.model_validate(yaml.safe_load(path.read_text()))
+    for _, profile in read_profile_files(directory):
         if profile.id == profile_id:
             return profile
     raise ValueError(f"no profile {profile_id!r} in {directory}")

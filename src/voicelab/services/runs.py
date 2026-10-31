@@ -180,8 +180,15 @@ class RunWorker:
                     profile=profile.id,
                     timing_is_real=int(artifact.timing_is_real),
                 )
-        self._wake.set()
         return run_id, mode
+
+    async def submit(self, plan: RunPlan) -> tuple[str, CallMode]:
+        """Queue a run. Writing its calls is file work, so it stays off the loop a mic call may be
+        using, and the wake-up has to happen on the loop because asyncio events aren't thread-safe.
+        """
+        created = await asyncio.to_thread(self.create, plan)
+        self._wake.set()
+        return created
 
     def pause(self, run_id: str) -> None:
         run = self._run(run_id)
@@ -230,7 +237,10 @@ class RunWorker:
             await self._wake.wait()
             self._wake.clear()
             await self.gate.wait_clear()
-            self._schedule()
+            try:
+                self._schedule()
+            except Exception:  # one bad call must not end the queue for every later run
+                logger.exception("run scheduler failed")
 
     def _schedule(self) -> None:
         """Fill free slots from the oldest active run. A later run waits for it, so two runs don't
@@ -240,7 +250,11 @@ class RunWorker:
             queued = [row for row in rows if row["status"] == "queued"]
             room = run["concurrency"] - len(self._tasks)
             for row in queued[: max(room, 0)]:
-                self._start(run, row)
+                try:
+                    self._start(run, row)
+                except FileNotFoundError:
+                    self.calls.update(row["id"], status="failed", error="call files are missing")
+                    self._settle(run["id"])
             if any(row["status"] in ("queued", "running", "evaluating") for row in rows):
                 return
 

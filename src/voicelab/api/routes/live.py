@@ -3,16 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+import contextlib
+from collections.abc import Callable, Iterator
 from typing import Annotated, Any
 
 from fastapi import APIRouter, File, Form, Response, UploadFile, WebSocket, WebSocketDisconnect
 
 from voicelab.api import mapping
-from voicelab.api.routes.calls import require_call
 from voicelab.api.schemas import ChannelMapBody, IceBody, OfferBody, Svc, TalkBody
 from voicelab.core.models import LineConditions
-from voicelab.services.errors import Conflict, Invalid, NotFound
+from voicelab.services.errors import Conflict, Invalid
 from voicelab.services.events import Subscription
 
 router = APIRouter()
@@ -175,28 +175,34 @@ async def _pump(
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+@contextlib.contextmanager
+def _client_may_leave() -> Iterator[None]:
+    """A closed tab surfaces as a failed send. That's an ordinary way for a stream to end."""
+    with contextlib.suppress(WebSocketDisconnect):
+        yield
+
+
 async def _close(websocket: WebSocket) -> None:
-    try:
+    with contextlib.suppress(WebSocketDisconnect, RuntimeError):
         await websocket.close()
-    except RuntimeError:  # the client already left
-        pass
 
 
 @router.websocket("/ws/calls/{call_id}")
 async def call_stream(websocket: WebSocket, call_id: str, svc: Svc) -> None:
-    await websocket.accept()
-    # Subscribe before reading state, so nothing falls between the read and the first message.
-    with svc.hub.subscribe(f"call:{call_id}") as subscription:
-        try:
-            row = require_call(svc, call_id)
-        except NotFound as exc:
-            await websocket.send_json({"type": "error", "message": exc.message})
-            await websocket.close()
-            return
-        await websocket.send_json({"type": "status", "status": row["status"]})
-        # A finished call has nothing to stream. The review payload already holds its results.
-        if row["status"] not in ("done", "failed"):
-            await _pump(websocket, subscription, final=lambda m: m.get("type") in ("eval", "error"))
+    with _client_may_leave():
+        await websocket.accept()
+        # Subscribe before reading state, so nothing falls between the read and the first message.
+        with svc.hub.subscribe(f"call:{call_id}") as subscription:
+            row = svc.calls.get(call_id)
+            if row is None:
+                await websocket.send_json({"type": "error", "message": f"no call {call_id}"})
+            else:
+                await websocket.send_json({"type": "status", "status": row["status"]})
+                # A finished call has nothing to stream: the review payload holds its results.
+                if row["status"] not in ("done", "failed"):
+                    await _pump(
+                        websocket, subscription, final=lambda m: m.get("type") in ("eval", "error")
+                    )
     await _close(websocket)
 
 
@@ -224,39 +230,45 @@ class _CallWatch:
             self.chosen = message.get("callId")
 
 
+async def _stream_run(
+    websocket: WebSocket, run_id: str, svc: Svc, subscription: Subscription
+) -> None:
+    run = svc.runs.get(run_id)
+    if run is None:
+        await websocket.send_json({"type": "error", "message": f"no run {run_id}"})
+        return
+    summary = svc.worker.summary(run_id)
+    await websocket.send_json({"type": "run", "run": summary})
+    rows = svc.calls.in_batch(run_id)
+    busy = any(row["status"] in ("running", "evaluating") for row in rows)
+    if run["status"] in ("done", "stopped") and not busy:
+        await websocket.send_json({"type": "runDone", "run": summary})
+        return
+    watch = _CallWatch([row["id"] for row in rows if row["status"] == "running"])
+    await _pump(
+        websocket,
+        subscription,
+        keep=watch.wanted,
+        final=lambda m: m.get("type") == "runDone",
+        on_client=watch.on_client,
+    )
+
+
 @router.websocket("/ws/runs/{run_id}")
 async def run_stream(websocket: WebSocket, run_id: str, svc: Svc) -> None:
-    await websocket.accept()
-    with svc.hub.subscribe(f"run:{run_id}") as subscription:
-        run = svc.runs.get(run_id)
-        if run is None:
-            await websocket.send_json({"type": "error", "message": f"no run {run_id}"})
-            await websocket.close()
-            return
-        summary = svc.worker.summary(run_id)
-        await websocket.send_json({"type": "run", "run": summary})
-        rows = svc.calls.in_batch(run_id)
-        if run["status"] in ("done", "stopped") and not any(
-            row["status"] in ("running", "evaluating") for row in rows
-        ):
-            await websocket.send_json({"type": "runDone", "run": summary})
-        else:
-            watch = _CallWatch([row["id"] for row in rows if row["status"] == "running"])
-            await _pump(
-                websocket,
-                subscription,
-                keep=watch.wanted,
-                final=lambda m: m.get("type") == "runDone",
-                on_client=watch.on_client,
-            )
+    with _client_may_leave():
+        await websocket.accept()
+        with svc.hub.subscribe(f"run:{run_id}") as subscription:
+            await _stream_run(websocket, run_id, svc, subscription)
     await _close(websocket)
 
 
 @router.websocket("/ws/health")
 async def health_stream(websocket: WebSocket, svc: Svc) -> None:
-    await websocket.accept()
-    with svc.hub.subscribe("health") as subscription:
-        items = mapping.to_api(svc.profiles.health())
-        await websocket.send_json({"type": "health", "items": items})
-        await _pump(websocket, subscription)
+    with _client_may_leave():
+        await websocket.accept()
+        with svc.hub.subscribe("health") as subscription:
+            items = mapping.to_api(svc.profiles.health())
+            await websocket.send_json({"type": "health", "items": items})
+            await _pump(websocket, subscription)
     await _close(websocket)

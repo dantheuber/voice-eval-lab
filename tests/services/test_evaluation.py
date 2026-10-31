@@ -24,6 +24,7 @@ from voicelab.core.models import (
 from voicelab.eval.config import EvalConfig
 from voicelab.eval.context import EvalDeps, Skip
 from voicelab.services.errors import Invalid
+from voicelab.services.eval_worker import _load_profile
 from voicelab.services.evaluation import (
     EvalJob,
     EvalService,
@@ -258,6 +259,15 @@ async def test_subprocess_worker_runs_the_real_pipeline(store, tmp_path):
     assert statuses["timing"] == "ok"
     assert statuses["transcribe"] == "skipped"  # no profile, so no STT
     assert len([m for m in messages if "evaluator" in m]) == len(result.evaluators)
+
+
+def test_worker_finds_a_profile_past_a_broken_file(tmp_path):
+    (tmp_path / "a.yaml").write_text("label: Local: not valid yaml\n")
+    (tmp_path / "b.yaml").write_text("id: wanted\nlabel: Wanted\nroles: {}\n")
+    assert _load_profile(tmp_path, "wanted").id == "wanted"
+    assert _load_profile(tmp_path, None) is None
+    with pytest.raises(ValueError, match="no profile"):
+        _load_profile(tmp_path, "missing")
 
 
 async def test_subprocess_failure_is_reported_with_where_to_look(store, tmp_path):

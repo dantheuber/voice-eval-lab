@@ -410,7 +410,10 @@ class EvalService:
         if not item.done.done():
             item.done.set_result(result)
         if self.on_settled is not None:
-            self.on_settled(call_id)
+            try:
+                self.on_settled(call_id)
+            except Exception:  # a listener's bug must not end the queue for every later call
+                logger.exception("after evaluating %s", call_id)
 
     def _finish(self, result: EvalResult) -> None:
         artifact = self._write_status(result.call_id, CallStatus.DONE, error=None)

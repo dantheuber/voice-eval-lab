@@ -119,7 +119,10 @@ def next_review(svc: Svc, after: str | None = None) -> dict[str, str | None]:
 @router.get("/calls/{call_id}")
 def call_detail(call_id: str, svc: Svc) -> JSONResponse:
     row = require_call(svc, call_id)
-    artifact = svc.store.read_artifact(call_id)
+    try:
+        artifact = svc.store.read_artifact(call_id)
+    except FileNotFoundError as exc:
+        raise NotFound(f"call {call_id} has no files") from exc
     paths = svc.store.paths(call_id)
     available = paths.recording.exists()
     derived = speech_data(svc.store, artifact)

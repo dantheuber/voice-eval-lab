@@ -114,8 +114,8 @@ class RoleBody(ApiModel):
 
 
 class ThresholdsBody(ApiModel):
-    dead_air_s: float = Field(gt=0, alias="deadAirS")
-    barge_stop_target_s: float = Field(gt=0, alias="bargeStopTargetS")
-    reply_latency_warn_s: float = Field(gt=0, alias="replyLatencyWarnS")
-    mos_baseline: float = Field(ge=1, le=5, alias="mosBaseline")
+    dead_air_s: float = Field(gt=0)
+    barge_stop_target_s: float = Field(gt=0)
+    reply_latency_warn_s: float = Field(gt=0)
+    mos_baseline: float = Field(ge=1, le=5)
     audio_listening_mode: str = "advisory"  # read-only: accepted and ignored

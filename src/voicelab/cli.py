@@ -90,7 +90,7 @@ async def _run_call(arguments: argparse.Namespace, settings: Settings) -> int:
             profile=profile,
             mode=arguments.mode,
         )
-        run_id, _ = services.worker.create(plan)
+        run_id, _ = await services.worker.submit(plan)
         print(f"run {run_id}", flush=True)
         with services.hub.subscribe(f"run:{run_id}") as subscription:
             while True:
