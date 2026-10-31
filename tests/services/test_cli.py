@@ -39,6 +39,22 @@ def isolated(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_serve_refuses_an_unknown_profile(isolated, capsys):
+    assert cli.main(["serve", "--profile", "no-such-profile"]) == 1
+    assert "unknown profile" in capsys.readouterr().err
+
+
+def test_serve_makes_the_named_profile_active(isolated, monkeypatch):
+    async def no_listening(self):
+        return None
+
+    monkeypatch.setattr(cli._Server, "serve", no_listening)
+    assert cli.main(["serve", "--profile", "fake"]) == 0
+    services = cli.build_services(cli.Settings.from_env())
+    assert services.catalog.setting("active_profile") == "fake"
+    services.db.close()
+
+
 def test_seed_loads_and_is_idempotent(isolated, capsys):
     assert cli.main(["seed"]) == 0
     assert "'personas': 9" in capsys.readouterr().out

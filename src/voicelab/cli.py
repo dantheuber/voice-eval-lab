@@ -31,8 +31,12 @@ class _Server(uvicorn.Server):
         yield
 
 
-async def _serve(settings: Settings) -> None:
-    app = create_app(build_services(settings))
+async def _serve(settings: Settings, profile: str | None = None) -> None:
+    services = build_services(settings)
+    if profile is not None:
+        # Stored like a switch on the settings screen, so the servers below are the right ones.
+        services.catalog.set_setting("active_profile", services.profiles.require(profile).id)
+    app = create_app(services)
     cert, key = ensure_certificate(settings.certs_dir, lan_ip())
     plain = uvicorn.Config(
         app, host=settings.http_host, port=settings.http_port, lifespan="off", log_level="info"
@@ -139,6 +143,7 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument(
         "--services", choices=["startup", "lazy"], help="when to start model servers"
     )
+    serve.add_argument("--profile", help="make this the active model profile")
 
     commands.add_parser("seed", help="load personas and scenarios from seeds/")
 
@@ -157,6 +162,7 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # every health poll, several a second
     settings = Settings.from_env()
     try:
         match arguments.command:
@@ -164,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 settings.http_port = arguments.http_port or settings.http_port
                 settings.https_port = arguments.https_port or settings.https_port
                 settings.service_start = arguments.services or settings.service_start
-                asyncio.run(_serve(settings))
+                asyncio.run(_serve(settings, arguments.profile))
                 return 0
             case "seed":
                 asyncio.run(_seed(settings))
