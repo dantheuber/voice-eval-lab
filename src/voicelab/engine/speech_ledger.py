@@ -34,7 +34,7 @@ def words_played(segments: list[tuple[str, float]], played_s: float) -> str:
 
 
 @dataclass
-class _Segment:
+class Segment:
     text: str
     produced_s: float = 0.0
     finished: bool = False
@@ -50,16 +50,16 @@ class _Segment:
 class PlayoutLedger:
     """One bot turn: sentences given to TTS, the audio made for them, and the audio sent out."""
 
-    segments: list[_Segment] = field(default_factory=list)
+    segments: list[Segment] = field(default_factory=list)
     played_s: float = 0.0
 
     def reset(self) -> None:
         self.segments = []
         self.played_s = 0.0
 
-    def start_segment(self, text: str) -> _Segment:
+    def start_segment(self, text: str) -> Segment:
         """Add a sentence. TTS keeps the result, since a cut can start a new turn mid-sentence."""
-        segment = _Segment(text)
+        segment = Segment(text)
         self.segments.append(segment)
         return segment
 
@@ -68,7 +68,7 @@ class PlayoutLedger:
 
     @property
     def intended_text(self) -> str:
-        return " ".join(segment.text for segment in self.segments)
+        return " ".join(segment.text for segment in self.segments).strip()
 
     @property
     def spoken_text(self) -> str:

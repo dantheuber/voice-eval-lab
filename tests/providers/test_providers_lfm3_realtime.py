@@ -233,6 +233,92 @@ async def test_an_interrupt_replaces_the_session_with_heard_only_history():
     assert server.connections[1][1]["type"] == "input_audio_buffer.append"
 
 
+async def test_a_reply_generated_in_full_keeps_only_its_heard_words_after_a_cut():
+    async def reply(socket, _):
+        await speak(socket, "one two three four five six seven eight", 4.0)
+        await finish(socket)  # the model finishes long before the audio does
+
+    server = Server(reply)
+    running, voice = await serve(server)
+    session = await voice.connect(instructions="You are Fern.", tools=[TOOL])
+
+    await session.commit_turn()
+    await collect(session, 3)
+    await session.interrupt(response_id="r1", played_ms=1000)
+    await session.close()
+    running.close()
+
+    prompt = server.connections[1][0]["session"]["instructions"]
+    assert "You: one two\n" in prompt
+    assert "seven" not in prompt and prompt.count("You:") == 1
+
+
+async def test_a_cut_counts_played_time_across_the_replies_of_one_turn():
+    turns = iter(["First reply here.", "Second reply was never finished at all."])
+
+    async def reply(socket, _):
+        await speak(socket, next(turns), 2.0)
+        await finish(socket)
+
+    server = Server(reply)
+    running, voice = await serve(server)
+    session = await voice.connect(instructions="", tools=[TOOL])
+
+    await session.commit_turn()
+    await collect(session, 3)
+    await session.send_tool_result("c1", '{"ok": true}')
+    await session.continue_after_tools()
+    await collect(session, 3)
+    await session.interrupt(response_id="r1", played_ms=2500)
+    await session.close()
+    running.close()
+
+    prompt = server.connections[1][0]["session"]["instructions"]
+    first, tool, second = (prompt.index(s) for s in ("First reply here", "Tool", "You: Second"))
+    assert first < tool < second
+    assert "never" not in prompt
+
+
+async def test_words_still_being_generated_are_not_credited_from_the_audio_so_far():
+    async def reply(socket, _):
+        await speak(socket, "one two three four five six seven eight", 0.5)  # no response.done
+
+    server = Server(reply)
+    running, voice = await serve(server)
+    session = await voice.connect(instructions="", tools=[])
+
+    await session.commit_turn()
+    await collect(session, 2)
+    await session.interrupt(response_id="r1", played_ms=500)
+    await session.close()
+    running.close()
+
+    assert "eight" not in server.connections[1][0]["session"]["instructions"]
+
+
+async def test_events_queued_before_a_cut_never_come_out_after_it():
+    call = {"type": "function_call", "call_id": "c1", "name": "issue_refund", "arguments": "{}"}
+
+    async def reply(socket, _):
+        await speak(socket, "Refunding that now.", 0.5)
+        await finish(socket, call)
+
+    running, voice = await serve(Server(reply))
+    session = await voice.connect(instructions="", tools=[TOOL])
+    stream = session.events()
+
+    await session.commit_turn()
+    first = await asyncio.wait_for(anext(stream), 2)
+    while session._events.qsize() < 3:
+        await asyncio.sleep(0.01)
+    await session.interrupt(response_id="r1", played_ms=0)
+    await session.close()
+    running.close()
+
+    assert first.type == "bot_transcript"
+    assert [event async for event in stream] == []
+
+
 async def test_events_from_the_old_socket_never_reach_the_new_session():
     async def reply(socket, server):
         await speak(socket, "stale words", 1.0)
@@ -369,4 +455,4 @@ def test_heard_prefix_keeps_only_finished_words():
     assert heard_prefix(text, 500, 2000) == "aaaa"
     assert heard_prefix(text, 1000, 2000) == "aaaa bbbb"
     assert heard_prefix(text, 2000, 2000) == text
-    assert heard_prefix(text, 500, 0) == text
+    assert heard_prefix(text, 500, 0) == ""  # text with no audio was never heard

@@ -35,6 +35,8 @@ class ScriptedSession:
         self.user_texts: list[str] = []
         self.tool_results: list[tuple[str, str]] = []
         self.interrupts: list[int] = []
+        self.audio_at_cut = 0
+        self.late_events: list[RealtimeEvent] = []  # what the old socket still delivers at a cut
         self.closed = False
 
     async def send_audio(self, pcm16: bytes) -> None:
@@ -59,6 +61,10 @@ class ScriptedSession:
 
     async def interrupt(self, *, response_id: str | None, played_ms: int) -> None:
         self.interrupts.append(played_ms)
+        self.audio_at_cut = self.audio_bytes
+        for event in self.late_events:
+            self.events_out.put_nowait(event)
+        self.late_events = []
 
     async def events(self) -> Any:
         while (event := await self.events_out.get()) is not None:
@@ -186,6 +192,43 @@ async def test_a_barge_in_tells_the_session_how_much_was_played(store):
     assert voice.session.interrupts
     barges = [e for e in artifact.timeline if isinstance(e, BargeInEvent)]
     assert barges
+
+
+async def test_the_model_keeps_getting_audio_after_a_barge_in(store):
+    long_reply = "I can certainly look at that for you right now while we are on the line."
+    voice = ScriptedVoice(says_aloud(long_reply), says_aloud("Goodbye."))
+
+    await run(store, voice, who=persona(interruption_rate=1.0, line=LIVE))
+
+    session = voice.session
+    assert session.interrupts and session.audio_bytes > session.audio_at_cut
+
+
+async def test_a_tool_call_still_in_the_pipe_at_a_cut_does_not_run(store):
+    long_reply = "I can certainly look at that for you right now while we are on the line."
+    voice = ScriptedVoice(says_aloud(long_reply), says_aloud("Goodbye."))
+    voice.session.late_events = calls(("find_customer", {"phone": "555"}, ""))
+
+    artifact = await run(store, voice, who=persona(interruption_rate=1.0, line=LIVE))
+
+    assert voice.session.interrupts
+    assert not [e for e in artifact.timeline if isinstance(e, ToolCallEvent)]
+
+
+async def test_a_cut_while_the_reply_is_still_generating_credits_only_what_played(store):
+    long_reply = "I can certainly look at that for you right now while we are on the line."
+    audio = encode_speech(long_reply, 24000).pcm
+    unfinished = [
+        RealtimeEvent(type="bot_transcript", text=long_reply, response_id="r"),
+        RealtimeEvent(type="audio", audio_pcm16=audio[: len(audio) // 40 * 2], response_id="r"),
+    ]
+    voice = ScriptedVoice(unfinished, says_aloud("Goodbye."))
+
+    artifact = await run(store, voice, who=persona(interruption_rate=1.0, line=LIVE))
+
+    replies = [e for e in artifact.timeline if isinstance(e, Utterance)]
+    cut = next(e for e in replies if e.intended_text == long_reply)
+    assert cut.interrupted and len(cut.spoken_text.split()) < 3
 
 
 async def test_a_realtime_server_that_refuses_the_connection_fails_the_call(store):

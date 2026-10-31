@@ -30,6 +30,7 @@ import base64
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 import websockets
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 _INPUT_RATE = 16000
 _OUTPUT_RATE = 24000
 _BYTES_PER_SECOND = _OUTPUT_RATE * 2
+_CHARACTERS_PER_S = 14.0  # speaking rate, for text whose audio hasn't been generated yet
 _MODALITIES = ["text", "audio"]
 _VOICE_CARD = "Respond with function calls, and interleaved text and audio.\n\nList of tools:"
 _HISTORY_HEADER = "Conversation so far:"
@@ -60,9 +62,11 @@ def _wire_tool(tool: ToolDef) -> dict[str, Any]:
     }
 
 
-def heard_prefix(text: str, played_ms: int, generated_ms: float) -> str:
+def heard_prefix(text: str, played_ms: float, generated_ms: float) -> str:
     """The words that had finished playing, assuming speech runs evenly through the text."""
-    if generated_ms <= 0 or played_ms >= generated_ms:
+    if generated_ms <= 0:
+        return ""
+    if played_ms >= generated_ms:
         return text.strip()
     words = text.split()
     weights = [len(word) + 1 for word in words]
@@ -75,6 +79,28 @@ def heard_prefix(text: str, played_ms: int, generated_ms: float) -> str:
             break
         kept.append(word)
     return " ".join(kept)
+
+
+def _history_line(entry: str | _Reply) -> str:
+    if isinstance(entry, str):
+        return entry
+    return f"You: {entry.text.strip()}" if entry.text.strip() else ""
+
+
+@dataclass(eq=False)
+class _Reply:
+    """One generated response. It sits in the history where it happened, and a cut trims it."""
+
+    id: str | None
+    text: str = ""
+    audio_bytes: int = 0
+    done: bool = False
+
+    @property
+    def length_ms(self) -> float:
+        """Text outruns audio while generating, so until it's done the audio can't be the length."""
+        audio_ms = self.audio_bytes * 1000 / _BYTES_PER_SECOND
+        return audio_ms if self.done else max(audio_ms, len(self.text) / _CHARACTERS_PER_S * 1000)
 
 
 @register("realtime", "lfm3_realtime")
@@ -112,27 +138,21 @@ class Lfm3RealtimeSession:
         self._voice = voice
         self._instructions = instructions
         self._tools = [_wire_tool(tool) for tool in tools]
-        self._history: list[str] = []
+        self._history: list[str | _Reply] = []
+        self._turn: list[_Reply] = []  # replies since the last commit, not yet known to be heard
         self._tool_names: dict[str, str] = {}
-        self._events: asyncio.Queue[RealtimeEvent | None] = asyncio.Queue()
+        self._events: asyncio.Queue[tuple[int, RealtimeEvent] | None] = asyncio.Queue()
         self._socket: Any = None
         self._reader: asyncio.Task[None] | None = None
         self._ready = asyncio.Event()
         self._closed = False
         self._epoch = 0  # events from a replaced socket are stale
-        self._response_id: str | None = None
-        self._text = ""
-        self._audio_bytes = 0
-
-    @property
-    def bot_text(self) -> str:
-        """Everything generated for the current response, heard or not."""
-        return self._text
 
     def _prompt(self) -> str:
-        if not self._history:
+        lines = [_history_line(entry) for entry in self._history]
+        history = "\n".join(line for line in lines if line)
+        if not history:
             return f"{self._instructions}\n\n{_VOICE_CARD}"
-        history = "\n".join(self._history)
         return f"{self._instructions}\n\n{_HISTORY_HEADER}\n{history}\n\n{_VOICE_CARD}"
 
     async def open(self) -> None:
@@ -191,27 +211,26 @@ class Lfm3RealtimeSession:
                 if epoch != self._epoch:
                     return
                 for event in self._normalize(json.loads(raw)):
-                    self._events.put_nowait(event)
+                    self._events.put_nowait((epoch, event))
         except websockets.ConnectionClosed:
             pass
         finally:
             if epoch == self._epoch and not self._closed and self._ready.is_set():
-                self._events.put_nowait(
-                    RealtimeEvent(type="error", text="the realtime connection closed")
-                )
+                closed = RealtimeEvent(type="error", text="the realtime connection closed")
+                self._events.put_nowait((epoch, closed))
 
     def _normalize(self, event: dict[str, Any]) -> list[RealtimeEvent]:
         kind = event.get("type")
         if kind == "response.created":
-            self._response_id = (event.get("response") or {}).get("id")
-            self._text = ""
-            self._audio_bytes = 0
-        elif kind == "response.output_text.delta":
-            self._text += event.get("delta", "")
+            reply = _Reply((event.get("response") or {}).get("id"))
+            self._turn.append(reply)
+            self._history.append(reply)
+        elif kind == "response.output_text.delta" and self._turn:
+            self._turn[-1].text += event.get("delta", "")
             return [self._event("bot_transcript", text=event.get("delta", ""))]
-        elif kind == "response.output_audio.delta":
+        elif kind == "response.output_audio.delta" and self._turn:
             audio = base64.b64decode(event.get("delta", ""))
-            self._audio_bytes += len(audio)
+            self._turn[-1].audio_bytes += len(audio)
             return [self._event("audio", audio_pcm16=audio)]
         elif kind == "response.done":
             return self._finish_response(event.get("response") or {})
@@ -221,12 +240,15 @@ class Lfm3RealtimeSession:
         return []
 
     def _event(self, kind: str, **fields: Any) -> RealtimeEvent:
-        return RealtimeEvent(type=kind, response_id=self._response_id, **fields)
+        response_id = self._turn[-1].id if self._turn else None
+        return RealtimeEvent(type=kind, response_id=response_id, **fields)
 
     def _finish_response(self, response: dict[str, Any]) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
-        if response.get("status") != "cancelled" and self._text.strip():
-            self._history.append(f"You: {self._text.strip()}")
+        if self._turn:
+            self._turn[-1].done = True
+            if response.get("status") == "cancelled":
+                self._turn[-1].text = ""
         for item in response.get("output") or []:
             if item.get("type") == "function_call":
                 events.append(self._tool_event(item))
@@ -265,7 +287,11 @@ class Lfm3RealtimeSession:
         )
 
     async def commit_turn(self) -> None:
-        """The caller finished. `response.create` commits pending audio by itself."""
+        """The caller finished. `response.create` commits pending audio by itself.
+
+        Nothing cut the replies before this, so they played to the end.
+        """
+        self._turn = []
         await self._send(type="response.create")
 
     def record_user_text(self, text: str) -> None:
@@ -289,19 +315,21 @@ class Lfm3RealtimeSession:
 
         Cancelling alone leaves the unheard text in context, where the model recites it later.
         """
-        if response_id is not None and response_id != self._response_id:
+        if response_id is not None and all(reply.id != response_id for reply in self._turn):
             return
-        generated_ms = self._audio_bytes * 1000 / _BYTES_PER_SECOND
-        heard = heard_prefix(self._text, played_ms, generated_ms)
-        if heard:
-            self._history.append(f"You: {heard}")
+        self._keep_only_heard(played_ms)
         self._history.append(_CUT_OFF_NOTE)
-        self._response_id = None
-        self._text = ""
-        self._audio_bytes = 0
+        self._turn = []
         self._ready.clear()
         await self._close_socket()
         await self.open()
+
+    def _keep_only_heard(self, played_ms: int) -> None:
+        """`played_ms` counts from the start of the turn, so earlier replies use it up first."""
+        remaining_ms = float(played_ms)
+        for reply in self._turn:
+            reply.text = heard_prefix(reply.text, remaining_ms, reply.length_ms)
+            remaining_ms = max(0.0, remaining_ms - reply.length_ms)
 
     async def _close_socket(self) -> None:
         reader, socket = self._reader, self._socket
@@ -315,10 +343,12 @@ class Lfm3RealtimeSession:
 
     async def events(self) -> AsyncIterator[RealtimeEvent]:
         while True:
-            event = await self._events.get()
-            if event is None:
+            queued = await self._events.get()
+            if queued is None:
                 return
-            yield event
+            epoch, event = queued
+            if epoch == self._epoch:  # it may have waited here while its session was replaced
+                yield event
 
     async def close(self) -> None:
         if self._closed:

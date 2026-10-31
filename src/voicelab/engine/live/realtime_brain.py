@@ -25,7 +25,7 @@ from voicelab.agents.support import GREETING
 from voicelab.company.tools import ToolDispatcher
 from voicelab.core.models import ToolCallEvent
 from voicelab.engine.live.brains import BotBrain
-from voicelab.engine.speech_ledger import words_played
+from voicelab.engine.speech_ledger import Segment
 from voicelab.engine.tool_checks import tool_call_problem
 from voicelab.providers.base import TTS, RealtimeEvent, RealtimeVoice, ToolCall
 
@@ -66,21 +66,11 @@ class RealtimeBrain(BotBrain):
         self._held_for_cut = False
         self._resampler = create_stream_resampler()
         self._in_rate = 16000
-        self._text = ""
-        self._generated_s = 0.0
+        self._reply = Segment("")  # every response in a turn runs together on the ledger
         self._calls: list[RealtimeEvent] = []
-        self._reply_done = False
         self._reply_audio_started = False
         self._response_id: str | None = None
         self._ending: str | None = None
-
-    @property
-    def intended_text(self) -> str:
-        return self._text.strip()
-
-    @property
-    def played_text(self) -> str:
-        return words_played([(self._text, self._generated_s)], self.ledger.played_s)
 
     async def on_start(self) -> None:
         try:
@@ -99,17 +89,17 @@ class RealtimeBrain(BotBrain):
             return
         self.begin_turn()
         self.turn_open = True
-        self._text = GREETING
+        self._reply = self.ledger.start_segment(GREETING)
         self.run(self._play_greeting())
 
     async def _play_greeting(self) -> None:
         await self.push_frame(TTSStartedFrame())
         async for clip in self.greeter.stream(GREETING, voice_id=self.greeter_voice):
-            self._generated_s += clip.duration_s
+            self._reply.produced_s += clip.duration_s
             await self._push_audio(clip.pcm, clip.sample_rate)
         await self.push_frame(TTSStoppedFrame())
         self.task = None
-        self._reply_done = True
+        self._reply.finished = True
 
     async def _push_audio(self, pcm: bytes, rate: int) -> None:
         await self.push_frame(TTSAudioRawFrame(audio=pcm, sample_rate=rate, num_channels=1))
@@ -154,10 +144,9 @@ class RealtimeBrain(BotBrain):
         self._user_talking = False
         self.barged_at_s = None
         self.begin_turn()
-        self._text = ""
-        self._generated_s = 0.0
-        self._reply_done = False
+        self._reply = self.ledger.start_segment("")
         self._reply_audio_started = False
+        self._response_id = None
         self.turn_open = True
         await self.session.commit_turn()
 
@@ -169,7 +158,8 @@ class RealtimeBrain(BotBrain):
     async def stop_model(self, played_ms: int) -> None:
         await self.stop_work()
         self._calls = []
-        self._audio_out = asyncio.Queue()
+        while not self._audio_out.empty():  # the sender is waiting on this queue, so keep it
+            self._audio_out.get_nowait()
         await self.session.interrupt(response_id=self._response_id, played_ms=played_ms)
 
     async def forget_unheard(self, played_text: str) -> None:
@@ -182,19 +172,21 @@ class RealtimeBrain(BotBrain):
             await self._handle(event)
 
     async def _handle(self, event: RealtimeEvent) -> None:
+        if self.cut_pending:
+            return  # still in the pipe from the response being cut. Its tools must not run
         if event.response_id:
             self._response_id = event.response_id
         if event.type == "audio":
-            if self.cut_pending or not event.audio_pcm16:
+            if not event.audio_pcm16:
                 return
             if not self._reply_audio_started:
                 self._reply_audio_started = True
                 await self.push_frame(TTSStartedFrame())
             rate = self.voice.output_sample_rate
-            self._generated_s += len(event.audio_pcm16) / 2 / rate
+            self._reply.produced_s += len(event.audio_pcm16) / 2 / rate
             await self._push_audio(event.audio_pcm16, rate)
         elif event.type == "bot_transcript":
-            self._text += event.text
+            self._reply.text += event.text
         elif event.type == "tool_call":
             self._calls.append(event)
         elif event.type == "response_done":
@@ -209,7 +201,7 @@ class RealtimeBrain(BotBrain):
             return
         if self._reply_audio_started:
             await self.push_frame(TTSStoppedFrame())
-        self._reply_done = True
+        self._reply.finished = True
         await self.on_speech_paused()
 
     async def _run_tools(self, calls: list[RealtimeEvent]) -> None:
@@ -245,8 +237,8 @@ class RealtimeBrain(BotBrain):
 
     async def on_speech_paused(self) -> None:
         # The model finishes long before its audio does, so `response_done` proves little.
-        audio_out = self.ledger.played_s >= self._generated_s - _END_SLACK_S
-        if not self.turn_open or self.cut_pending or not self._reply_done:
+        audio_out = self.ledger.played_s >= self._reply.produced_s - _END_SLACK_S
+        if not self.turn_open or self.cut_pending or not self._reply.finished:
             return
         if self.bot_speaking or not audio_out:
             return
