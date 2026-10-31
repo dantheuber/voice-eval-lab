@@ -390,6 +390,98 @@ async def test_spaced_digits_are_treated_as_one_number():
     assert "7 7 7 7" in request_text(llm)
 
 
+SHEET = {"name": "Renee", "billing_zip": "92103", "pin": "1234", "phone": "(619) 555-0199"}
+
+
+def failed_verification_caller(*script):
+    return caller(*script, what=scenario(facts=SHEET))
+
+
+async def test_a_disclosed_pin_cannot_replace_the_sheet_on_the_seeded_scenario():
+    what = load_scenarios()["scn_failed_verification"]
+    bot, llm = caller(caller_says("My PIN is 3197."), caller_says("It's 1234."), what=what)
+    assert (await bot.next_line("Is your PIN 3197?")).text == "It's 1234."
+    assert "3197" in request_text(llm).split("rejected")[1]
+
+
+@pytest.mark.parametrize(
+    ("heard", "say"),
+    [
+        ("Is your PIN 3197?", "My PIN is 3197."),
+        ("Is your PIN 3197?", "3197."),
+        ("Is your PIN 3197?", "It's 3 1 9 7."),
+        ("Is your PIN 3197?", "My PIN is three one nine seven."),
+        ("Is your PIN 3197?", "Um, three, one, nine, seven."),
+        ("Is it 3197?", "3197."),
+        ("Your billing zip is 92101, right?", "Yeah, 92101."),
+        ("Is your phone (619) 555-0106?", "Yes, (619) 555-0106."),
+        ("Your card ends in 2290.", "Right, 2290."),
+        ("Is your email renee@castillostudio.example?", "Yes, renee@castillostudio.example."),
+        ("Your ticket is 3197.", "My PIN is 3197."),
+    ],
+)
+async def test_disclosed_identity_details_are_not_the_callers_to_state(heard, say):
+    bot, llm = failed_verification_caller(caller_says(say), caller_says("I don't have that."))
+    assert (await bot.next_line(heard)).text == "I don't have that."
+    assert len(llm.requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("heard", "say"),
+    [
+        ("Your ticket is 2203.", "Ticket 2203, got it."),
+        ("Your ticket is T K dash 2 2 0 3.", "So TK-2203?"),
+        ("Your invoice is F H dash 4 4 1 9.", "Invoice FH-4419, okay."),
+        ("Your confirmation number is 88231.", "88231, thanks."),
+        ("The renewal is $114.99.", "$114.99, okay."),
+        ("Use port 993.", "993?"),
+        ("It expires in 2027.", "Oh, 2027."),
+    ],
+)
+async def test_references_learned_on_the_call_can_be_repeated(heard, say):
+    bot, llm = failed_verification_caller(caller_says(say))
+    assert (await bot.next_line(heard)).text == say
+    assert len(llm.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "say",
+    ["My PIN is 1234.", "No, it's 1234.", "Zip is 92103.", "No, it's (619) 555-0199."],
+)
+async def test_the_sheet_still_wins_after_a_disclosure(say):
+    bot, llm = failed_verification_caller(caller_says(say))
+    assert (await bot.next_line("Is your PIN 3197?")).text == say
+    assert len(llm.requests) == 1
+
+
+async def test_only_the_agents_lines_can_teach_a_reference():
+    bot, llm = failed_verification_caller(
+        caller_says("Ticket 777888, I think."), caller_says("Ticket 777888, I think.")
+    )
+    assert (await bot.next_line("Your ticket is on its way.")).text == REDIRECT_LINE
+    assert len(llm.requests) == 2
+
+
+@pytest.mark.parametrize(
+    "say", ["It's nine nine eight eight.", "Um, seven oh seven seven.", "Zero zero one two."]
+)
+async def test_invented_numbers_in_words_are_rejected(say):
+    bot, llm = caller(caller_says(say), caller_says("I don't know."))
+    assert (await bot.next_line("PIN?")).text == "I don't know."
+
+
+@pytest.mark.parametrize("say", ["four eight two one", "It's Four, Eight, Two, One."])
+async def test_sheet_numbers_in_words_pass_the_guard(say):
+    bot, llm = caller(caller_says(say))
+    assert (await bot.next_line("PIN?")).text == say
+    assert len(llm.requests) == 1
+
+
+def test_prompt_says_the_agent_cannot_change_the_sheet():
+    prompt = caller()[0].system_prompt()
+    assert "your sheet is right" in prompt
+
+
 @pytest.mark.parametrize(
     "say",
     [

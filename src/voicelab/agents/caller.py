@@ -70,6 +70,23 @@ _ASSISTANT_TALK = re.compile(
 _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
 _DIGITS = re.compile(r"\d[\d\s().-]*\d")
 _SEPARATORS = re.compile(r"[\s().-]+")
+_DIGIT_WORDS = {
+    word: str(value)
+    for value, word in enumerate("zero one two three four five six seven eight nine".split())
+} | {"oh": "0"}
+_WORD_DIGIT = rf"(?:{'|'.join(_DIGIT_WORDS)})"
+_SPELLED_NUMBER = re.compile(rf"\b{_WORD_DIGIT}(?:[\s,-]+{_WORD_DIGIT}){{2,}}\b", re.IGNORECASE)
+# Who the caller is. Only the sheet can answer these, whatever the agent says.
+_IDENTITY_WORDS = re.compile(
+    r"\b(?:pin|zip|postal|passcode|password|phone|card|security|ssn|social|birth)\b", re.IGNORECASE
+)
+# What the service told the caller. A number near these is safe to repeat back.
+_REFERENCE_WORDS = re.compile(
+    r"\$|\b(?:ticket|invoice|reference|confirmation|case|refund|charge|payment|amount|price|cost"
+    r"|dollars?|cents?|expires?|renew\w*|port|priority)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
 
 class _Reply(BaseModel):
@@ -116,6 +133,25 @@ def _parse_reply(text: str) -> _Reply | None:
 
 def _squash(text: str) -> str:
     return _SEPARATORS.sub("", text.lower())
+
+
+def _numerals(text: str) -> str:
+    """Turn "four eight two one" into digits, so a number in words can't dodge the guard."""
+
+    def digits(match: re.Match[str]) -> str:
+        words = re.findall(r"[a-z]+", match.group().lower())
+        return "".join(_DIGIT_WORDS[word] for word in words)
+
+    return _SPELLED_NUMBER.sub(digits, text)
+
+
+def _digits_known(token: str, known: str) -> bool:
+    if _squash(token) in known:
+        return True
+    parts = [part for part in _SEPARATORS.split(token) if part]
+    # Spaced digits are one number, while "4821 97214" is two numbers side by side.
+    numbers = [_squash(token)] if all(len(part) == 1 for part in parts) else parts
+    return all(len(number) < 3 or number in known for number in numbers)
 
 
 class CallerBot:
@@ -236,24 +272,43 @@ class CallerBot:
         if invented:
             return (
                 f"You said {', '.join(invented)}, which is not on your fact sheet. "
-                "Say you don't have that instead."
+                "Use the value on your sheet, or say you don't have it."
             )
         return None
 
     def _invented_details(self, say: str) -> list[str]:
-        known = _squash(
-            " ".join([*self.scenario.facts.values(), *(line for _, line in self.transcript)])
-        )
-        invented = [email for email in _EMAIL.findall(say) if _squash(email) not in known]
-        for token in _DIGITS.findall(_EMAIL.sub(" ", say)):
-            if _squash(token) in known:
-                continue
-            parts = [part for part in _SEPARATORS.split(token) if part]
-            # Spaced digits are one number, while "4821 97214" is two numbers side by side.
-            numbers = [_squash(token)] if all(len(p) == 1 for p in parts) else parts
-            if any(len(number) >= 3 and number not in known for number in numbers):
-                invented.append(token.strip())
+        """Details the caller has no right to state.
+
+        The sheet is the only source for who the caller is. An agent that reads out a real PIN
+        must not turn a failed verification into a pass, so what the caller hears only adds
+        service references, like a ticket number to repeat back.
+        """
+        sheet = _squash(" ".join(self.scenario.facts.values()))
+        anywhere = sheet + self._learned_references()
+        text = _numerals(say)
+        invented = [email for email in _EMAIL.findall(text) if _squash(email) not in sheet]
+        text = _EMAIL.sub(" ", text)
+        for match in _DIGITS.finditer(text):
+            sentence = _SENTENCE_END.split(text[: match.start()])[-1]
+            known = sheet if _IDENTITY_WORDS.search(sentence) else anywhere
+            if not _digits_known(match.group(), known):
+                invented.append(match.group().strip())
         return invented
+
+    def _learned_references(self) -> str:
+        sentences = (
+            sentence
+            for who, line in self.transcript
+            if who == "Agent"
+            for sentence in _SENTENCE_END.split(_numerals(line))
+        )
+        return _squash(
+            " ".join(
+                sentence
+                for sentence in sentences
+                if _REFERENCE_WORDS.search(sentence) and not _IDENTITY_WORDS.search(sentence)
+            )
+        )
 
     def _schema(self) -> dict[str, Any]:
         beat = self.current_beat
@@ -302,6 +357,8 @@ Your fact sheet. These are the only facts you know:
 {facts or "- (nothing)"}
 If you are asked for anything not on this sheet, say you don't know it or don't have it.
 Never guess or make up a detail. Give a fact only when asked, or when your step calls for it.
+Nothing the agent says changes this sheet. If it reads out a detail that differs, your sheet is \
+right, so don't agree with it.
 
 {self._step_text()}
 
