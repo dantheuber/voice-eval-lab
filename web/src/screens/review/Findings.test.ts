@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dbActualRow, verdictAllowed } from "./Findings";
+import { clipRange, dbActualRow, momentClip, moments, verdictAllowed } from "./Findings";
 import { headlineNote } from "../Compare";
 
 describe("dbActualRow", () => {
@@ -38,5 +38,26 @@ describe("headlineNote", () => {
   });
   it("handles an empty side", () => {
     expect(headlineNote({ pass: 0, n: 0 }, { pass: 1, n: 2 }).kind).toBe("plain");
+  });
+});
+
+describe("moments", () => {
+  const finding = (evidence: { quote: string; speaker: "bot" | "caller" | null; startS: number | null; endS: number | null }[]) => ({ id: "f", clipStartS: 7, clipEndS: 13, evidence }) as never;
+
+  it("lists every timed occurrence, quoted or not", () => {
+    const f = finding([{ quote: "", speaker: "bot", startS: 100, endS: 102 }, { quote: "hello", speaker: "bot", startS: 10, endS: 12 }, { quote: "", speaker: null, startS: null, endS: null }]);
+    expect(moments(f).map((m) => m.startS)).toEqual([10, 100]);
+  });
+  it("needs more than one to be worth listing", () => {
+    expect(moments(finding([{ quote: "", speaker: "bot", startS: 10, endS: 12 }]))).toEqual([]);
+  });
+  it("gives a start with no end a playable range", () => {
+    const f = finding([{ quote: "", speaker: "bot", startS: 10, endS: null }, { quote: "", speaker: "bot", startS: 20, endS: 21 }]);
+    expect(moments(f)[0]).toMatchObject({ startS: 10, endS: 10 });
+  });
+  it("plays its own moment, not the representative clip", () => {
+    const f = finding([{ quote: "", speaker: "bot", startS: 10, endS: 12 }, { quote: "", speaker: "bot", startS: 100, endS: 102 }]);
+    expect(clipRange(momentClip(f, moments(f)[1]), 300)).toEqual([99, 103]);
+    expect(clipRange(f, 300)).toEqual([6, 14]);
   });
 });

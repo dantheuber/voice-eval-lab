@@ -42,3 +42,24 @@ describe("findingsByUtterance", () => {
     for (const f of reviewA.eval!.findings) expect(placed.has(f.id)).toBe(true);
   });
 });
+
+describe("a finding that covers several moments", () => {
+  const utterance = (id: string, startS: number, endS: number) => ({ ...reviewA.call.timeline.find((e) => e.type === "utterance")!, id, startS, endS });
+  const rollup = { ...reviewA.eval!.findings[0], id: "f_roll", evaluator: "delivery", clipStartS: 7, clipEndS: 13, evidence: [{ quote: "", speaker: "bot", startS: 10, endS: 12 }, { quote: "", speaker: "bot", startS: 100, endS: 102 }] };
+  const payload = (findings: typeof reviewA.eval.findings) => ({ ...reviewA, call: { ...reviewA.call, timeline: [utterance("near", 9, 13), utterance("far", 99, 103), utterance("clean", 50, 53)] }, eval: { ...reviewA.eval!, findings } }) as typeof reviewA;
+
+  it("attaches to every utterance its evidence touches", () => {
+    const by = findingsByUtterance(payload([rollup]));
+    expect(by.get("near")?.map((f) => f.id)).toEqual(["f_roll"]);
+    expect(by.get("far")?.map((f) => f.id)).toEqual(["f_roll"]);
+    expect(by.has("clean")).toBe(false);
+  });
+  it("lists a finding once on an utterance two of its moments share", () => {
+    const close = { ...rollup, evidence: [{ quote: "", speaker: "bot", startS: 10, endS: 10.5 }, { quote: "", speaker: "bot", startS: 11, endS: 11.5 }] };
+    expect(findingsByUtterance(payload([close] as never)).get("near")).toHaveLength(1);
+  });
+  it("still finds a home for evidence in a gap between utterances", () => {
+    const gap = { ...rollup, clipStartS: null, clipEndS: null, evidence: [{ quote: "", speaker: null, startS: 14, endS: 20 }] };
+    expect(findingsByUtterance(payload([gap] as never)).get("near")).toHaveLength(1);
+  });
+});

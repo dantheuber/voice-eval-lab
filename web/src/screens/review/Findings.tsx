@@ -9,6 +9,16 @@ import { pinLabel } from "./Transcript";
 
 export const clipRange = (f: Finding, durationS: number): [number, number] => [Math.max(0, (f.clipStartS ?? 0) - 1), Math.min(durationS, (f.clipEndS ?? (f.clipStartS ?? 0) + 5) + 1)];
 
+export interface Moment { startS: number; endS: number }
+
+/** Each moment a rolled-up finding covers, in call order. One moment is just the finding's clip. */
+export function moments(f: Finding): Moment[] {
+  const timed = f.evidence.filter((e) => e.startS != null).map((e) => ({ startS: e.startS!, endS: e.endS ?? e.startS! }));
+  return timed.length > 1 ? timed.sort((a, b) => a.startS - b.startS) : [];
+}
+
+export const momentClip = (f: Finding, m: Moment): Finding => ({ ...f, clipStartS: m.startS, clipEndS: m.endS });
+
 export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
   payload: ReviewPayload; f: Finding; onPlay: (f: Finding) => void; onDecide: (f: Finding, v: "confirmed" | "dismissed") => void; onSaveNote: (f: Finding, note: string) => void;
 }) {
@@ -40,6 +50,7 @@ export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
         {f.evidence.filter((e) => e.quote).length > 0 && !intendedHeard ? f.evidence.filter((e) => e.quote).map((e, i) => <div key={i}><span className={s.q}>"{e.quote}"</span>{e.speaker ? <span className="faint"> {e.speaker}{e.startS != null ? `, ${fmtClock(e.startS)}` : ""}</span> : null}</div>) : null}
         <div className={f.evidence.some((e) => e.quote) && !intendedHeard ? "faint" : ""} style={{ marginTop: f.evidence.some((e) => e.quote) && !intendedHeard ? 3 : 0 }}>{f.detail}</div>
         {catNote && <div className="faint" style={{ marginTop: 3 }}>{catNote}</div>}
+        {moments(f).length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>{moments(f).map((m) => <Button key={m.startS} size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onPlay(momentClip(f, m)); }} aria-label={`Play the occurrence at ${fmtClock(m.startS)}`}><Icon name="play" /> {fmtClock(m.startS)}</Button>)}</div>}
         {measured && <div style={{ marginTop: 3 }}><span className="faint">Measured on this utterance:</span> <code>{deliveryLine(measured)}</code>{measured.flags.length ? <span className="faint">, flagged {measured.flags.map((x) => categoryLabel({ category: x })).join(", ")}</span> : <span className="faint">, no delivery flags. The measurement wins over the listener's impression.</span>}</div>}
       </div>
       <div className={s.fx}>

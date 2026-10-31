@@ -20,15 +20,29 @@ export function diffWords(intended: string, heard: string): { pre: string; del: 
 const isUtt = (e: TimelineEvent): e is Utterance => e.type === "utterance";
 const atOf = (e: TimelineEvent) => (isUtt(e) ? e.startS : e.atS);
 
+const GAP_REACH_S = 3; // how far evidence in a silence reaches for the nearest turn
+
 export function findingsByUtterance(payload: ReviewPayload): Map<string, Finding[]> {
   const m = new Map<string, Finding[]>();
   const utts = payload.call.timeline.filter(isUtt);
   for (const f of payload.eval?.findings ?? []) {
-    if (f.clipStartS == null) continue;
-    // attach to the bot or caller utterance that overlaps the clip start most closely
-    const cands = utts.filter((u) => u.startS <= (f.clipEndS ?? f.clipStartS!) && u.endS >= f.clipStartS!);
-    const pick = cands.find((u) => u.speaker === "bot" && f.evaluator !== "timing") ?? cands[0];
-    if (pick) m.set(pick.id, [...(m.get(pick.id) ?? []), f]);
+    // the bot's turn first, unless this is about the gap around it
+    const home = (startS: number, endS: number) => {
+      const cands = utts.filter((u) => u.startS <= endS && u.endS >= startS);
+      return cands.find((u) => u.speaker === "bot" && f.evaluator !== "timing") ?? cands[0];
+    };
+    const attach = (u: Utterance | undefined) => {
+      if (!u) return;
+      const here = m.get(u.id) ?? [];
+      if (!here.includes(f)) m.set(u.id, [...here, f]);
+    };
+    if (f.clipStartS != null) attach(home(f.clipStartS, f.clipEndS ?? f.clipStartS));
+    // a rolled-up finding's clip plays one moment, and every other moment needs a home too
+    for (const e of f.evidence) {
+      if (e.startS == null) continue;
+      const endS = e.endS ?? e.startS;
+      attach(home(e.startS, endS) ?? home(e.startS - GAP_REACH_S, endS + GAP_REACH_S));
+    }
   }
   return m;
 }
