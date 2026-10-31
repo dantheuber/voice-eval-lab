@@ -1,10 +1,13 @@
 import numpy as np
 import pytest
 
+from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, EchoDetector, LevelContour
+from voicelab.engine.live.log import LiveLog
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.tool_checks import tool_call_problem
 from voicelab.providers.base import ToolCall, ToolDef
+from voicelab.store.artifacts import ArtifactStore
 
 RATE = 16000
 
@@ -190,3 +193,74 @@ def test_a_real_type_mismatch_is_a_problem():
 
 def test_stray_arguments_are_tolerated():
     assert problem(invoice_id="FH-4419", extra="field") is None
+
+
+# What the far side heard -------------------------------------------------------------------------
+
+
+async def _ignore(_message) -> None:
+    return None
+
+
+def _log(tmp_path) -> LiveLog:
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS)
+    return LiveLog(artifact, ArtifactStore(tmp_path), _ignore)
+
+
+def _turn(start_s: float, end_s: float) -> Utterance:
+    return Utterance(speaker=Speaker.CALLER, start_s=start_s, end_s=end_s, intended_text="x")
+
+
+async def test_several_stt_segments_join_the_one_turn_they_came_from(tmp_path):
+    log = _log(tmp_path)
+
+    turn = log.utterance(_turn(1.0, 5.0), far_side_listens=True)
+    log.hear(Speaker.CALLER, "Hello there.", 2.0)
+    log.hear(Speaker.CALLER, "My email is locked.", 5.1)
+
+    assert turn.heard_text == "Hello there. My email is locked."
+
+
+async def test_segments_that_arrive_before_the_turn_closes_are_kept_for_it(tmp_path):
+    log = _log(tmp_path)
+
+    log.hear(Speaker.CALLER, "Early words.", 2.0)
+    turn = log.utterance(_turn(1.0, 5.0), far_side_listens=True)
+
+    assert turn.heard_text == "Early words."
+
+
+async def test_a_later_turns_words_are_not_credited_to_an_earlier_turn(tmp_path):
+    log = _log(tmp_path)
+
+    first = log.utterance(_turn(1.0, 3.0), far_side_listens=True)
+    log.hear(Speaker.CALLER, "First.", 3.1)
+    log.hear(Speaker.CALLER, "Second.", 9.0)
+    second = log.utterance(_turn(8.0, 9.0), far_side_listens=True)
+
+    assert first.heard_text == "First." and second.heard_text == "Second."
+
+
+async def test_a_turn_nobody_heard_is_recorded_as_heard_empty(tmp_path):
+    log = _log(tmp_path)
+    log.start()
+
+    turn = log.utterance(_turn(1.0, 3.0), far_side_listens=True)
+    await log.close()
+
+    assert turn.heard_text == ""
+
+
+async def test_a_mic_callers_turn_goes_out_without_waiting_for_anyone(tmp_path):
+    sent = []
+
+    async def keep(message) -> None:
+        sent.append(message)
+
+    log = LiveLog(CallArtifact(mode=CallMode.HUMAN), ArtifactStore(tmp_path), keep)
+    log.start()
+
+    log.utterance(_turn(1.0, 3.0), far_side_listens=False)
+    await log.close()
+
+    assert [message["type"] for message in sent] == ["turn"]

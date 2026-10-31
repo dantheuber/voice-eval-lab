@@ -72,7 +72,11 @@ Run together, `AC9077` came out of TTS as "AC nineteen seventy seven" and went i
 
 - `speech.py` spells ids phone-style ("F, as in frank. H, as in house. Four, four, one, nine.") and reads digits as comma-separated words. Measured on ten numbers through real TTS and STT, that came back right 10 of 10 on every voice, against 5 of 10 for spaced numerals on Pocket.
 - `heard.py` collapses spelled forms for the brains. The word after "as in" outranks the letter before it, so "S as in Frank" is F. `heard_text` in the artifact stays raw STT output.
-- `find_customer` accepts what a recognizer writes, and flags a near match as `close_match` so the bot confirms it.
+- `find_customer` accepts what a recognizer writes. It also compares against how an address sounds, since `nguyenauto.example` is said as "win auto" and no spelling match recovers that. A near match comes back flagged `close_match` so the bot confirms it.
+
+## Hold
+
+A tool turn needs a second LLM round, and Qwen3.5-4B takes up to 2.4 s end to end. If the first round takes longer than `filler_after_s`, `SupportBot` says "One moment, let me check that." before running the tool. It's real speech: in the transcript, in the recording, and in history. In a bot-to-bot call the caller treats that line as a request to wait, because the silence after it otherwise looks like the end of the bot's turn.
 
 ## Things to tune
 
