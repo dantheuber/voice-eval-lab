@@ -568,3 +568,15 @@ def test_the_same_amount_matches_in_every_format(written, heard):
 )
 def test_genuinely_different_amounts_stay_different(written, heard):
     assert not matches(written, heard), (norms(written), norms(heard))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("1.5 2", ["1", ".", "5", "0", "2"]),
+        ("$5.50 and 20", ["5", ".", "5", "0", "and", "2", "0"]),
+        ("$5 and $20", ["5", "and", "2", "0"]),
+    ],
+)
+def test_a_finished_amount_does_not_swallow_the_next_number(text, expected):
+    assert norms(text) == expected

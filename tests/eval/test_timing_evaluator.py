@@ -315,3 +315,11 @@ async def test_synthetic_timing_lists_unanswered_turns_without_judging_the_wait(
     out, _ = await evaluate(store, artifact, caller=[(0, 1)], duration_s=31.0)
     assert len(out.metrics["unanswered_turns"]) == 1
     assert out.findings == []
+
+
+async def test_reaction_stops_at_the_speech_the_caller_cut_into(store):
+    # With nobody in the bot's later pause its regions merge into one turn, and that turn would
+    # report a 5 s reaction to an interruption the bot stopped for after 1 s.
+    out, _ = await evaluate(store, bot=[(0, 2), (2.5, 6)], caller=[(1, 1.9)], duration_s=7.0)
+    events = out.metrics["barge_in"]["events"]
+    assert [e["reaction_s"] for e in events] == pytest.approx([1.0], abs=TOLERANCE)

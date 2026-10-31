@@ -441,3 +441,16 @@ async def test_the_facts_prompt_defines_material(store):
     await run(CallerValidityEvaluator(), context(store, artifact, judge))
     assert "could change the bot's correct behavior" in " ".join(judge.prompts[0].split())
     assert "breaches" in judge.kwargs[0]["json_schema"]["required"]
+
+
+async def test_one_breach_quoting_the_bot_leaves_the_fact_check_unknown(store):
+    judge = beat_judge(
+        {},
+        facts=facts_reply(
+            "fail", breach("invoice FH-4419", True), breach("refunded forty nine dollars", True)
+        ),
+    )
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
+    assert out.findings == []

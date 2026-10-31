@@ -351,11 +351,11 @@ def test_block_decoding_keeps_the_audio_intact(tmp_path):
 
 
 def test_dual_mono_is_noticed_across_blocks(tmp_path):
-    # Same audio on both sides until a difference far past the first block.
+    # The two sides differ only in a middle block, so neither the first nor the last shows it.
     rate = 16000
-    base = tone(20.0, 300, rate=rate)
+    base = tone(30.0, 300, rate=rate)
     other = base.copy()
-    other[rate * 18 :] = 0
+    other[rate * 10 : rate * 11] = 0
     path = tmp_path / "almost.flac"
     sf.write(str(path), np.stack([base, other], axis=1), rate, format="FLAC")
     artifact = ArtifactStore(tmp_path).import_recording(str(path))
