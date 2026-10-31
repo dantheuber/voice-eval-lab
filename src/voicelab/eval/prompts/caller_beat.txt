@@ -23,7 +23,8 @@ Choose one status:
 
 Rules for quotes:
 - Copy each quote word for word from the transcript. Do not fix, shorten, or paraphrase it.
-- To show the step was reached, quote where it happened.
+- To show the step was reached, quote where it happened. Quote what the CALLER said, unless the
+  proof is something the caller was told or received.
 - If the step never happened, give an empty list.
 
 Keep the reason to one or two sentences. Reply with JSON only:

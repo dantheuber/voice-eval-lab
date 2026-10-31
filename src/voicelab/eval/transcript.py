@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 
 from voicelab.core.models import Evidence, Speaker, Word
 from voicelab.eval.vad import Region
 from voicelab.providers.base import Transcript
 
 _NOT_WORD = re.compile(r"[^\w]+")
-
-# Longer quotes may differ by a word or two when a judge fixes up a stumble, and short ones can't:
-# one changed word in four is a different statement.
-_NEAR_MATCH_MIN_WORDS = 5
-_NEAR_MATCH_RATIO = 0.9
 
 
 def clean_word(text: str) -> str:
@@ -26,8 +20,10 @@ def clean_word(text: str) -> str:
 def estimate_words(text: str, regions: list[Region], fallback_end_s: float) -> list[Word]:
     """Spread text over a channel's speech when the STT gave no word timing.
 
-    Providers are allowed to omit words, and everything downstream works in timed words. These
-    times are only good enough to find the right part of the call.
+    Providers are allowed to omit words, and everything downstream works in timed words. Words are
+    laid out over the channel's total speech time and then mapped back onto its regions, so no
+    estimate lands in silence or past the recording. The times are only good enough to find the
+    right part of the call.
     """
     tokens = text.split()
     spans = regions or [Region(0.0, fallback_end_s)]
@@ -37,15 +33,33 @@ def estimate_words(text: str, regions: list[Region], fallback_end_s: float) -> l
     weights = [len(t) + 1 for t in tokens]
     per_weight = total / sum(weights)
     words: list[Word] = []
-    span_index, cursor = 0, spans[0].start_s
+    position = 0.0
     for token, weight in zip(tokens, weights, strict=True):
-        length = weight * per_weight
-        while cursor + length > spans[span_index].end_s + 1e-9 and span_index + 1 < len(spans):
-            span_index += 1
-            cursor = spans[span_index].start_s
-        words.append(Word(text=token, start_s=cursor, end_s=cursor + length))
-        cursor += length
+        end = min(total, position + weight * per_weight)
+        words.append(
+            Word(
+                text=token,
+                start_s=_time_at(position, spans, ending=False),
+                end_s=_time_at(end, spans, ending=True),
+            )
+        )
+        position = end
     return words
+
+
+def _time_at(position: float, spans: list[Region], *, ending: bool) -> float:
+    """Recording time at `position` seconds into the speech, counting only time inside spans.
+
+    A position on the seam between two spans is the end of one and the start of the next, so a
+    word that finishes there stays in its own span.
+    """
+    passed = 0.0
+    for span in spans:
+        into_span = position - passed
+        if into_span < span.duration_s or (ending and into_span <= span.duration_s):
+            return span.start_s + max(0.0, into_span)
+        passed += span.duration_s
+    return spans[-1].end_s
 
 
 def render_transcript(transcripts: dict[Speaker, Transcript], *, gap_s: float = 1.0) -> str:
@@ -91,20 +105,19 @@ class TranscriptIndex:
         return _Channel(speaker, kept, [clean_word(w.text) for w in kept])
 
     def locate(self, quote: str, prefer: Speaker | None = None) -> Evidence | None:
-        """Find a quote, or None if it isn't in the transcript."""
+        """Find a quote word for word, or None if it isn't in the transcript.
+
+        Only case and punctuation are forgiven. A near match won't do, because the word a judge
+        gets wrong can be the "not" that reverses the meaning. When both sides said it, the
+        `prefer` speaker's copy is returned.
+        """
         needle = [t for t in map(clean_word, quote.split()) if t]
         if not needle:
             return None
-        channels = sorted(self._channels, key=lambda c: c.speaker != prefer)
-        for channel in channels:
+        for channel in sorted(self._channels, key=lambda c: c.speaker != prefer):
             span = _find_exact(channel.tokens, needle)
             if span is not None:
                 return _evidence(channel, *span)
-        if len(needle) >= _NEAR_MATCH_MIN_WORDS:
-            for channel in channels:
-                span = _find_near(channel.tokens, needle)
-                if span is not None:
-                    return _evidence(channel, *span)
         return None
 
 
@@ -114,19 +127,6 @@ def _find_exact(tokens: list[str], needle: list[str]) -> tuple[int, int] | None:
         if tokens[start : start + size] == needle:
             return start, start + size
     return None
-
-
-def _find_near(tokens: list[str], needle: list[str]) -> tuple[int, int] | None:
-    best, best_span = _NEAR_MATCH_RATIO, None
-    matcher = SequenceMatcher(autojunk=False)
-    matcher.set_seq2(needle)
-    for size in (len(needle) - 1, len(needle), len(needle) + 1):
-        for start in range(len(tokens) - size + 1):
-            matcher.set_seq1(tokens[start : start + size])
-            ratio = matcher.ratio()
-            if ratio >= best:
-                best, best_span = ratio, (start, start + size)
-    return best_span
 
 
 def _evidence(channel: _Channel, start: int, end: int) -> Evidence:

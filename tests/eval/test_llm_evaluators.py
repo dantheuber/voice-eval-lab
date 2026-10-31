@@ -4,6 +4,7 @@ import pytest
 from evalfakes import FakeLLM, verdict_json, write_call
 from evalfakes import transcript as make_transcript
 
+from voicelab.agents.seeds import validate_seeds
 from voicelab.core.models import (
     Beat,
     CallArtifact,
@@ -14,7 +15,12 @@ from voicelab.core.models import (
     ToolCallEvent,
 )
 from voicelab.eval.context import EvalContext, EvalDeps, EvaluatorOutput, Skip
-from voicelab.eval.evaluators.caller_validity import FACTS_CRITERION_ID, CallerValidityEvaluator
+from voicelab.eval.evaluators.caller_validity import (
+    FACTS_CRITERION_ID,
+    MATERIAL_FACT_BREACH,
+    CallerValidityEvaluator,
+    checkpoint_actor,
+)
 from voicelab.eval.evaluators.transcript_judge import TranscriptJudgeEvaluator
 
 CALLER_SAID = "hi I was charged twice for invoice FH-4419"
@@ -279,17 +285,15 @@ async def test_optional_beat_missed_is_only_minor(store):
 
 
 async def test_fact_sheet_breach_with_a_caller_quote_is_reported(store):
-    judge = beat_judge({}, facts=verdict_json("fail", quotes=["invoice FH-4419"]))
+    judge = beat_judge({}, facts=facts_reply("fail", breach("invoice FH-4419", False)))
     artifact = validity_call(facts={"invoice": "FH-1111"})
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
     assert by_id(out, FACTS_CRITERION_ID).status == "fail"
-    finding = out.findings[0]
-    assert finding.category == "fact_sheet_breach"
-    assert finding.advisory is True
+    assert out.findings[0].advisory is True
 
 
 async def test_fact_sheet_breach_quoting_the_bot_does_not_count(store):
-    judge = beat_judge({}, facts=verdict_json("fail", quotes=["refunded forty nine dollars"]))
+    judge = beat_judge({}, facts=facts_reply("fail", breach("refunded forty nine dollars")))
     artifact = validity_call(facts={"invoice": "FH-1111"})
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
     assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
@@ -327,3 +331,113 @@ async def test_missing_judge_leaves_beats_unknown(store):
 
 def test_judge_replies_are_valid_json_for_the_fake():
     assert json.loads(json.dumps(verdict_json("pass")))["status"] == "pass"
+
+
+async def test_a_rule_passed_only_on_caller_words_is_unknown(store):
+    rule = Rule(text="verify the billing zip")
+    judge = judge_for({"verify the billing zip": verdict_json("pass", quotes=["charged twice"])})
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS, scenario_snapshot=scenario(must=[rule]))
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert by_id(out, rule.id).status == "unknown"
+
+
+async def test_a_rule_failed_only_on_caller_words_is_unknown(store):
+    rule = Rule(text="mention invoices")
+    judge = judge_for({"mention invoices": verdict_json("fail", quotes=["invoice FH-4419"])})
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS, scenario_snapshot=scenario(must_not=[rule]))
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert by_id(out, rule.id).status == "unknown"
+    assert not [f for f in out.findings if f.criterion_id == rule.id]
+
+
+async def test_a_caller_beat_cannot_be_proved_by_the_bot(store):
+    beat = Beat(instruction="ask for a refund", checkpoint="The caller asked for a refund.")
+    judge = beat_judge({"ask for a refund": verdict_json("pass", quotes=["was refunded"])})
+    out = await run(CallerValidityEvaluator(), context(store, validity_call(beats=[beat]), judge))
+    assert by_id(out, beat.id).status == "unknown"
+
+
+async def test_a_checkpoint_about_what_the_caller_received_accepts_the_bot(store):
+    beat = Beat(
+        instruction="confirm the refund",
+        checkpoint="The caller asked for or received confirmation of the refund.",
+    )
+    judge = beat_judge({"confirm the refund": verdict_json("pass", quotes=["was refunded"])})
+    out = await run(CallerValidityEvaluator(), context(store, validity_call(beats=[beat]), judge))
+    assert by_id(out, beat.id).status == "pass"
+
+
+def test_seed_checkpoints_needing_either_speaker_are_the_ones_about_receiving():
+    _, seeds = validate_seeds()
+    either = [b.checkpoint for s in seeds.values() for b in s.beats if checkpoint_actor(b) is None]
+    assert either == ["The caller asked for or received confirmation that the site is restored."]
+
+
+def breach(quote: str, material: object = True) -> dict:
+    return {"quote": quote, "material": material, "why": "not on the sheet"}
+
+
+def facts_reply(status: str, *breaches: dict) -> dict:
+    return {"status": status, "reason": "because", "breaches": list(breaches)}
+
+
+async def test_material_breach_is_marked_for_invalidation(store):
+    judge = beat_judge({}, facts=facts_reply("fail", breach("invoice FH-4419", True)))
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert [f.category for f in out.findings] == [MATERIAL_FACT_BREACH]
+    assert out.findings[0].advisory is True
+    assert out.findings[0].evidence[0].speaker == Speaker.CALLER
+
+
+async def test_non_material_breach_is_a_plain_slip(store):
+    judge = beat_judge({}, facts=facts_reply("fail", breach("charged twice", False)))
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert [f.category for f in out.findings] == ["fact_sheet_slip"]
+
+
+async def test_each_breach_is_judged_on_its_own(store):
+    judge = beat_judge(
+        {},
+        facts=facts_reply("fail", breach("charged twice", False), breach("invoice FH-4419", True)),
+    )
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert sorted(f.category for f in out.findings) == sorted(
+        ["fact_sheet_slip", MATERIAL_FACT_BREACH]
+    )
+
+
+async def test_a_fabricated_breach_leaves_the_fact_check_unknown(store):
+    judge = beat_judge(
+        {},
+        facts=facts_reply("fail", breach("invoice FH-4419", True), breach("my name is Bob", True)),
+    )
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
+    assert out.findings == []
+
+
+async def test_a_breach_with_no_materiality_call_is_unknown(store):
+    judge = beat_judge({}, facts=facts_reply("fail", breach("invoice FH-4419", "maybe")))
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
+    assert out.findings == []
+
+
+async def test_pass_that_lists_breaches_contradicts_itself(store):
+    judge = beat_judge({}, facts=facts_reply("pass", breach("invoice FH-4419", True)))
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
+
+
+async def test_the_facts_prompt_defines_material(store):
+    judge = beat_judge({})
+    artifact = validity_call(facts={"invoice": "FH-1111"})
+    await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert "could change the bot's correct behavior" in " ".join(judge.prompts[0].split())
+    assert "breaches" in judge.kwargs[0]["json_schema"]["required"]

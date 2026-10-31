@@ -11,7 +11,7 @@ from voicelab.core.models import (
     Verdict,
 )
 from voicelab.eval.config import VerdictConfig
-from voicelab.eval.evaluators.caller_validity import FACTS_CRITERION_ID
+from voicelab.eval.evaluators.caller_validity import FACTS_CRITERION_ID, MATERIAL_FACT_BREACH
 from voicelab.eval.verdict import decide_verdict, unchecked_items, write_summary
 
 REQUIRED = Beat(id="beat_required", instruction="state the problem")
@@ -242,3 +242,49 @@ def test_summary_caps_long_reason_lists():
 
 def test_unchecked_items_empty_for_a_full_call():
     assert unchecked_items(scripted(), [run()]) == []
+
+
+def breach_finding(category: str) -> Finding:
+    return Finding(
+        evaluator="caller_validity",
+        category=category,
+        severity="major",
+        advisory=True,
+        title="Caller gave the wrong invoice",
+        criterion_id=FACTS_CRITERION_ID,
+    )
+
+
+def test_material_fact_breach_invalidates_the_run():
+    decision = decide(
+        criteria=[PASSED, criterion("beat", "fail", FACTS_CRITERION_ID)],
+        findings=[breach_finding(MATERIAL_FACT_BREACH)],
+    )
+    assert decision.verdict == Verdict.INVALID
+    assert "Caller gave the wrong invoice" in decision.reasons[0]
+
+
+def test_material_fact_breach_outranks_a_bot_failure():
+    decision = decide(
+        criteria=[criterion("must", "fail"), criterion("beat", "fail", FACTS_CRITERION_ID)],
+        findings=[breach_finding(MATERIAL_FACT_BREACH), finding("critical")],
+    )
+    assert decision.verdict == Verdict.INVALID
+
+
+def test_non_material_slip_reaches_review_however_the_score_is_configured():
+    decision = decide(
+        criteria=[PASSED, criterion("beat", "fail", FACTS_CRITERION_ID)],
+        findings=[breach_finding("fact_sheet_slip")],
+        config=VerdictConfig(review_score=100),
+    )
+    assert decision.verdict == Verdict.NEEDS_REVIEW
+    assert any("fact sheet" in reason for reason in decision.reasons)
+
+
+def test_non_material_slip_does_not_hide_a_bot_failure():
+    decision = decide(
+        criteria=[criterion("must", "fail"), criterion("beat", "fail", FACTS_CRITERION_ID)],
+        findings=[breach_finding("fact_sheet_slip")],
+    )
+    assert decision.verdict == Verdict.FAIL

@@ -82,32 +82,43 @@ def verify_judgment(
     index: TranscriptIndex,
     *,
     quote_needed_for: JudgeStatus,
-    prefer: Speaker | None = None,
+    actor: Speaker | None = None,
 ) -> Judgment:
     """Check a judge's reply against the transcript, downgrading what it can't support.
 
-    `quote_needed_for` is the status that claims something happened, which must be shown. Quotes
-    the transcript doesn't contain are dropped, and if that leaves nothing behind a claim, or the
-    judge cited only made-up text, the result is `unknown`, whatever the judge concluded.
+    Any citation the transcript doesn't contain makes the result `unknown`, even beside real ones:
+    a judge that invented one quote can't be trusted on the rest of its reasoning. Real quotes stay
+    as evidence for the reviewer.
+
+    `quote_needed_for` is the status that claims something happened, and it has to be shown. When
+    the criterion is about one party, `actor`, that party's own words have to show it, because the
+    other side saying something proves nothing about what this side did. Other real quotes can
+    stand beside them as context.
     """
     raw_status = payload.get("status")
     status: JudgeStatus = raw_status if raw_status in ("pass", "fail") else "unknown"
     reason = str(payload.get("reason") or "")
     raw_quotes = payload.get("quotes")
     quotes = [q for q in raw_quotes if isinstance(q, str) and q.strip()] if raw_quotes else []
-    located = [index.locate(q, prefer) for q in quotes]
+    located = [index.locate(q, actor) for q in quotes]
     evidence = [e for e in located if e is not None]
     dropped = len(quotes) - len(evidence)
 
-    if status != "unknown" and not evidence:
-        if dropped:
-            reason = f"Judge said {status}, but its quotes aren't in the transcript. {reason}"
+    if status == "unknown":
+        return Judgment(status, reason.strip(), evidence, dropped)
+    claimed = status
+    if dropped:
+        reason = (
+            f"Judge said {claimed}, but {dropped} of its quotes aren't in the transcript. {reason}"
+        )
+        status = "unknown"
+    elif claimed == quote_needed_for:
+        if not evidence:
+            reason = f"Judge said {claimed} without quoting the transcript. {reason}"
             status = "unknown"
-        elif status == quote_needed_for:
-            reason = f"Judge said {status} without quoting the transcript. {reason}"
+        elif actor is not None and all(e.speaker != actor for e in evidence):
+            reason = f"Judge said {claimed}, but quoted nothing the {actor.value} said. {reason}"
             status = "unknown"
-    elif dropped:
-        reason = f"{reason} ({dropped} quote(s) not in the transcript were dropped.)"
     return Judgment(status, reason.strip(), evidence, dropped)
 
 

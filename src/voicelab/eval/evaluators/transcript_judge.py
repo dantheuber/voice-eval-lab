@@ -111,7 +111,7 @@ class TranscriptJudgeEvaluator:
                 continue
             out.model = model
             judgment = verify_judgment(
-                payload, ctx.index, quote_needed_for=item.quote_needed_for, prefer=Speaker.BOT
+                payload, ctx.index, quote_needed_for=item.quote_needed_for, actor=Speaker.BOT
             )
             dropped_quotes += judgment.dropped_quotes
             out.criteria.append(

@@ -18,9 +18,13 @@ Choose one status:
 - "fail": the caller stated something that breaches it.
 - "unknown": this transcript does not let you decide.
 
-Rules for quotes:
-- Copy each quote word for word from the transcript. Do not fix, shorten, or paraphrase it.
-- For a breach, quote what the caller said. If there was no breach, give an empty list.
+List every breach, each with:
+- quote: what the CALLER said, copied word for word from the transcript. Do not fix, shorten, or
+  paraphrase it. A quote that differs by even one word is thrown out, along with your answer.
+- material: true if the breach is about identity, account details, or amounts, or could change
+  the bot's correct behavior. false for a harmless slip that the bot would handle the same way.
+- why: one short sentence.
 
-Keep the reason to one or two sentences. Reply with JSON only:
-{"status": "pass", "reason": "why", "quotes": ["exact words"]}
+If there was no breach, give an empty list. Keep the reason to one or two sentences. Reply with
+JSON only:
+{"status": "fail", "reason": "why", "breaches": [{"quote": "exact words", "material": true, "why": "why"}]}

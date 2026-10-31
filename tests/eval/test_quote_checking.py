@@ -52,15 +52,9 @@ def test_short_quote_needs_an_exact_match(index):
     assert index.locate("refund of fifty dollars") is None
 
 
-def test_long_quote_with_one_stumbled_word_still_matches(index):
+def test_long_quote_with_one_changed_word_is_rejected(index):
     quote = "I am so sorry about that. Your refund of forty nine dollars is on its way to you."
-    assert index.locate(quote) is not None
-
-
-def test_long_quote_with_a_changed_fact_near_the_threshold_is_rejected():
-    words = "please confirm the account number and the zip code"
-    transcripts = {Speaker.BOT: transcript((words, 0.0))}
-    assert TranscriptIndex(transcripts).locate("please confirm the card number and the pin") is None
+    assert index.locate(quote) is None
 
 
 def test_empty_quote_is_not_found(index):
@@ -133,22 +127,6 @@ def test_pass_citing_only_made_up_text_is_unknown_even_when_no_quote_is_needed(i
         quote_needed_for="fail",
     )
     assert judgment.status == "unknown"
-
-
-def test_one_real_quote_keeps_the_verdict_and_drops_the_fake(index):
-    judgment = verify_judgment(
-        {
-            "status": "fail",
-            "reason": "disclosed",
-            "quotes": ["refund of forty nine dollars", "you owe us a million dollars"],
-        },
-        index,
-        quote_needed_for="fail",
-    )
-    assert judgment.status == "fail"
-    assert len(judgment.evidence) == 1
-    assert judgment.dropped_quotes == 1
-    assert "dropped" in judgment.reason
 
 
 def test_unrecognized_status_is_unknown(index):
@@ -234,3 +212,141 @@ def test_prompt_templates_fill_without_leftovers(name):
     text = render_prompt(name, **values)
     assert "$49.99 said" in text
     assert '"status"' in text
+
+
+# Citations are exact, and one bad citation sinks the judgment ------------------------------------
+
+REFUSAL = "I will not refund the payment to your account today"
+
+
+def test_quote_dropping_a_negation_is_not_found():
+    index = TranscriptIndex({Speaker.BOT: transcript((REFUSAL, 0.0))})
+    assert index.locate("I will refund the payment to your account today") is None
+
+
+def test_a_judgment_resting_on_a_dropped_negation_becomes_unknown():
+    index = TranscriptIndex({Speaker.BOT: transcript((REFUSAL, 0.0))})
+    judgment = verify_judgment(
+        {
+            "status": "pass",
+            "reason": "it refunded",
+            "quotes": ["I will refund the payment to your account today"],
+        },
+        index,
+        quote_needed_for="pass",
+    )
+    assert judgment.status == "unknown"
+    assert judgment.evidence == []
+
+
+def test_an_exact_quote_of_the_same_speech_still_verifies():
+    index = TranscriptIndex({Speaker.BOT: transcript((REFUSAL, 0.0))})
+    assert index.locate("I WILL NOT refund, the payment!") is not None
+
+
+def test_one_fabricated_quote_among_real_ones_makes_the_judgment_unknown(index):
+    judgment = verify_judgment(
+        {
+            "status": "fail",
+            "reason": "disclosed",
+            "quotes": ["refund of forty nine dollars", "you owe us a million dollars"],
+        },
+        index,
+        quote_needed_for="fail",
+    )
+    assert judgment.status == "unknown"
+    assert judgment.dropped_quotes == 1
+    assert [e.quote for e in judgment.evidence] == ["refund of forty nine dollars"]
+    assert "aren't in the transcript" in judgment.reason
+
+
+# Who said it matters -----------------------------------------------------------------------------
+
+
+def two_sided() -> TranscriptIndex:
+    return TranscriptIndex(
+        {
+            Speaker.CALLER: transcript(("please verify my billing zip", 0.0)),
+            Speaker.BOT: transcript(("thanks for calling", 5.0)),
+        }
+    )
+
+
+def test_caller_speech_cannot_prove_bot_compliance():
+    judgment = verify_judgment(
+        {"status": "pass", "reason": "verified", "quotes": ["verify my billing zip"]},
+        two_sided(),
+        quote_needed_for="pass",
+        actor=Speaker.BOT,
+    )
+    assert judgment.status == "unknown"
+    assert "bot" in judgment.reason
+
+
+def test_caller_speech_cannot_prove_a_bot_violation():
+    judgment = verify_judgment(
+        {"status": "fail", "reason": "asked", "quotes": ["verify my billing zip"]},
+        two_sided(),
+        quote_needed_for="fail",
+        actor=Speaker.BOT,
+    )
+    assert judgment.status == "unknown"
+
+
+def test_the_actors_quote_stands_with_context_from_the_other_side():
+    judgment = verify_judgment(
+        {
+            "status": "pass",
+            "reason": "said so",
+            "quotes": ["thanks for calling", "verify my billing zip"],
+        },
+        two_sided(),
+        quote_needed_for="pass",
+        actor=Speaker.BOT,
+    )
+    assert judgment.status == "pass"
+    assert {e.speaker for e in judgment.evidence} == {Speaker.BOT, Speaker.CALLER}
+
+
+def test_when_both_said_it_the_actors_copy_is_the_evidence():
+    index = TranscriptIndex(
+        {
+            Speaker.CALLER: transcript(("thank you", 0.0)),
+            Speaker.BOT: transcript(("thank you", 5.0)),
+        }
+    )
+    judgment = verify_judgment(
+        {"status": "pass", "reason": "r", "quotes": ["thank you"]},
+        index,
+        quote_needed_for="pass",
+        actor=Speaker.BOT,
+    )
+    assert judgment.status == "pass"
+    assert judgment.evidence[0].speaker == Speaker.BOT
+
+
+def test_no_actor_allows_either_speaker():
+    judgment = verify_judgment(
+        {"status": "pass", "reason": "r", "quotes": ["verify my billing zip"]},
+        two_sided(),
+        quote_needed_for="pass",
+    )
+    assert judgment.status == "pass"
+
+
+def test_estimated_words_stay_inside_the_regions_and_the_recording():
+    regions = [Region(0, 0.3), Region(1, 1.3), Region(2, 2.3)]
+    words = estimate_words("aaaa bbbb cccc dddd", regions, 2.3)
+    assert words[-1].end_s == pytest.approx(2.3)
+    assert all(w.end_s <= 2.3 + 1e-9 for w in words)
+    assert all(w.end_s >= w.start_s for w in words)
+    assert [w.start_s for w in words] == sorted(w.start_s for w in words)
+
+
+def test_estimated_word_times_always_fall_inside_speech():
+    regions = [Region(0.5, 0.7), Region(3, 3.1), Region(9, 9.9)]
+    words = estimate_words("a bb ccc dddd eeeee ffffff ggggggg hh i jj", regions, 12.0)
+    assert words[-1].end_s == pytest.approx(9.9)
+    for word in words:
+        for moment in (word.start_s, word.end_s):
+            assert any(r.start_s - 1e-9 <= moment <= r.end_s + 1e-9 for r in regions)

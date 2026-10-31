@@ -13,6 +13,10 @@ from voicelab.core.models import (
 )
 from voicelab.eval.config import VerdictConfig
 
+# The caller_validity evaluator emits these, and they decide whether a run counts as a test at all.
+FACTS_CRITERION_ID = "caller_facts"
+MATERIAL_FACT_BREACH = "material_fact_breach"
+
 _BLOCKING_SEVERITIES = ("major", "critical")
 _MAX_LISTED = 5
 
@@ -39,8 +43,12 @@ def decide_verdict(
         for c in criteria
         if c.kind == "beat" and c.status == "fail" and c.criterion_id in required_beats
     ]
-    if missed:
+    breaches = [f for f in findings if f.category == MATERIAL_FACT_BREACH]
+    if missed or breaches:
         reasons = [f"caller missed a required checkpoint: {c.text}" for c in missed]
+        reasons += [
+            f"caller broke its fact sheet on a material detail: {f.title}" for f in breaches
+        ]
         return VerdictDecision(Verdict.INVALID, reasons)
 
     failures = _failures(criteria, findings)
@@ -75,6 +83,8 @@ def _review_reasons(
 ) -> list[str]:
     reasons = [f"could not decide: {c.text}" for c in criteria if c.status == "unknown"]
     reasons += [f"{run.name} errored: {run.reason}" for run in evaluators if run.status == "error"]
+    if any(c.criterion_id == FACTS_CRITERION_ID and c.status == "fail" for c in criteria):
+        reasons.append("caller slipped from its fact sheet on a non-material detail")
     score = sum(config.advisory_weights.get(f.severity, 0) for f in findings if f.advisory)
     if score >= config.review_score:
         reasons.append(
