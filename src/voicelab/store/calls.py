@@ -388,7 +388,8 @@ class CallIndex:
         """
         with self.db.transaction():
             decided = self.db.rows(
-                "SELECT * FROM call_findings WHERE call_id = ? AND human_verdict IS NOT NULL",
+                "SELECT * FROM call_findings WHERE call_id = ? "
+                "AND (human_verdict IS NOT NULL OR human_note != '')",
                 (artifact.id,),
             )
             carried = carry_decisions(decided, result.findings)

@@ -198,12 +198,14 @@ def apply_decisions(result: EvalResult, decisions: dict[str, dict[str, Any]]) ->
     findings = []
     for finding in result.findings:
         decision = decisions.get(finding.id)
-        if decision and decision["human_verdict"]:
+        # A note can stand alone: a reviewer may write one before deciding, or instead of it.
+        if decision and (decision["human_verdict"] or decision["human_note"]):
+            verdict, at = decision["human_verdict"], decision["human_at"]
             finding = finding.model_copy(
                 update={
-                    "human_verdict": HumanVerdict(decision["human_verdict"]),
+                    "human_verdict": HumanVerdict(verdict) if verdict else None,
                     "human_note": decision["human_note"],
-                    "human_at": datetime.fromisoformat(decision["human_at"]),
+                    "human_at": datetime.fromisoformat(at) if at else None,
                 }
             )
         findings.append(finding)

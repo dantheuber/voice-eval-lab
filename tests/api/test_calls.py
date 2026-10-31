@@ -262,6 +262,19 @@ def test_finding_decision_persists_with_who_and_when(client, rig, finished_call)
     assert stored["human_by"] == "tester"
 
 
+def test_a_note_with_no_decision_is_kept(client, rig, finished_call):
+    with_findings(rig, "Wrong amount")
+    call = finished_call()
+    finding = client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"][0]
+    url = f"/api/calls/{call['id']}/findings/{finding['id']}"
+    saved = client.post(url, json={"humanVerdict": None, "humanNote": "listen again"}).json()
+    assert saved["humanNote"] == "listen again"
+    assert saved["humanVerdict"] is None
+    reread = client.get(f"/api/calls/{call['id']}").json()
+    assert reread["eval"]["findings"][0]["humanNote"] == "listen again"
+    assert reread["summary"]["openFindings"] == 1
+
+
 def test_clearing_a_decision_keeps_the_history(client, rig, finished_call):
     with_findings(rig, "Wrong amount")
     call = finished_call()
