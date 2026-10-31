@@ -91,4 +91,4 @@ A 12-call live pilot then found what text can't. It was stopped after 5 calls, s
 
 ## Not tried
 
-- Qwen3.5-9B. There's no GGUF on this machine, so it needs a 5.7 GB download, and the benchmark doc lists it at 34 t/s against 65 t/s. Speech now waits for a whole round, so generation speed adds directly to first audio, and the 4B bots didn't need it to reach the targets.
+- Qwen3.5-9B. There's no GGUF on this machine, so it needs a 5.7 GB download, and the research doc lists it at 34 t/s against 65 t/s. Speech now waits for a whole round, so generation speed adds directly to first audio, and most remaining failures are decisions a prompt or a rule could address. It may still be worth a measured try for the caller alone, where first audio doesn't count.

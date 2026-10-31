@@ -142,6 +142,16 @@ async def test_a_number_the_bot_never_meant_to_say_goes_to_a_person(store):
     assert "has 2 where the bot meant" in result.reason
 
 
+async def test_the_same_digit_elsewhere_in_the_turn_doesnt_hide_a_slip(store):
+    heard = "your record now has priority 2"
+    judge = judge_for({"supported by a tool result": verdict_json("fail", quotes=[heard])})
+    meant = "Your record now has priority ten. It can take twenty four hours."
+    ctx = context(store, _said_by_bot(meant), judge)
+    ctx.transcripts[Speaker.BOT] = make_transcript((heard, 10.0))
+    out = await run(TranscriptJudgeEvaluator(), ctx)
+    assert by_id(out, "general_no_invented_facts").status == "unknown"
+
+
 async def test_a_number_the_bot_meant_to_say_still_fails(store):
     heard = "your refund is 3 days away"
     judge = judge_for({"supported by a tool result": verdict_json("fail", quotes=[heard])})
