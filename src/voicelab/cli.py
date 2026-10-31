@@ -90,9 +90,11 @@ async def _run_call(arguments: argparse.Namespace, settings: Settings) -> int:
             profile=profile,
             mode=arguments.mode,
         )
-        run_id, _ = await services.worker.submit(plan)
+        run_id, _ = services.worker.create(plan)
         print(f"run {run_id}", flush=True)
+        # Listening starts before the queue wakes, or a quick run could finish unheard.
         with services.hub.subscribe(f"run:{run_id}") as subscription:
+            services.worker.wake()
             while True:
                 message = await subscription.get()
                 if message["type"] == "callStarted":
@@ -168,8 +170,11 @@ def main(argv: list[str] | None = None) -> int:
                 asyncio.run(_seed(settings))
                 return 0
             case "run":
+                # One-shot commands start the servers their call needs, not the whole profile.
+                settings.service_start = "lazy"
                 return asyncio.run(_run_call(arguments, settings))
             case "eval":
+                settings.service_start = "lazy"
                 return asyncio.run(_evaluate(arguments.call_id, settings))
     except ServiceError as exc:
         print(exc.message, file=sys.stderr)

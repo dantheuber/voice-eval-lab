@@ -332,6 +332,7 @@ class EvalService:
         runner: EvalRunner,
         config: Callable[[], EvalConfig],
         default_profile: Callable[[], str | None],
+        prepare: Callable[[str | None], Awaitable[None]],
     ) -> None:
         self.store = store
         self.calls = calls
@@ -340,6 +341,7 @@ class EvalService:
         self.runner = runner
         self.config = config
         self.default_profile = default_profile
+        self.prepare = prepare  # brings up the models a job needs: uploads may be first to ask
         self.on_settled: Callable[[str], None] | None = None  # the run queue listens here
         self._queue: asyncio.Queue[_Queued] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
@@ -397,6 +399,7 @@ class EvalService:
 
         result: EvalResult | None = None
         try:
+            await self.prepare(item.job.profile)
             result = await self.runner(item.job, forward)
             self._finish(result)
         except asyncio.CancelledError:

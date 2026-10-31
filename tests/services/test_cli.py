@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import shutil
+
 import pytest
 
 from voicelab import cli
+from voicelab.services.settings import REPO_ROOT
 
 
 def test_serve_options_parse():
@@ -26,8 +29,13 @@ def test_a_command_is_required():
 
 @pytest.fixture
 def isolated(tmp_path, monkeypatch):
+    """Only the fake profile, because the real ones would start real model servers."""
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    shutil.copy(REPO_ROOT / "config" / "profiles" / "fake.yaml", profiles)
     monkeypatch.setenv("VOICELAB_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("VOICELAB_CERTS_DIR", str(tmp_path / "certs"))
+    monkeypatch.setenv("VOICELAB_PROFILES_DIR", str(profiles))
     return tmp_path
 
 
@@ -54,3 +62,22 @@ def test_run_and_eval_on_the_fake_profile(isolated, capsys):
     assert f"{call_id}: done" in out
     assert cli.main(["eval", call_id]) == 0
     assert "Verdict:" in capsys.readouterr().out
+
+
+def test_one_shot_commands_leave_the_active_profiles_servers_alone(isolated, capsys):
+    """A real profile being active must not mean `run --profile fake` loads every model."""
+    busy = isolated / "profiles" / "busy.yaml"
+    marker = isolated / "server-started"
+    busy.write_text(
+        "id: local-default\nlabel: Busy\n"
+        "roles: {}\n"
+        "services:\n"
+        "  - name: heavy\n"
+        "    port: 18996\n"
+        f"    command: [touch, {marker}]\n"
+    )
+    code = cli.main(
+        ["run", "scn_dns_mx_fix", "per_sysadmin", "--profile", "fake", "--mode", "turn_based"]
+    )
+    assert code == 0, capsys.readouterr().out
+    assert not marker.exists()

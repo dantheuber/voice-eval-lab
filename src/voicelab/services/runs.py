@@ -187,8 +187,11 @@ class RunWorker:
         using, and the wake-up has to happen on the loop because asyncio events aren't thread-safe.
         """
         created = await asyncio.to_thread(self.create, plan)
-        self._wake.set()
+        self.wake()
         return created
+
+    def wake(self) -> None:
+        self._wake.set()
 
     def pause(self, run_id: str) -> None:
         run = self._run(run_id)

@@ -172,6 +172,11 @@ def build_services(
     def thresholds() -> EvalConfig:
         return eval_config({**default_thresholds(), **(catalog.setting(THRESHOLDS_KEY) or {})})
 
+    async def prepare_eval(profile_id: str | None) -> None:
+        profile = profiles.items.get(profile_id or "")
+        if profile is not None:  # no profile still gets the checks that need no model
+            await profiles.wait_for_servers(profile, settings.model_wait_s)
+
     evals = EvalService(
         store=store,
         calls=calls,
@@ -180,6 +185,7 @@ def build_services(
         runner=eval_runner or SubprocessEvalRunner(settings, store),
         config=thresholds,
         default_profile=lambda: profiles.active_id,
+        prepare=prepare_eval,
     )
     worker = RunWorker(
         store=store,

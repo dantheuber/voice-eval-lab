@@ -10,6 +10,7 @@ from fakes import RATE, bursts
 
 from voicelab.core.audio import AudioClip
 from voicelab.core.models import Verdict
+from voicelab.core.profiles import LocalService
 
 
 def stereo_wav() -> bytes:
@@ -228,6 +229,18 @@ def test_evaluate_then_review(client, rig, waiter):
     waiter(lambda: client.get(f"/api/calls/{call_id}").json()["summary"]["status"] == "done")
     assert rig.evals.jobs[0].call_id == call_id
     assert client.get(f"/api/calls/{call_id}").json()["eval"] is not None
+
+
+def test_evaluation_starts_the_models_it_needs_or_says_why_not(client, rig, waiter):
+    profile = rig.services.profiles.require("local-default")
+    profile.services.append(LocalService(name="never", command=["sleep", "30"], port=18997))
+    rig.settings.model_wait_s = 0.05
+    call_id = upload(client).json()["callId"]
+    client.post(f"/api/uploads/{call_id}/evaluate")
+    waiter(lambda: client.get(f"/api/calls/{call_id}").json()["summary"]["status"] == "failed")
+    assert "not ready" in rig.services.calls.get(call_id)["error"]
+    assert "never" in rig.services.supervisor.statuses()
+    assert rig.evals.jobs == []
 
 
 def test_evaluate_twice_conflicts_while_running(client, rig, waiter):

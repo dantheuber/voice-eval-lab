@@ -278,6 +278,10 @@ async def test_subprocess_failure_is_reported_with_where_to_look(store, tmp_path
     assert (tmp_path / "logs" / "eval.log").exists()
 
 
+async def _nothing_to_prepare(_: str | None) -> None:
+    return None
+
+
 def service_rig(tmp_path: Path, runner):
     database = Database(tmp_path / "x.sqlite3")
     store = ArtifactStore(tmp_path)
@@ -292,6 +296,7 @@ def service_rig(tmp_path: Path, runner):
         runner=runner(store),
         config=EvalConfig,
         default_profile=lambda: None,
+        prepare=_nothing_to_prepare,
     )
     return service, store, calls, hub, gate
 

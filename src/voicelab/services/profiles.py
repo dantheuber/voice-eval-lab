@@ -187,13 +187,16 @@ class ProfileManager:
 
     async def ready(self, profile: Profile, timeout_s: float) -> ProviderStack:
         """Start the profile's servers if needed and wait for them, for queued work."""
+        await self.wait_for_servers(profile, timeout_s)
+        return self.stack(profile)
+
+    async def wait_for_servers(self, profile: Profile, timeout_s: float) -> None:
         names = [service.name for service in profile.services]
         self.supervisor.add(profile.services)
         if not await self.supervisor.wait_ready(names, timeout_s):
             raise ModelNotReady(
                 "profile", profile.id, reason=f"model servers not ready after {timeout_s:.0f} s"
             )
-        return self.stack(profile)
 
     # Health --------------------------------------------------------------------------------------
 
