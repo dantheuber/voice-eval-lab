@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from voicelab.providers.adapters.http_client import PerLoopClient
 from voicelab.providers.base import (
     ChatMessage,
     LLMDelta,
@@ -199,22 +200,11 @@ class OpenAICompatLLM:
         self.send_temperature = send_temperature
         self.extra_body = extra_body or {}
         key = api_key or (os.environ.get(api_key_env) if api_key_env else None)
-        self._headers = {"Authorization": f"Bearer {key}"} if key else {}
-        self._http: httpx.AsyncClient | None = None
-        self._http_loop: asyncio.AbstractEventLoop | None = None
-
-    def _client(self) -> httpx.AsyncClient:
-        # A client's connections belong to one event loop, and tests run one loop per test.
-        loop = asyncio.get_running_loop()
-        if self._http is None or self._http_loop is not loop:
-            self._http = httpx.AsyncClient(timeout=self.timeout, headers=self._headers)
-            self._http_loop = loop
-        return self._http
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        self._http = PerLoopClient(timeout=self.timeout, headers=headers)
 
     async def aclose(self) -> None:
-        if self._http is not None:
-            await self._http.aclose()
-            self._http = None
+        await self._http.aclose()
 
     def _body(
         self,
@@ -246,7 +236,7 @@ class OpenAICompatLLM:
 
     async def _send(self, body: dict[str, Any]) -> httpx.Response:
         """Open a response, retrying while nothing has been received yet."""
-        client = self._client()
+        client = self._http.get()
         url = f"{self.base_url}/chat/completions"
         attempt = 0
         while True:

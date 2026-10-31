@@ -41,7 +41,8 @@ from voicelab.core.models import (
 )
 from voicelab.core.profiles import build_stack
 from voicelab.engine.service import run_bot_call
-from voicelab.engine.turn_based import TurnConfig, run_turn_based_call, words_played
+from voicelab.engine.speech_ledger import words_played
+from voicelab.engine.turn_based import TurnConfig, run_turn_based_call
 from voicelab.eval.context import EvalDeps
 from voicelab.eval.pipeline import run_evaluation
 from voicelab.providers.adapters.fake_speech import decode_speech

@@ -786,6 +786,15 @@ class NovaSonicSession:
             }
         )
 
+    async def commit_turn(self) -> None:
+        """Nova ends turns with its own VAD."""
+
+    def record_user_text(self, text: str) -> None:
+        """Nova transcribes the caller itself."""
+
+    async def continue_after_tools(self) -> None:
+        """Nova resumes on the tool result."""
+
     async def send_tool_result(self, call_id: str, result: str) -> None:
         content = str(uuid.uuid4())
         await self._send(

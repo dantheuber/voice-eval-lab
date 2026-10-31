@@ -159,7 +159,19 @@ class RealtimeEvent(BaseModel):
 class RealtimeSession(Protocol):
     async def send_audio(self, pcm16: bytes) -> None: ...
 
+    async def commit_turn(self) -> None:
+        """The caller finished talking. A model with its own VAD ignores this."""
+        ...
+
+    def record_user_text(self, text: str) -> None:
+        """Hand over what separate STT heard. A model with its own transcripts ignores this."""
+        ...
+
     async def send_tool_result(self, call_id: str, result: str) -> None: ...
+
+    async def continue_after_tools(self) -> None:
+        """Ask for the reply after tool results. A model that resumes by itself ignores this."""
+        ...
 
     async def interrupt(self, *, response_id: str | None, played_ms: int) -> None:
         """Stop a response after `played_ms` of its audio actually reached the listener.

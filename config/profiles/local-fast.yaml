@@ -1,0 +1,175 @@
+# Local stack, chosen from docs/research/benchmarks-2026-10.md. Everything runs on this machine.
+# Ports: 18101 Parakeet, 18102 support LLM, 18103 LFM3-Audio, 18104 Whisper, 18105 judge,
+# 18106 Pocket TTS, 18108 caller LLM. Each role's server is under `services`.
+#
+# Licenses to keep in view: every LFM3-* model is under the LFM Open License v1.0, whose commercial
+# grant ends at USD 10 million revenue. Pocket presets are limited to CC0 and CC-BY voices, which
+# the adapter enforces.
+id: local-fast
+label: "Local: LFM3-1.7B cascade"
+description: "Parakeet, LFM3-1.7B, and LFM3-Audio TTS. Faster replies, weaker tool calls: 9 of 12 against 12 of 12."
+live_capable: true
+roles:
+  stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18101", name: parakeet-tdt-0.6b-v3, trust_confidence: false}
+  # Whisper, not Parakeet: Parakeet reports confidence 1.0 on every word, and pronunciation checks
+  # need real word probabilities. It is also a different family from live STT, as the brief asks.
+  stt_eval: {type: whisper_cpp, base_url: "http://127.0.0.1:18104", name: whisper-large-v3}
+  tts_bot: {type: llama_tts, base_url: "http://127.0.0.1:18103", name: lfm3-audio-tts, voice_id: female}
+  tts_caller: {type: pocket_tts, base_url: "http://127.0.0.1:18106", name: pocket-tts-7m}
+  llm_support: {type: openai_compat, base_url: "http://127.0.0.1:18102/v1", name: lfm3-1.7b, timeout_s: 120}
+  llm_caller: {type: openai_compat, base_url: "http://127.0.0.1:18108/v1", name: lfm3-1.7b-caller, timeout_s: 120}
+  llm_judge: {type: openai_compat, base_url: "http://127.0.0.1:18105/v1", name: qwen3.8-27b, timeout_s: 600}
+  audio_analyst: {type: llama_audio_analyst, base_url: "http://127.0.0.1:18103/v1", name: lfm3-audio}
+services:
+  - name: parakeet
+    port: 18101
+    health_path: /healthz
+    startup_timeout_s: 120
+    env: {LD_LIBRARY_PATH: .runtime/nemo/nemo-speech-0.3.0-linux-x86_64-vulkan/lib}
+    command:
+      - ".runtime/nemo/nemo-speech-0.3.0-linux-x86_64-vulkan/bin/nemo-speech"
+      - "serve"
+      - "--no-ui"
+      - "--port"
+      - "18101"
+      - "--asr-model"
+      - ".runtime/models/nvidia__parakeet/parakeet-tdt-0.6b-v3.q8_0.gguf"
+      - "--device"
+      - "vulkan:0"
+  - name: llm-support
+    port: 18102
+    health_path: /health
+    startup_timeout_s: 180
+    env: {LD_LIBRARY_PATH: .runtime/llama-vulkan/llama-b12017}
+    command:
+      - ".runtime/llama-vulkan/llama-b12017/llama-server"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "18102"
+      - "--no-webui"
+      - "-m"
+      - ".runtime/models/LiquidAI__LFM3-1.7B-GGUF/LFM3-1.7B-Q4_K_M.gguf"
+      - "--jinja"
+      - "--reasoning"
+      - "off"
+      - "-c"
+      - "32768"
+      - "-np"
+      - "1"
+      - "-ngl"
+      - "999"
+      - "--temp"
+      - "0.1"
+      - "--top-k"
+      - "50"
+      - "--repeat-penalty"
+      - "1.1"
+  - name: llm-caller
+    port: 18108
+    health_path: /health
+    startup_timeout_s: 180
+    env: {LD_LIBRARY_PATH: .runtime/llama-vulkan/llama-b12017}
+    command:
+      - ".runtime/llama-vulkan/llama-b12017/llama-server"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "18108"
+      - "--no-webui"
+      - "-m"
+      - ".runtime/models/LiquidAI__LFM3-1.7B-GGUF/LFM3-1.7B-Q4_K_M.gguf"
+      - "--jinja"
+      - "--reasoning"
+      - "off"
+      - "-c"
+      - "32768"
+      - "-np"
+      - "1"
+      - "-ngl"
+      - "999"
+      - "--temp"
+      - "0.1"
+      - "--top-k"
+      - "50"
+      - "--repeat-penalty"
+      - "1.1"
+  - name: lfm3-audio
+    port: 18103
+    health_path: /health
+    startup_timeout_s: 180
+    env: {LD_LIBRARY_PATH: .runtime/llama-vulkan/llama-b12017}
+    command:
+      - ".runtime/llama-vulkan/llama-b12017/llama-server"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "18103"
+      - "--no-webui"
+      - "-m"
+      - ".runtime/models/LiquidAI__LFM3-Audio-2B-GGUF/LFM3-Audio-2B-Q4_K_M.gguf"
+      - "-mm"
+      - ".runtime/models/LiquidAI__LFM3-Audio-2B-GGUF/mmproj-LFM3-Audio-2B-Q4_K_M.gguf"
+      - "--temp"
+      - "0"
+      - "-c"
+      - "16384"
+      - "-np"
+      - "2"
+      - "-ngl"
+      - "999"
+  - name: whisper
+    port: 18104
+    health_path: /health
+    startup_timeout_s: 120
+    env: {LD_LIBRARY_PATH: .runtime/toolchain/lib}
+    command:
+      - ".runtime/whisper.cpp/build/bin/whisper-server"
+      - "-m"
+      - ".runtime/models/whisper/ggml-large-v3-q5_0.bin"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "18104"
+      - "-l"
+      - "en"
+      - "-t"
+      - "8"
+  - name: pocket-tts
+    port: 18106
+    health_path: /health
+    startup_timeout_s: 120
+    command:
+      - ".runtime/venvs/bench/bin/pocket-tts"
+      - "serve"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "18106"
+      - "--language"
+      - "english_7m_2026-10"
+  - name: judge
+    port: 18105
+    health_path: /health
+    startup_timeout_s: 300
+    env: {LD_LIBRARY_PATH: .runtime/llama-vulkan/llama-b12017}
+    command:
+      - ".runtime/llama-vulkan/llama-b12017/llama-server"
+      - "--host"
+      - "127.0.0.1"
+      - "--port"
+      - "18105"
+      - "--no-webui"
+      - "-m"
+      - ".runtime/models/unsloth__Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf"
+      - "--jinja"
+      - "--reasoning"
+      - "auto"
+      - "-c"
+      - "32768"
+      - "-np"
+      - "1"
+      - "-ngl"
+      - "999"
+      - "--temp"
+      - "0.1"

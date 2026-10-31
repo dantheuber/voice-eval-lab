@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -46,6 +46,7 @@ class Profile(BaseModel):
     description: str = ""
     live_capable: bool = False  # benchmarks showed bot-to-bot can run in real time
     untested: bool = False  # adapters here have never run against the real service
+    support_engine: Literal["cascade", "realtime"] = "cascade"  # what plays the bot in live calls
     roles: dict[str, dict[str, Any]]
     services: list[LocalService] = Field(default_factory=list)
     benchmark: dict[str, Any] = Field(default_factory=dict)

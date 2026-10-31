@@ -43,6 +43,7 @@ from voicelab.engine import progress
 from voicelab.engine.contract import BotCallRequest, Emit
 from voicelab.engine.heard import prepare_heard_text
 from voicelab.engine.recorder import CallRecorder
+from voicelab.engine.speech_ledger import words_played
 from voicelab.providers.base import LLM, TTS, ChatMessage, LLMDelta, LLMResponse, ToolDef
 from voicelab.store.artifacts import ArtifactStore
 from voicelab.telephony import PhoneLine
@@ -180,28 +181,6 @@ class _BotTurn:
 
 async def _one_segment(segment: SpeechText) -> AsyncIterator[SpeechText]:
     yield segment
-
-
-def words_played(segments: list[tuple[str, float]], played_s: float) -> str:
-    """The words that finished before a cut, from each segment's text and length.
-
-    TTS gives no word timing, so a word's share of a segment follows its characters. A word still
-    playing at the cut is left out, since the listener didn't get all of it.
-    """
-    kept: list[str] = []
-    offset = 0.0
-    for text, duration_s in segments:
-        words = text.split()
-        weights = [len(word) + 1 for word in words]
-        per_weight = duration_s / sum(weights) if weights else 0.0
-        position = offset
-        for word, weight in zip(words, weights, strict=True):
-            position += weight * per_weight
-            if position > played_s:
-                return " ".join(kept)
-            kept.append(word)
-        offset += duration_s
-    return " ".join(kept)
 
 
 async def run_turn_based_call(
