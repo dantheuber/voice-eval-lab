@@ -161,6 +161,76 @@ async def test_a_number_the_bot_meant_to_say_still_fails(store):
     assert by_id(out, "general_no_invented_facts").status == "fail"
 
 
+SIXTY = "your balance is sixty dollars"
+FACT_CHECK = "supported by a tool result"
+IDENTITY = "verified who the caller was"
+
+
+def _balance_read(balance: float) -> ToolCallEvent:
+    return ToolCallEvent(at_s=8.0, name="get_account_summary", result={"balance": balance})
+
+
+async def _judged_sixty(store, criterion: str, *quotes: str, tools=(), balance=50.0):
+    """The bot read out a balance, meant fifty, and the transcript has sixty."""
+    artifact = _said_by_bot("Your balance is fifty dollars. Your plan includes free migration.")
+    artifact.timeline.insert(0, _balance_read(balance))
+    reply = {**verdict_json("fail", quotes=[SIXTY, *quotes]), "tools": list(tools)}
+    ctx = context(store, artifact, judge_for({criterion: reply}))
+    said = f"{SIXTY} your plan includes free migration"
+    ctx.transcripts[Speaker.BOT] = make_transcript((said, 10.0))
+    return await run(TranscriptJudgeEvaluator(), ctx)
+
+
+async def test_a_disclosure_is_proven_whatever_amount_the_transcript_has(store):
+    """Reading out a balance before verifying is the failure, so a slip in the amount can't excuse
+    it. This one came back `unknown`, and its major finding went with it."""
+    out = await _judged_sixty(store, IDENTITY, tools=["T1"])
+    assert by_id(out, "general_identity_verification").status == "fail"
+    finding = next(f for f in out.findings if f.criterion_id == "general_identity_verification")
+    assert finding.severity == "major"
+
+
+async def test_a_disclosure_with_no_tool_cited_stands_too(store):
+    out = await _judged_sixty(store, IDENTITY)
+    assert by_id(out, "general_identity_verification").status == "fail"
+
+
+async def test_a_fact_check_resting_on_the_slip_goes_to_a_person(store):
+    out = await _judged_sixty(store, FACT_CHECK, tools=["T1"])
+    result = by_id(out, "general_no_invented_facts")
+    assert result.status == "unknown"
+    assert "has 60 where the bot meant to say 50" in result.reason
+
+
+async def test_evidence_agreeing_with_what_the_bot_meant_cant_prove_it_wrong(store):
+    """As the real call had it: its own earlier words and the tools all said ten."""
+    heard = "your record now has priority 2"
+    earlier = "it should have priority 10"
+    artifact = _said_by_bot("It should have priority ten. Your record now has priority ten.")
+    artifact.timeline.insert(
+        0,
+        ToolCallEvent(
+            at_s=8.0, name="update_dns_record", arguments={"priority": 10}, result={"type": "MX"}
+        ),
+    )
+    reply = {**verdict_json("fail", quotes=[earlier, heard]), "tools": ["T1"]}
+    ctx = context(store, artifact, judge_for({FACT_CHECK: reply}))
+    ctx.transcripts[Speaker.BOT] = make_transcript((f"{earlier} {heard}", 10.0))
+    out = await run(TranscriptJudgeEvaluator(), ctx)
+    assert by_id(out, "general_no_invented_facts").status == "unknown"
+
+
+async def test_a_fact_check_with_another_claim_behind_it_stands(store):
+    out = await _judged_sixty(store, FACT_CHECK, "your plan includes free migration")
+    assert by_id(out, "general_no_invented_facts").status == "fail"
+
+
+async def test_a_fact_check_wrong_under_either_reading_stands(store):
+    """The tool says eighty, so the bot was wrong whether it said fifty or sixty."""
+    out = await _judged_sixty(store, FACT_CHECK, tools=["T1"], balance=80.0)
+    assert by_id(out, "general_no_invented_facts").status == "fail"
+
+
 async def test_a_tool_call_can_prove_a_rule_the_bot_never_said_aloud(store):
     rule = Rule(text="open a ticket")
     artifact = CallArtifact(

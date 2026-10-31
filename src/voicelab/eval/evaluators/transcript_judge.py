@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import pairwise
 from typing import Literal
 
 from voicelab.core.models import (
@@ -43,6 +42,7 @@ class _Item:
     decided_by: str | None = None
     fails_if_changed_unverified: bool = False
     passes_if_caller_ended: bool = False
+    checks_stated_facts: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +83,7 @@ def _items(ctx: EvalContext) -> tuple[list[_Item], list[str]]:
                 criterion.quote_needed_for,
                 fails_if_changed_unverified=criterion.fails_if_changed_unverified,
                 passes_if_caller_ended=criterion.passes_if_caller_ended,
+                checks_stated_facts=criterion.checks_stated_facts,
             )
         )
     return items, omitted
@@ -199,9 +200,10 @@ class TranscriptJudgeEvaluator:
             )
             dropped_quotes += judgment.dropped_quotes
             status, reason = judgment.status, judgment.reason
-            slip = _misheard_number(judgment.evidence, ctx) if status == "fail" else None
-            if slip is not None and item.kind == "general":
-                status, reason = "unknown", f"{slip} {reason}"
+            if status == "fail" and item.checks_stated_facts:
+                slip = _slip_behind(judgment.evidence, ctx)
+                if slip is not None:
+                    status, reason = "unknown", f"{slip} {reason}"
             result = _Settled(item, status, reason, judgment.evidence)
             _record(out, self.name, result)
         out.metrics["dropped_quotes"] = dropped_quotes
@@ -210,31 +212,70 @@ class TranscriptJudgeEvaluator:
             raise RuntimeError(f"judge failed on all {len(items)} criteria")
 
 
-def _misheard_number(evidence: list[Evidence], ctx: EvalContext) -> str | None:
-    """A number the transcript gives the bot that it never meant to say, which may be an ASR slip.
+def _slip_behind(evidence: list[Evidence], ctx: EvalContext) -> str | None:
+    """Why a failed fact check may be an ASR slip, if nothing else holds the failure up.
 
     The judge reads one ASR's words, and a real call failed for "priority 2" when the bot said
     "priority ten". What the bot meant doesn't clear it, since the audio could be wrong too, so
     the call goes to a person and pronunciation reports the word.
+
+    That's only so while the failure rests on the number. Evidence that agrees with what the bot
+    meant can't show it wrong, and a judge cites its own earlier words and the tools that way. Any
+    other citation is a second claim, or a tool that's wrong for both numbers, and that stands.
     """
-    utterances = [
-        event
-        for event in ctx.artifact.timeline
-        if isinstance(event, Utterance) and event.speaker == Speaker.BOT and event.intended_text
-    ]
-    for item in evidence:
-        if item.speaker != Speaker.BOT or item.start_s is None:
+    slips = [_misheard_number(item, ctx) for item in evidence]
+    disputed = [slip for slip in slips if slip is not None]
+    if not disputed:
+        return None
+    meant = {number for _, number in disputed}
+    for item, slip in zip(evidence, slips, strict=True):
+        if slip is not None or item.speaker == Speaker.CALLER:
             continue
-        said = next((u for u in utterances if u.start_s <= item.start_s <= u.end_s), None)
-        if said is None:
-            continue
-        meant, heard = ctx.index.norms(said.intended_text), ctx.index.norms(item.quote)
-        # By the word before it, because "two" elsewhere in the turn says nothing about this one.
-        for before, norm in pairwise(heard):
-            meant_here = [after for word, after in pairwise(meant) if word == before]
-            if norm.isdigit() and meant_here and norm not in meant_here:
-                return f"The transcript has {norm} where the bot meant to say {meant_here[0]}."
+        cited = [number for _, number in _numbers(ctx.index.norms(item.quote))]
+        if not any(value in number for value in meant for number in cited):
+            return None
+    heard, number = disputed[0]
+    return f"The transcript has {heard} where the bot meant to say {number}."
+
+
+def _misheard_number(quote: Evidence, ctx: EvalContext) -> tuple[str, str] | None:
+    """A number the transcript gives the bot here, and the one it meant to say, if they differ."""
+    if quote.speaker != Speaker.BOT or quote.start_s is None:
+        return None
+    said = next(
+        (
+            event
+            for event in ctx.artifact.timeline
+            if isinstance(event, Utterance)
+            and event.speaker == Speaker.BOT
+            and event.intended_text
+            and event.start_s <= quote.start_s <= event.end_s
+        ),
+        None,
+    )
+    if said is None:
+        return None
+    meant = _numbers(ctx.index.norms(said.intended_text))
+    # By the word before it, because "two" elsewhere in the turn says nothing about this one.
+    for before, heard in _numbers(ctx.index.norms(quote.quote)):
+        meant_here = [number for word, number in meant if word == before]
+        if meant_here and heard not in meant_here:
+            return heard, meant_here[0]
     return None
+
+
+def _numbers(tokens: list[str]) -> list[tuple[str, str]]:
+    """Each whole number and the word before it. "Fifty" comes down to the tokens "5" and "0"."""
+    found: list[tuple[str, str]] = []
+    before, number = "", ""
+    for token in [*tokens, ""]:
+        if token.isdigit():
+            number += token
+            continue
+        if number:
+            found.append((before, number))
+        before, number = token, ""
+    return found
 
 
 def _record(out: EvaluatorOutput, evaluator: str, result: _Settled) -> None:

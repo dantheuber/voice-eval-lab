@@ -131,6 +131,9 @@ class GeneralCriterion(BaseModel):
     needs_tool_log: bool = False
     passes_if_caller_ended: bool = False  # the record already answers this one, no judge needed
     fails_if_changed_unverified: bool = False  # as does a change before verifying, for this one
+    # Its answer turns on the words of a stated fact, so an ASR slip in a number can undo a failure.
+    # Most can't: a balance read out before verifying is a disclosure at any amount.
+    checks_stated_facts: bool = False
 
 
 def _general_criteria() -> list[GeneralCriterion]:
@@ -152,6 +155,7 @@ def _general_criteria() -> list[GeneralCriterion]:
             ),
             severity="major",
             needs_tool_log=True,
+            checks_stated_facts=True,
         ),
         GeneralCriterion(
             id="general_on_topic",
