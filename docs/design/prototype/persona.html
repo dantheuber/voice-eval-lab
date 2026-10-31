@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persona builder · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="persona">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Personas", "Dev Patel"], keys: [["Save", "Ctrl S"], ["Preview voice", "Ctrl P"]] });
+  const p = VL.personaById("p-patel");
+  const page = document.getElementById("page");
+  const scale = (name, val, lo, hi) => `<div class="field"><label>${name}</label><div class="scale" role="radiogroup" aria-label="${name}">${[1, 2, 3, 4, 5].map(n => `<button role="radio" aria-pressed="${n === val}" aria-checked="${n === val}">${n}</button>`).join("")}</div><div class="scale-cap"><span>${lo}</span><span>${hi}</span></div></div>`;
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Dev Patel</h1><div class="sub">Used in 41 calls. Pass rate with this persona 61%, lowest of the four, mostly from interruptions.</div></div>
+      <div class="actions"><button class="btn">Duplicate</button><button class="btn primary">Save <kbd>Ctrl</kbd><kbd>S</kbd></button></div></div>
+    <div class="builder">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel"><div class="ph"><h2>Who they are</h2></div><div class="pb" style="display:flex;flex-direction:column;gap:12px">
+          <div class="form-row">
+            <div class="field" style="grid-column:span 2"><label>Name</label><input class="in" value="${p.name}"></div>
+            <div class="field"><label>Age</label><input class="in" value="${p.age}" style="width:80px"></div>
+            <div class="field"><label>Temperament</label><select class="in"><option>patient</option><option>neutral</option><option selected>impatient</option><option>frustrated</option><option>confused</option></select></div>
+          </div>
+          <div class="field"><label>Speaking style</label><textarea class="in">${p.style}. Uses "mate" when annoyed. Gives numbers quickly without pausing.</textarea><span class="help">Goes into the caller LLM's instructions verbatim. Describe behaviour, not backstory.</span></div>
+          <div class="form-row" style="grid-template-columns:repeat(4,1fr)">
+            ${scale("Patience", p.patience, "hangs up fast", "waits it out")}
+            ${scale("Verbosity", p.verbosity, "one word", "rambles")}
+            ${scale("Interruption tendency", p.interrupt, "never", "constantly")}
+            ${scale("Speaking rate", 4, "slow", "fast")}
+          </div>
+          <div class="note">${VL.icons.info}<span>Interruption 5 means the caller bot starts talking as soon as it has a reply, even mid-sentence from the bot. In live mode this exercises barge-in. In turn-based mode it is ignored and the call is labelled so.</span></div>
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Voice</h2></div><div class="pb" style="display:flex;flex-direction:column;gap:12px">
+          <div class="form-row">
+            <div class="field"><label>TTS voice</label><select class="in"><option>Qwen3-TTS / Ethan (male, London)</option><option>Qwen3-TTS / Ryan (male, Yorkshire)</option><option>Qwen3-TTS / Serena (older female, RP)</option><option>Qwen3-TTS / Vivian (female, Swedish accent)</option><option>pocket-tts / default</option></select></div>
+            <div class="field"><label>Speed</label><input class="in" value="1.15" style="width:80px"><span class="help">0.8 to 1.3</span></div>
+          </div>
+          <div class="field"><label>Preview line</label><div style="display:flex;gap:8px"><input class="in" value="Yeah hi, I've been charged twice this month, invoice FH-4419, I need that sorted today."><button class="btn" id="prev">${VL.icons.play} Preview <kbd>Ctrl</kbd><kbd>P</kbd></button></div><span class="help" id="prevHelp">Renders through the active TTS server with the line condition below applied. About 1 s.</span></div>
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Line conditions</h2><span class="faint">applied to this persona's audio before it reaches the bot</span></div><div class="pb" style="display:flex;flex-direction:column;gap:12px">
+          <div class="form-row">
+            <div class="field"><label>Codec</label><select class="in"><option>8 kHz mu-law (phone)</option><option>16 kHz clean</option><option>Opus 24 kbps</option></select></div>
+            <div class="field"><label>Background noise</label><select class="in"><option>none</option><option>landline hum</option><option selected>road noise (car)</option><option>TV in background</option><option>café</option></select></div>
+            <div class="field"><label>Noise level</label><input class="in" value="-22 dBFS" style="width:100px"></div>
+            <div class="field"><label>Packet loss</label><input class="in" value="2%" style="width:80px"></div>
+          </div>
+        </div></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;position:sticky;top:16px">
+        <div class="panel"><div class="ph"><h2>How this reads to the caller model</h2></div><div class="pb"><div class="persona-prev">You are <b>Dev Patel</b>, 34. You are <b>impatient</b>: you hang up if stalled for more than two turns. You talk fast and tersely, use "mate" when annoyed, and give numbers quickly without pausing. You interrupt whenever you have something to say, even if the agent is mid-sentence. You stick to the fact sheet and never invent account details.</div></div></div>
+        <div class="panel flush"><div class="ph"><h2>Recent calls as Dev</h2><span class="grow"></span><a class="faint" href="calls.html">all</a></div><div class="pb"><table class="t"><tbody>
+          ${VL.calls.filter(c => c.persona === "p-patel").map(c => `<tr tabindex="0" onclick="location.href='review.html?call=${c.id}'"><td class="id">${c.id}</td><td>${VL.verdict(c.verdict)}</td><td class="mono nowrap">${c.scenario}</td></tr>`).join("")}
+        </tbody></table></div></div>
+      </div>
+    </div>`;
+  document.getElementById("prev").addEventListener("click", () => { const h = document.getElementById("prevHelp"); h.innerHTML = '<span class="health loading">rendering</span>'; setTimeout(() => { h.innerHTML = '<span class="health ok">played 3.4 s, road noise at -22 dBFS, mu-law</span>'; }, 1000); });
+};
+</script>
+</body>
+</html>

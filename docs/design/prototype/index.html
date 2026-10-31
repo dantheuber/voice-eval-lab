@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="overview">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Overview"], actions: `<a class="btn sm primary" href="review.html">Start reviewing <kbd>g</kbd><kbd>r</kbd></a>` });
+  const loadingJudge = VL.health.find(h => h.state === "loading");
+  const totals = VL.runs.slice(0, 5).reduce((a, r) => ({ n: a.n + r.calls, pass: a.pass + r.pass, fail: a.fail + r.fail, review: a.review + r.review, invalid: a.invalid + r.invalid }), { n: 0, pass: 0, fail: 0, review: 0, invalid: 0 });
+  const valid = totals.n - totals.invalid;
+  const page = document.getElementById("page");
+  page.innerHTML = `
+    ${loadingJudge ? `<div class="note warn" style="margin-bottom:12px">${VL.icons.warn}<span><b>Judge LLM is loading</b> (Qwen3.6-35B-A3B, 22 s so far, usually under 40 s). Calls can run, but evals queue until it is ready. <a href="settings.html">Model status</a></span></div>` : ""}
+    <div class="ov-grid">
+      <div class="panel stat"><span class="k">Pass rate, last 24 h, local-default</span><span class="n">${Math.round(100 * totals.pass / valid)}%<small>${totals.pass} of ${valid} valid calls</small></span><span class="d">95% interval ${VL.ci(totals.pass, valid)}. ${totals.invalid} invalid runs excluded.</span>
+        <div style="margin-top:8px">${VL.rateBar(totals)}</div>
+        <div class="rate-leg" style="margin-top:6px"><span style="--c:var(--pass)">pass ${totals.pass}</span><span style="--c:var(--fail)">fail ${totals.fail}</span><span style="--c:var(--review)">review ${totals.review}</span><span style="--c:var(--invalid)">invalid ${totals.invalid}</span></div></div>
+      <div class="panel stat"><span class="k">Needs a human</span><span class="n">${VL.reviewQueue.length}<small>calls, ${VL.reviewQueue.reduce((a, q) => a + q.open, 0)} open findings</small></span><span class="d">Oldest is from yesterday 11:50. Reviewing at your usual pace, about 25 minutes.</span>
+        <div style="margin-top:auto;padding-top:8px"><a class="btn sm" href="review.html">Review next <kbd>]</kbd></a></div></div>
+      <div class="panel stat"><span class="k">Ran recently</span><span class="n">6<small>runs, 112 calls</small></span><span class="d">1 run in progress: none. Last finished 09:41.</span>
+        <div class="sparkbar" style="margin-top:auto" role="img" aria-label="Calls per hour over the last 24 hours">${Array.from({ length: 24 }, (_, i) => { const v = [0,0,0,0,0,0,0,1,4,9,12,6,2,0,0,2,8,10,5,3,1,0,0,0][i]; return `<i style="height:${Math.max(6, v / 12 * 100)}%" title="${v} calls"></i>`; }).join("")}</div>
+        <div class="faint" style="font-size:10px;display:flex;justify-content:space-between"><span>24 h ago</span><span>now</span></div></div>
+      <div class="panel flush queue">
+        <div class="ph"><h2>Needs a human</h2><span class="tag mono">${VL.reviewQueue.length}</span><span class="grow"></span><a href="calls.html?verdict=needs_review" class="faint">all</a></div>
+        <div class="pb">${VL.reviewQueue.map(q => `<a class="queue-item" href="review.html?call=${q.id}" style="color:inherit;text-decoration:none"><span class="a">${q.scenario} <span class="muted">${q.persona}</span></span><span class="c"><span class="tag mono">${q.open} open</span></span><span class="b">${q.id} · ${q.why}</span></a>`).join("")}</div>
+      </div>
+      <div class="panel flush runs">
+        <div class="ph"><h2>Recent runs</h2><span class="grow"></span><a href="run.html" class="btn sm">New run</a></div>
+        <div class="pb" style="overflow:auto"><table class="t">
+          <thead><tr><th>Run</th><th>When</th><th>Profile</th><th>Mode</th><th>What</th><th class="num">Calls</th><th style="width:170px">Outcome</th><th class="num">Pass</th></tr></thead>
+          <tbody>${VL.runs.map(r => { const v = r.calls - r.invalid; return `<tr tabindex="0" onclick="location.href='calls.html?run=${r.id}'"><td class="id">${r.id}</td><td class="ts">${r.when}</td><td class="mono">${r.profile}</td><td>${VL.mode(r.mode)}</td><td>${r.label}</td><td class="num">${r.calls}</td><td>${VL.rateBar(r)}</td><td class="num"><b>${v ? Math.round(100 * r.pass / v) : 0}%</b> <span class="ci">${VL.ci(r.pass, v)}</span></td></tr>`; }).join("")}</tbody></table></div>
+      </div>
+    </div>
+    <div class="grid" style="grid-template-columns: 1.3fr 1fr 1fr; margin-top:12px">
+      <div class="panel flush">
+        <div class="ph"><h2>Pass rate by scenario</h2><span class="faint">7 days, local-default</span></div>
+        <div class="pb">
+          ${VL.scenarioRates.map(s => { const v = s.n - s.invalid; const sc = VL.scenarioById(s.id); return `<a class="rate-row" href="calls.html?scenario=${s.id}" style="color:inherit;text-decoration:none" title="${sc.name}"><span><b class="mono">${s.id}</b> <span class="muted">${sc.name}</span></span>${VL.rateBar(s)}<span class="pct">${Math.round(100 * s.pass / v)}% <span class="ci" style="font-weight:400">${VL.ci(s.pass, v)}</span></span><span class="n">n=${v}</span></a>`; }).join("")}
+          <div class="rate-leg" style="padding:8px 12px 2px"><span style="--c:var(--pass)">pass</span><span style="--c:var(--fail)">fail</span><span style="--c:var(--review)">needs review</span><span style="--c:var(--invalid)">invalid (not counted)</span></div>
+        </div>
+      </div>
+      <div class="panel flush">
+        <div class="ph"><h2>Models</h2><span class="grow"></span><a href="settings.html" class="faint">settings</a></div>
+        <div class="pb"><table class="t"><tbody>${VL.health.map(h => `<tr><td style="width:130px">${h.name}</td><td class="mono faint">${h.model}</td><td class="right"><span class="health ${h.state}">${h.detail}</span></td></tr>`).join("")}</tbody></table></div>
+      </div>
+      <div class="panel flush">
+        <div class="ph"><h2>Most common open findings</h2><span class="faint">last 7 days</span></div>
+        <div class="pb"><table class="t"><tbody>
+          <tr><td>Invoice or reference number mispronounced</td><td class="faint">pronunciation</td><td class="num">14</td></tr>
+          <tr><td>Refund timeframe wrong or vague</td><td class="faint">transcript judge, C3</td><td class="num">11</td></tr>
+          <tr><td>Bot continued more than 0.5 s after barge-in</td><td class="faint">timing</td><td class="num">9</td></tr>
+          <tr><td>MX record value read wrong</td><td class="faint">pronunciation</td><td class="num">7</td></tr>
+          <tr><td>Expected database change missing</td><td class="faint">state assertions</td><td class="num">6</td></tr>
+          <tr><td>Flat delivery on apology</td><td class="faint">audio listening, advisory</td><td class="num">5</td></tr>
+        </tbody></table></div>
+      </div>
+    </div>`;
+};
+</script>
+</body>
+</html>

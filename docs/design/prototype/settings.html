@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Models and settings · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="settings">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Models and settings"] });
+  const page = document.getElementById("page");
+  const roles = [
+    ["support bot LLM", "LLM", ["Qwen3.5-9B-Instruct · llama.cpp :8101", "Qwen3.6-35B-A3B · llama.cpp :8103", "gpt-oss-20b · llama.cpp", "Bedrock · Claude Sonnet (untested)"], 0, "ok", "ready, 38 tok/s", "Apache-2.0"],
+    ["support bot realtime voice", "RealtimeVoice", ["none (STT + LLM + TTS)", "LFM3-Audio-2B · :8130", "Bedrock · Nova Sonic (untested)"], 0, null, "", ""],
+    ["caller LLM", "LLM", ["Qwen3.5-4B · llama.cpp :8102", "Qwen3.5-9B-Instruct · llama.cpp :8101"], 0, "ok", "ready", "Apache-2.0"],
+    ["STT, live", "STT", ["faster-whisper large-v3 · :8110", "Bedrock · Transcribe streaming (untested)"], 0, "ok", "ready, RTF 0.21", "MIT / weights MIT"],
+    ["TTS, bot voice", "TTS", ["Qwen3-TTS 1.7B CustomVoice · :8120", "kyutai pocket-tts · :8121", "Bedrock · Polly (untested)"], 0, "ok", "ready, first byte 410 ms", "Apache-2.0"],
+    ["TTS, caller voices", "TTS", ["Qwen3-TTS 1.7B CustomVoice · :8120", "kyutai pocket-tts · :8121"], 0, "ok", "shared with bot voice", "Apache-2.0"],
+    ["judge LLM", "LLM", ["Qwen3.6-35B-A3B · llama.cpp :8103", "Qwen3-32B-AWQ · vLLM", "Bedrock · Claude Sonnet (untested)"], 0, "loading", "loading weights, 22 s", "Apache-2.0"],
+    ["pronunciation ASR", "STT", ["faster-whisper large-v3, no prompt · :8110", "Bedrock · Transcribe batch (untested)"], 0, "ok", "ready", "MIT"],
+    ["audio analyst", "AudioAnalyst", ["LFM3-Audio-2B · :8130", "Bedrock · Nova (untested)"], 0, "ok", "ready", "LFM licence, conditional, see notes"],
+    ["MOS predictor", "AudioQuality", ["NISQA, in-process"], 0, "ok", "ready", "MIT"],
+  ];
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Models and settings</h1><div class="sub">Profiles are YAML files in <span class="mono">config/</span>. Changing a role here writes the active profile and restarts only that server.</div></div>
+      <div class="actions"><button class="btn">Run benchmark</button><button class="btn">Restart all servers</button></div></div>
+    <div class="grid" style="grid-template-columns:minmax(0,1fr) 340px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel flush"><div class="ph"><h2>Active profile</h2><select class="in" style="width:auto;height:26px">${VL.profiles.map(p => `<option ${p.id === "local-default" ? "selected" : ""}>${p.label}</option>`).join("")}</select><span class="faint">config/local-default.yaml</span><span class="grow"></span><span class="faint">live mode ok: bot reply p50 1.42 s, benchmark 2026-10-30 07:50</span></div>
+          <div class="pb" style="overflow:auto"><table class="t roles">
+            <thead><tr><th>Role</th><th>Interface</th><th>Adapter</th><th>Status</th><th>Licence</th></tr></thead>
+            <tbody>${roles.map(([r, iface, opts, sel, st, det, lic]) => `<tr><td><b>${r}</b></td><td class="mono faint">${iface}</td><td><span class="sel"><select class="in" aria-label="${r} adapter">${opts.map((o, i) => `<option ${i === sel ? "selected" : ""}>${o}</option>`).join("")}</select>${opts[sel].includes("untested") ? `<span class="untested">${VL.icons.warn} untested against live AWS</span>` : ""}</span></td><td>${st ? `<span class="health ${st}">${det}</span>` : `<span class="faint">off</span>`}</td><td class="faint" style="font-size:11px">${lic}</td></tr>`).join("")}</tbody></table></div>
+        </div>
+        <div class="panel"><div class="ph"><h2>Swap a provider</h2></div><div class="pb">
+          <div class="note warn">${VL.icons.warn}<span><b>Bedrock adapters are untested against live AWS.</b> There is no Bedrock access on this machine. Adapters were unit tested against mocks only. Choosing one shows this label on every call made with it, and on every result in Compare.</span></div>
+          <div class="form-row" style="margin-top:12px">
+            <div class="field"><label>AWS region</label><input class="in" value="eu-west-2" disabled><span class="help">set AWS_PROFILE or keys in .env to enable</span></div>
+            <div class="field"><label>Credentials</label><span class="health down" style="height:28px">not found</span></div>
+            <div class="field"><label>&nbsp;</label><button class="btn" disabled>Test connection</button></div>
+          </div>
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Evaluation thresholds</h2></div><div class="pb form-row">
+          <div class="field"><label>Dead air (s)</label><input class="in" value="2.0"></div>
+          <div class="field"><label>Barge-in stop target (s)</label><input class="in" value="0.5"></div>
+          <div class="field"><label>Reply latency warn (s)</label><input class="in" value="2.5"></div>
+          <div class="field"><label>MOS baseline</label><input class="in" value="4.0"></div>
+          <div class="field"><label>Audio listening</label><select class="in"><option>advisory only (cannot fail a call)</option></select><span class="help">Fixed. Agreement with humans is under 80%.</span></div>
+        </div></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel flush"><div class="ph"><h2>Model servers</h2><span class="grow"></span><span class="health loading">1 loading</span></div><div class="pb">
+          ${VL.health.map(h => `<div style="display:flex;gap:8px;align-items:center;padding:7px 12px;border-top:1px solid var(--line-1);font-size:12px"><span class="health ${h.state}" style="min-width:0"></span><div style="flex:1;min-width:0"><div>${h.name}</div><div class="faint mono" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${h.model}</div></div><span class="faint nowrap">${h.detail}</span></div>`).join("")}
+          <div style="padding:8px 12px"><div class="note warn">${VL.icons.warn}<span>Judge LLM loading, 22 s. Usually under 40 s on this GPU. Evals queue until it reports ready; calls are not blocked.</span></div></div>
+        </div></div>
+        <div class="panel flush"><div class="ph"><h2>GPU</h2></div><div class="pb"><dl class="kvs"><dt>device</dt><dd>Radeon 8060S, gfx1151</dd><dt>memory in use</dt><dd>41.2 of 122 GB</dd><dt>servers</dt><dd>5 llama.cpp, 1 whisper, 1 tts</dd><dt>Ollama</dt><dd class="na">not managed here</dd></dl></div></div>
+        <div class="panel flush"><div class="ph"><h2>Access</h2></div><div class="pb"><dl class="kvs"><dt>local</dt><dd>https://localhost:8443</dd><dt>LAN</dt><dd>https://192.168.0.75:8443</dd><dt>cert</dt><dd>self-signed, accept once per browser</dd></dl></div></div>
+      </div>
+    </div>`;
+};
+</script>
+</body>
+</html>

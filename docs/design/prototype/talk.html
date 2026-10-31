@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Talk to the bot · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="talk">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page" style="height:100%"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  const q = new URLSearchParams(location.search);
+  let phase = q.get("phase") || "incall"; // setup | incall | evaluating
+  VL.renderShell({ crumbs: ["Talk to the bot"], keys: [["Start call", "Enter"], ["End call", "Esc Esc"], ["Mute mic", "m"], ["Push to talk (hold)", "Space"]] });
+  const page = document.getElementById("page");
+  const setup = () => `
+    <div class="talk">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel"><div class="ph"><h2>Before you call</h2></div><div class="pb" style="display:flex;flex-direction:column;gap:10px">
+          <div class="field"><label>Microphone</label><select class="in"><option>Yeti Nano (USB)</option><option>Built-in microphone</option></select></div>
+          <div class="field"><label>Level</label><div class="meter" id="setupMeter" aria-label="Mic level">${Array.from({ length: 25 }, (_, i) => `<i class="${i < 9 ? "on" : ""}"></i>`).join("")}</div><span class="help">Say something. Bars should reach the middle when you speak normally.</span></div>
+          <div class="note info">${VL.icons.headphones}<span><b>Headphones recommended.</b> On speakers the bot may hear itself. Echo cancellation is on, and the server ignores echo-like audio, but interruption timing will be less reliable.</span></div>
+          <div class="field"><label>Record as</label><div class="seg"><button aria-pressed="true">${VL.icons.mic} mic call</button><button>unlisted</button></div></div>
+        </div></div>
+      </div>
+      <div class="panel" style="display:flex;flex-direction:column">
+        <div class="ph"><h2>What are you calling about?</h2></div>
+        <div class="pb" style="flex:1;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div><div class="label" style="margin-bottom:6px">Play a scenario (your facts and beats are shown during the call)</div><div class="pick">${VL.scenarios.map((s, i) => `<label><input type="radio" name="what" ${i === 3 ? "checked" : ""}><span><b class="mono">${s.id}</b> ${s.name}<small>${s.account}</small></span></label>`).join("")}<label><input type="radio" name="what"><span>Call freely<small>No rubric. Evaluated for timing, pronunciation, and audio quality only.</small></span></label></div></div>
+          <div><div class="label" style="margin-bottom:6px">Optional: act as a persona (we show you their style; you do the voice)</div><div class="pick">${VL.personas.map(p => `<label><input type="radio" name="who"><span>${p.name}, ${p.age}<small>${p.temperament}, ${p.style}</small></span></label>`).join("")}<label><input type="radio" name="who" checked><span>Myself<small>No persona hints.</small></span></label></div>
+            <div class="field" style="margin-top:12px"><label>Line condition applied to your audio</label><select class="in"><option>none (clean)</option><option>8 kHz mu-law</option><option>noisy mobile, 2% loss</option></select></div></div>
+        </div>
+        <div class="ph" style="border-top:1px solid var(--line-1);border-bottom:0;justify-content:flex-end"><span class="faint">Profile <span class="mono">local-default</span>, all models ready except judge (evals queue)</span><a class="btn primary lg" href="talk.html?phase=incall">Start call <kbd>↵</kbd></a></div>
+      </div>
+    </div>`;
+  const incall = () => `
+    <div class="talk">
+      <div style="display:flex;flex-direction:column;gap:12px;min-height:0">
+        <div class="panel"><div class="ph"><h2>Your sheet</h2><span class="tag">S-04</span></div><div class="pb" style="font-size:12px">
+          <div><b>You are</b> Tom Brierley, Brierley Plumbing, acct 31250, postcode HD7 2RL.</div>
+          <div style="margin-top:6px"><b>The problem</b> Your site brierleyplumbing.co.uk shows "suspended". You paid invoice FH-4471 (£18.00) on Tuesday.</div>
+          <div style="margin-top:6px"><b>Beats</b><ol style="margin:4px 0 0 16px;padding:0"><li class="muted" style="text-decoration:line-through">Say the site is down and you've paid</li><li class="muted" style="text-decoration:line-through">Give postcode when asked</li><li><b>Push back if told to wait 24 h</b></li><li>Ask for written confirmation</li><li>Ask whether you were charged a reinstatement fee</li></ol></div>
+          <div style="margin-top:6px"><b>Must not say</b> your card number, anything about a different invoice.</div>
+        </div></div>
+        <div class="panel flush" style="flex:1;min-height:0;display:flex;flex-direction:column"><div class="ph"><h2>Events</h2></div><div class="events" style="overflow:auto;flex:1">
+          <div><span class="ts">00:00</span><span>call connected, bot speaking first</span></div>
+          <div><span class="ts">00:07</span><span>tool lookup_account -> acct 31250</span></div>
+          <div><span class="ts">00:31</span><span>tool get_site_status -> suspended, FH-4471 paid 2026-10-28</span></div>
+          <div><span class="ts">00:58</span><span class="b">you interrupted the bot, it stopped in 0.3 s</span></div>
+          <div><span class="ts">01:12</span><span>tool reinstate_site(domain=brierleyplumbing.co.uk) -> ok</span></div>
+          <div><span class="ts">01:12</span><span>db sites.status suspended -> active</span></div>
+        </div></div>
+      </div>
+      <div class="panel stage flush">
+        <div class="ph"><h2>Live call</h2><span class="mono faint">c_1030_1021_h002</span>${VL.mode("human")}<span class="grow"></span><span class="health ok">bot responding, p50 1.3 s</span></div>
+        <div class="speaker-strip">
+          <div class="spk you speaking" id="spkYou"><div class="who">${VL.icons.mic} You <span class="faint" style="font-weight:500;text-transform:none;letter-spacing:0">Yeti Nano</span></div><div class="state">speaking</div><div class="meter" id="meterYou">${Array.from({ length: 25 }, (_, i) => `<i class="${i < 14 ? "on" : ""} ${i > 21 ? "hot" : ""}"></i>`).join("")}</div><div class="faint" style="font-size:11px">Echo cancellation on. Headphones detected.</div></div>
+          <div class="spk bot" id="spkBot"><div class="who">Bot <span class="faint" style="font-weight:500;text-transform:none;letter-spacing:0">Ada, Qwen3.5-9B</span></div><div class="state muted">listening</div><div class="meter">${Array.from({ length: 25 }, () => `<i></i>`).join("")}</div><div class="faint" style="font-size:11px">Interrupted once. Queued audio dropped at 00:58.</div></div>
+        </div>
+        <div class="live-turns" id="live" style="flex:1;overflow:auto;border-top:1px solid var(--line-1)">
+          <div class="lt bot"><b>bot</b><span>Fernhill Internet, this is Ada. How can I help?</span></div>
+          <div class="lt caller"><b>you</b><span>Hi, my website's down. It says suspended. I paid the invoice on Tuesday.</span></div>
+          <div class="lt bot"><b>bot</b><span>Sorry to hear that. Can I take the postcode on the account?</span></div>
+          <div class="lt caller"><b>you</b><span>H D seven, two R L.</span></div>
+          <div class="lt bot"><b>bot</b><span>Thanks. I can see brierleyplumbing dot co dot uk was suspended for invoice FH-4471, and that payment did arrive on Tuesday. The site should have come back automatically, so let me reinstate it now.</span></div>
+          <div class="lt caller"><b>you</b><span>Right, well it hasn't, and I've had customers ringing me <span class="faint">(interrupted bot at 00:58)</span></span></div>
+          <div class="lt bot"><b>bot</b><span>Done, it's active again. It can take a minute to show. I'm sorry you had calls about it.</span></div>
+          <div class="lt caller"><b>you</b><span class="cursor" id="partial">Can I get that in writing, an email or</span></div>
+        </div>
+        <div class="endbar"><span class="clock" id="clock">01:24</span><span class="faint">live transcript is from the bot's STT and may lag a second. The recording is what gets evaluated.</span><span class="grow"></span><button class="btn" id="mute">Mute <kbd>m</kbd></button><a class="btn danger solid lg" href="talk.html?phase=evaluating">End call <kbd>Esc</kbd><kbd>Esc</kbd></a></div>
+      </div>
+    </div>`;
+  const evaluating = () => `
+    <div class="talk" style="grid-template-columns:1fr">
+      <div class="panel" style="max-width:720px;margin:0 auto;width:100%">
+        <div class="ph"><h2>Call ended, evaluating</h2><span class="mono faint">c_1030_1021_h002</span>${VL.mode("human")}<span class="grow"></span><span class="faint">01:51 recorded, 12 turns</span></div>
+        <div class="pb">
+          <table class="rubric" style="margin:-12px">
+            ${[["Recording saved", "done", "stereo, you left, bot right"], ["Timing", "done", "p50 reply 1.3 s, 1 overlap, barge-in stop 0.3 s"], ["State assertions", "done", "sites.status active as expected, no fee row"], ["Transcript judge", "running", "waiting on judge LLM (loading, 18 s)"], ["Pronunciation", "running", "ASR on bot channel"], ["Audio quality", "queued", ""], ["Audio listening (advisory)", "queued", ""]].map(([n, s, d]) => `<tr><td style="width:60px">${s === "done" ? `<span class="v pass">done</span>` : s === "running" ? VL.verdict("running") : VL.verdict("queued")}</td><td>${n}<div class="faint">${d}</div></td></tr>`).join("")}
+          </table>
+          <div class="btn-row" style="margin-top:24px"><a class="btn primary" href="review.html">Open review as results arrive</a><a class="btn" href="talk.html?phase=setup">Call again</a><span class="faint">You can leave. The call will appear in the review queue when evals finish.</span></div>
+        </div>
+      </div>
+    </div>`;
+  page.innerHTML = phase === "setup" ? setup() : phase === "evaluating" ? evaluating() : incall();
+  if (phase === "incall") {
+    let secs = 84; const text = "Can I get that in writing, an email or something, so I've got proof it was your end?";
+    let n = 36;
+    setInterval(() => { secs++; document.getElementById("clock").textContent = VL.fmtShort(secs); }, 1000);
+    const you = document.getElementById("spkYou"), bot = document.getElementById("spkBot");
+    setInterval(() => { // animate the level meter while "speaking"
+      const bars = document.querySelectorAll("#meterYou i"); const lvl = you.classList.contains("speaking") ? 6 + Math.floor(Math.random() * 14) : Math.floor(Math.random() * 3);
+      bars.forEach((b, i) => { b.className = (i < lvl ? "on" : "") + (i > 21 && i < lvl ? " hot" : ""); });
+    }, 120);
+    const t = setInterval(() => { n = Math.min(text.length, n + 2); document.getElementById("partial").textContent = text.slice(0, n); if (n >= text.length) { clearInterval(t); document.getElementById("partial").classList.remove("cursor"); you.classList.remove("speaking"); you.querySelector(".state").textContent = "quiet"; you.querySelector(".state").classList.add("muted"); bot.classList.add("speaking"); bot.querySelector(".state").textContent = "speaking"; bot.querySelector(".state").classList.remove("muted"); setTimeout(() => document.getElementById("live").insertAdjacentHTML("beforeend", `<div class="lt bot"><b>bot</b><span class="cursor">Of course. I'll email a confirmation to the address on the account</span></div>`), 900); } }, 80);
+    let escOnce = false;
+    document.addEventListener("keydown", e => { if (e.key === "Escape") { if (escOnce) location.href = "talk.html?phase=evaluating"; else { escOnce = true; VL.toast("Press Esc again to end the call"); setTimeout(() => escOnce = false, 1500); } } if (e.key === "m") { const b = document.getElementById("mute"); b.innerHTML = b.textContent.trim().startsWith("Mute") ? "Unmute <kbd>m</kbd>" : "Mute <kbd>m</kbd>"; } });
+  }
+  if (phase === "setup") document.addEventListener("keydown", e => { if (e.key === "Enter" && !["input", "select"].includes(e.target.tagName.toLowerCase())) location.href = "talk.html?phase=incall"; });
+};
+</script>
+</body>
+</html>

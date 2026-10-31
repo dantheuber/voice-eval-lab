@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="compare">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Compare", "run-0140 vs run-0141"] });
+  const page = document.getElementById("page");
+  const A = { id: "run-0140", profile: "local-default", mode: "live", n: 24, valid: 23, pass: 17, fail: 4, review: 2, invalid: 1, p50: 1.42, overlaps: 0.9, pron: 3, mos: 3.9 };
+  const B = { id: "run-0141", profile: "local-35b", mode: "turn", n: 24, valid: 24, pass: 19, fail: 2, review: 3, invalid: 0, p50: null, overlaps: null, pron: 1, mos: 4.1 };
+  const rows = [
+    { c: "C1", t: "Verifies identity before billing", a: [23, 23], b: [24, 24] },
+    { c: "C2", t: "Identifies the duplicate charge", a: [22, 23], b: [23, 24] },
+    { c: "C3", t: "Correct refund timeframe", a: [15, 23], b: [20, 24] },
+    { c: "C4", t: "Issues refund with tool", a: [19, 23], b: [22, 24] },
+    { c: "C5", t: "Offers a reference", a: [21, 23], b: [17, 24] },
+    { c: "N1", t: "No credit instead of refund", a: [23, 23], b: [24, 24] },
+    { c: "N2", t: "Never reads full card number", a: [23, 23], b: [24, 24] },
+  ];
+  const pct = (k, n) => Math.round(100 * k / n);
+  const delta = (a, b, inv) => { const d = +(b - a).toFixed(1); const cls = d === 0 ? "same" : (d > 0) !== !!inv ? "better" : "worse"; return `<span class="delta ${cls}">${d > 0 ? "+" : ""}${d}${cls === "worse" ? " ▼" : cls === "better" ? " ▲" : ""}</span>`; };
+  const col = r => `<div class="panel stat"><span class="k">${r.id} · <span class="mono">${r.profile}</span> ${VL.mode(r.mode)}</span><span class="n">${pct(r.pass, r.valid)}%<small>${r.pass} of ${r.valid} valid, ${VL.ci(r.pass, r.valid)}</small></span>${VL.rateBar(r)}<span class="d">S-03 and S-04, 4 personas × 3 reps${r.invalid ? `, ${r.invalid} invalid excluded` : ""}</span></div>`;
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Compare runs</h1><div class="sub">Same scenarios and personas, different model profile. One run is turn-based, so timing rows are not comparable and are shown as such.</div></div>
+      <div class="actions"><select class="in" style="width:auto"><option>run-0140 · local-default</option></select><span class="faint">vs</span><select class="in" style="width:auto"><option>run-0141 · local-qwen36-35b</option></select></div></div>
+    <div class="note warn" style="margin-bottom:12px">${VL.icons.info}<span>Pass rates from 24 calls each overlap heavily (${VL.ci(A.pass, A.valid)} vs ${VL.ci(B.pass, B.valid)}). Treat a difference under about 15 points as noise at this sample size. Per-criterion rows below are where real regressions show up.</span></div>
+    <div class="cmp" style="margin-bottom:12px">${col(A)}${col(B)}</div>
+    <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+      <div class="panel flush"><div class="ph"><h2>By rubric criterion</h2><span class="faint">calls passing each rule</span></div><div class="pb"><table class="t cmp-table">
+        <thead><tr><th>Rule</th><th class="num">${A.id}</th><th class="num">${B.id}</th><th class="num">Δ pts</th></tr></thead>
+        <tbody>${rows.map(r => { const pa = pct(...r.a), pb = pct(...r.b); return `<tr><td><span class="mono faint">${r.c}</span> ${r.t}</td><td class="num mono">${pa}% <span class="ci">${r.a[0]}/${r.a[1]}</span></td><td class="num mono">${pb}% <span class="ci">${r.b[0]}/${r.b[1]}</span></td><td class="num delta">${delta(pa, pb)}</td></tr>`; }).join("")}</tbody></table>
+        <div class="note" style="margin:12px">${VL.icons.info}<span><b>Regressed:</b> C5 "offers a reference" dropped 21 points on local-35b. 7 of its 24 calls ended without a reference number. <a href="calls.html?run=run-0141&verdict=fail">Open those calls</a>.</span></div></div></div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel flush"><div class="ph"><h2>Other measures</h2></div><div class="pb"><table class="t cmp-table">
+          <thead><tr><th>Measure</th><th class="num">${A.id}</th><th class="num">${B.id}</th><th class="num">Δ</th></tr></thead>
+          <tbody>
+            <tr><td>Bot reply latency p50</td><td class="num mono">1.42 s</td><td class="num"><span class="faint" title="turn-based: not measured">n/a, turn-based</span></td><td class="num delta"><span class="delta same">not comparable</span></td></tr>
+            <tr><td>Overlaps per call</td><td class="num mono">0.9</td><td class="num"><span class="faint">n/a, turn-based</span></td><td class="num delta"><span class="delta same">not comparable</span></td></tr>
+            <tr><td>Critical token mispronunciations</td><td class="num mono">3</td><td class="num mono">1</td><td class="num">${delta(3, 1, true)}</td></tr>
+            <tr><td>Expected db changes missing</td><td class="num mono">4</td><td class="num mono">1</td><td class="num">${delta(4, 1, true)}</td></tr>
+            <tr><td>MOS (bot channel)</td><td class="num mono">3.9</td><td class="num mono">4.1</td><td class="num">${delta(3.9, 4.1)}</td></tr>
+            <tr><td>Advisory listener notes</td><td class="num mono">6</td><td class="num mono">4</td><td class="num"><span class="delta same">advisory</span></td></tr>
+            <tr><td>Invalid runs (caller problems)</td><td class="num mono">1</td><td class="num mono">0</td><td class="num"><span class="delta same">test, not bot</span></td></tr>
+          </tbody></table></div></div>
+        <div class="panel flush"><div class="ph"><h2>By scenario × persona</h2><span class="faint">pass of 3 reps, A → B</span></div><div class="pb" style="overflow:auto"><table class="matrix">
+          <thead><tr><th></th>${VL.personas.map(p => `<th class="p">${p.name.split(" ")[0]}</th>`).join("")}</tr></thead>
+          <tbody>${[["S-03", [[2, 3], [1, 2], [3, 3], [2, 2]]], ["S-04", [[3, 3], [2, 3], [3, 3], [1, 2]]]].map(([s, cells]) => `<tr><td class="s"><b class="mono">${s}</b></td>${cells.map(([a, b]) => `<td><span class="mono">${a}→${b}</span> ${a === b ? "" : b > a ? '<span class="delta better">▲</span>' : '<span class="delta worse">▼</span>'}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>
+      </div>
+    </div>`;
+};
+</script>
+</body>
+</html>

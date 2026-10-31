@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run launcher · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="run">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  const q = new URLSearchParams(location.search);
+  const view = q.get("view") || "launch";
+  VL.renderShell({ crumbs: ["Run launcher", view === "progress" ? "run-0143" : "New run"], keys: [["Toggle cell", "Space"], ["Select whole row / column", "r c"], ["Launch", "Ctrl Enter"]] });
+  const page = document.getElementById("page");
+  if (view === "progress") return progress();
+  // Historic pass rates per scenario x persona, so the matrix doubles as a heat check
+  const hist = { "S-01": [92, 78, 85, 80], "S-02": [70, 60, 75, 55], "S-03": [72, 50, 68, 58], "S-04": [88, 72, 90, 75], "S-05": [100, 90, 92, null], "S-06": [60, 45, 66, null] };
+  const sel = new Set(["S-03:p-patel", "S-03:p-okafor", "S-03:p-lindqvist", "S-03:p-brierley", "S-04:p-patel", "S-04:p-brierley", "S-06:p-patel", "S-06:p-lindqvist"]);
+  let reps = 3, mode = "auto", profile = "local-default", line = "per persona";
+  function render() {
+    const pairs = sel.size, calls = pairs * reps;
+    const liveOk = profile !== "local-35b";
+    const effMode = mode === "auto" ? (liveOk ? "live" : "turn") : mode;
+    const perCall = effMode === "live" ? 210 : 420;
+    const est = Math.round(calls * perCall / 60 / 2); // 2 concurrent calls
+    page.innerHTML = `
+      <div class="page-head"><div><h1>New run</h1><div class="sub">Pick scenario and persona pairs, set repetitions, launch. Each call gets a fresh copy of the Fernhill database.</div></div></div>
+      <div class="launch">
+        <div class="panel flush">
+          <div class="ph"><h2>Scenarios × personas</h2><span class="faint">${pairs} pairs selected. Cells show the last 7 days' pass rate on ${profile}.</span><span class="grow"></span><button class="btn sm ghost" id="all">Select all</button><button class="btn sm ghost" id="none">Clear</button></div>
+          <div class="pb" style="overflow:auto"><table class="matrix">
+            <thead><tr><th></th>${VL.personas.map(p => `<th class="p"><label class="check" style="justify-content:center"><input type="checkbox" data-col="${p.id}" ${VL.scenarios.every(s => sel.has(s.id + ":" + p.id)) ? "checked" : ""}> ${p.name.split(" ")[0]}</label><small>${p.temperament}, interrupts ${p.interrupt}/5</small></th>`).join("")}<th class="p"><small>row</small></th></tr></thead>
+            <tbody>${VL.scenarios.map(s => `<tr><td class="s"><b class="mono">${s.id}</b> ${s.name}<small>${s.account.split(",")[0]}</small></td>
+              ${VL.personas.map((p, i) => { const k = s.id + ":" + p.id, h = hist[s.id][i]; return `<td><label class="check" style="justify-content:center;flex-direction:column;gap:1px"><input type="checkbox" data-k="${k}" ${sel.has(k) ? "checked" : ""} aria-label="${s.id} with ${p.name}"><span class="hist" style="${h != null && h < 70 ? "color:var(--review)" : ""}">${h == null ? "no data" : h + "%"}</span></label></td>`; }).join("")}
+              <td><input type="checkbox" data-row="${s.id}" ${VL.personas.every(p => sel.has(s.id + ":" + p.id)) ? "checked" : ""} aria-label="all personas for ${s.id}"></td></tr>`).join("")}</tbody></table></div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="panel"><div class="ph"><h2>Settings</h2></div><div class="pb" style="display:flex;flex-direction:column;gap:12px">
+            <div class="field"><label>Repetitions per pair</label><div class="seg" role="group">${[1, 2, 3, 5, 10].map(n => `<button data-reps="${n}" aria-pressed="${reps === n}">${n}</button>`).join("")}</div><span class="help">Both sides are stochastic. 3 or more gives a pass rate you can read; 1 only tells you whether the pair can pass at all.</span></div>
+            <div class="field"><label>Model profile</label><select class="in" id="profile">${VL.profiles.map(p => `<option value="${p.id}" ${profile === p.id ? "selected" : ""} ${p.health === "down" ? "disabled" : ""}>${p.label}${p.health === "loading" ? " (loading)" : p.health === "down" ? " (unavailable)" : ""}</option>`).join("")}</select><span class="help">${VL.profiles.find(p => p.id === profile).desc}</span></div>
+            <div class="field"><label>Call mode</label><div class="seg" role="group"><button data-mode="auto" aria-pressed="${mode === "auto"}">auto</button><button data-mode="live" aria-pressed="${mode === "live"}">live</button><button data-mode="turn" aria-pressed="${mode === "turn"}">turn-based</button></div>
+              <span class="help">${effMode === "live" ? "Live: real time, full duplex, timing metrics measured. Benchmarks say this profile keeps up (bot reply p50 1.4 s)." : "Turn-based: slower than real time, each side waits. Timing metrics are not measured. Calls will carry a dashed <b>turn-based</b> badge."}${mode === "auto" ? " Chosen from the last benchmark." : ""}</span></div>
+            <div class="field"><label>Line conditions</label><div class="seg" role="group">${["per persona", "clean", "8 kHz", "noisy mobile"].map(l =>`<button data-line="${l}" aria-pressed="${line === l}">${l}</button>`).join("")}</div><span class="help">Per persona uses each persona's own line. Overriding applies one condition to every call.</span></div>
+            <div class="field"><label>Concurrency</label><input class="in" value="2" style="width:60px" aria-label="Concurrent calls"><span class="help">2 concurrent live calls fit the GPU. Turn-based can go to 4.</span></div>
+          </div></div>
+          <div class="panel"><div class="ph"><h2>Summary</h2></div><div class="pb">
+            <dl class="summary-l"><dt>calls</dt><dd><b>${calls}</b> (${pairs} pairs × ${reps})</dd><dt>mode</dt><dd>${VL.mode(effMode)}</dd><dt>estimate</dt><dd>about ${est} min at 2 concurrent${effMode === "turn" ? ", wall clock, not call time" : ""}</dd><dt>evals</dt><dd>run after each call, judge LLM ${VL.health[4].state === "loading" ? '<span class="health loading">loading</span>' : "ready"}</dd></dl>
+            <div class="btn-row" style="margin-top:12px"><a class="btn primary lg" href="run.html?view=progress">Launch ${calls} calls <kbd>Ctrl</kbd><kbd>↵</kbd></a><button class="btn">Save as preset</button></div>
+            ${calls === 0 ? `<div class="note warn" style="margin-top:8px">${VL.icons.warn}<span>Select at least one scenario and persona pair.</span></div>` : ""}
+          </div></div>
+        </div>
+      </div>`;
+    page.querySelectorAll("[data-k]").forEach(cb => cb.addEventListener("change", () => { cb.checked ? sel.add(cb.dataset.k) : sel.delete(cb.dataset.k); render(); }));
+    page.querySelectorAll("[data-row]").forEach(cb => cb.addEventListener("change", () => { VL.personas.forEach(p => cb.checked ? sel.add(cb.dataset.row + ":" + p.id) : sel.delete(cb.dataset.row + ":" + p.id)); render(); }));
+    page.querySelectorAll("[data-col]").forEach(cb => cb.addEventListener("change", () => { VL.scenarios.forEach(s => cb.checked ? sel.add(s.id + ":" + cb.dataset.col) : sel.delete(s.id + ":" + cb.dataset.col)); render(); }));
+    page.querySelectorAll("[data-reps]").forEach(b => b.addEventListener("click", () => { reps = +b.dataset.reps; render(); }));
+    page.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => { mode = b.dataset.mode; render(); }));
+    page.querySelectorAll("[data-line]").forEach(b => b.addEventListener("click", () => { line = b.dataset.line; render(); }));
+    page.querySelector("#profile").addEventListener("change", e => { profile = e.target.value; render(); });
+    page.querySelector("#all").addEventListener("click", () => { VL.scenarios.forEach(s => VL.personas.forEach(p => sel.add(s.id + ":" + p.id))); render(); });
+    page.querySelector("#none").addEventListener("click", () => { sel.clear(); render(); });
+  }
+  render();
+
+  function progress() {
+    const total = 24; let done = 9;
+    const results = ["pass", "pass", "fail", "pass", "needs_review", "pass", "pass", "invalid", "pass"];
+    const pairs = [["S-03", "p-patel"], ["S-03", "p-okafor"], ["S-03", "p-lindqvist"], ["S-03", "p-brierley"], ["S-04", "p-patel"], ["S-04", "p-brierley"], ["S-06", "p-patel"], ["S-06", "p-lindqvist"]];
+    const calls = Array.from({ length: total }, (_, i) => { const [s, p] = pairs[i % 8]; return { id: `c_1030_1004_${(0x9000 + i * 37).toString(16)}`, s, p, rep: Math.floor(i / 8) + 1, v: i < done ? results[i] : i < done + 2 ? "running" : "queued" }; });
+    const script = [
+      ["bot", "Fernhill Internet, this is Ada. How can I help?"],
+      ["caller", "Hi, my website's down. It says suspended. I paid the invoice on Tuesday."],
+      ["sys", "lookup_account(phone=\"07700 900 884\") -> acct 31250 Brierley Plumbing"],
+      ["bot", "Sorry to hear that. Can I take the postcode on the account?"],
+      ["caller", "H D seven, two R L."],
+      ["sys", "get_site_status(domain=\"brierleyplumbing.co.uk\") -> suspended, reason=unpaid FH-4471, paid_at=2026-10-28"],
+      ["bot", "Thanks. I can see brierleyplumbing dot co dot uk was suspended for invoice FH-4471, and that payment did arrive on Tuesday. The site should have come back automatically, so let me reinstate it now."],
+      ["caller", "Right, well it hasn't, and I've had customers ringing me about it since"],
+      ["sys", "barge-in at 00:58.3, bot stopped in 0.3 s"],
+    ];
+    let shown = 0, partial = "";
+    page.innerHTML = `
+      <div class="page-head"><div><h1 style="display:flex;gap:8px;align-items:center">run-0143 ${VL.verdict("running")} ${VL.mode("live")}</h1><div class="sub">S-03, S-04, S-06 × 4 personas × 3, local-default, started 10:04. 2 concurrent.</div></div>
+        <div class="actions"><button class="btn">Pause after current calls</button><button class="btn danger">Stop run</button></div></div>
+      <div class="progress">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="panel"><div class="pb">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px"><span><b id="doneN">${done}</b> of ${total} done, 2 running</span><span class="faint">about 11 min left</span></div>
+            <div class="prog-bar" id="pbar"></div>
+            <div class="rate-leg" style="margin-top:8px" id="pleg"></div>
+            <div class="faint" style="margin-top:8px;font-size:11px">Pass rate so far <b id="prate"></b>. With this few calls the interval is wide; wait for the run to finish before reading it.</div>
+          </div></div>
+          <div class="panel flush"><div class="ph"><h2>Calls</h2><span class="grow"></span><a class="faint" href="calls.html?run=run-0143">open list</a></div>
+            <div class="pb" id="callList" style="max-height:480px;overflow:auto"></div></div>
+        </div>
+        <div class="panel flush" style="display:flex;flex-direction:column;min-height:520px">
+          <div class="ph"><h2>Live call</h2><span class="mono faint">c_1030_1004_9115</span><span class="tag">S-04</span><span class="tag">Tom Brierley</span><span class="grow"></span><span class="mono faint" id="liveClock">01:02</span></div>
+          <div class="live-turns" id="live" style="flex:1;overflow:auto"></div>
+          <div class="ph" style="border-top:1px solid var(--line-1);border-bottom:0"><span class="faint">Second concurrent call: <span class="mono">c_1030_1004_913a</span> S-06, Dev Patel, 00:14</span><span class="grow"></span><button class="btn sm ghost">Watch instead</button></div>
+        </div>
+      </div>`;
+    function paint() {
+      const c = { pass: 0, fail: 0, needs_review: 0, invalid: 0 }; calls.forEach(x => { if (x.v in c) c[x.v]++; });
+      document.getElementById("pbar").innerHTML = calls.map(x => `<i class="${{ pass: "p", fail: "f", needs_review: "r", invalid: "i", running: "run" }[x.v] || ""}" style="flex:1" title="${x.id} ${x.v}"></i>`).join("");
+      document.getElementById("pleg").innerHTML = `<span style="--c:var(--pass)">pass ${c.pass}</span><span style="--c:var(--fail)">fail ${c.fail}</span><span style="--c:var(--review)">review ${c.needs_review}</span><span style="--c:var(--invalid)">invalid ${c.invalid}</span><span style="--c:var(--accent)">running 2</span>`;
+      const v = c.pass + c.fail + c.needs_review; document.getElementById("prate").textContent = v ? `${Math.round(100 * c.pass / v)}% (${VL.ci(c.pass, v)}) of ${v} valid` : "n/a";
+      document.getElementById("callList").innerHTML = calls.map(x => `<div class="call-row"><span>${VL.verdict(x.v, 'style="padding:0 4px 0 4px;min-width:0" title="' + x.v + '"').replace(/>[^<]*</, "><")}</span><span><b class="mono">${x.s}</b> ${VL.personaById(x.p).name} <span class="faint">rep ${x.rep}</span><div class="id">${x.id}</div></span><span>${x.v === "running" || x.v === "queued" ? `<span class="faint" style="font-size:11px">${x.v}</span>` : `<a class="btn sm ghost" href="review.html">open</a>`}</span></div>`).join("");
+    }
+    function type() {
+      if (shown >= script.length) return;
+      const [who, text] = script[shown];
+      const live = document.getElementById("live");
+      if (who === "sys") { live.insertAdjacentHTML("beforeend", `<div class="lt sys"><b>event</b><span>${text}</span></div>`); shown++; live.scrollTop = 1e6; return setTimeout(type, 600); }
+      let el = live.querySelector(`[data-i="${shown}"]`);
+      if (!el) { live.insertAdjacentHTML("beforeend", `<div class="lt ${who}" data-i="${shown}"><b>${who}</b><span class="cursor"></span></div>`); el = live.querySelector(`[data-i="${shown}"]`); }
+      partial = text.slice(0, partial.length + 3);
+      el.querySelector("span").textContent = partial;
+      live.scrollTop = 1e6;
+      if (partial.length >= text.length) { el.querySelector("span").classList.remove("cursor"); shown++; partial = ""; return setTimeout(type, 900); }
+      setTimeout(type, 45);
+    }
+    paint(); type();
+    let secs = 62; setInterval(() => { secs++; document.getElementById("liveClock").textContent = VL.fmtShort(secs); }, 1000);
+  }
+};
+</script>
+</body>
+</html>

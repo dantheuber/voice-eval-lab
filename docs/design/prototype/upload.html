@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload recording · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="upload">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Upload recording"] });
+  const page = document.getElementById("page");
+  page.innerHTML = `
+    <div class="page-head"><div><h1>Upload a recording</h1><div class="sub">Evaluate a call recorded elsewhere. Less evidence means fewer checks. The review screen says what could not be checked.</div></div></div>
+    <div class="builder">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel"><div class="pb">
+          <div class="drop"><b>Drop a WAV, FLAC, MP3, or OGG here</b>Stereo with caller left and bot right gives the best results. Mono is accepted and split by diarisation, which is less reliable for overlap.<div class="btn-row" style="justify-content:center;margin-top:12px"><button class="btn">Choose file</button></div></div>
+          <div style="margin-top:12px;display:flex;align-items:center;gap:12px;padding:8px 12px;border:1px solid var(--line-1);border-radius:6px;font-size:12px"><span class="mono">fernhill_support_2026-10-29_1150.wav</span><span class="faint">5 min 11 s · stereo · 8 kHz · 4.9 MB</span><span class="grow"></span><span class="health ok">channels detected: caller L, bot R</span></div>
+        </div></div>
+        <div class="panel"><div class="ph"><h2>What we know about this call</h2><span class="faint">optional, each field unlocks more checks</span></div><div class="pb" style="display:flex;flex-direction:column;gap:12px">
+          <div class="form-row">
+            <div class="field"><label>Scenario</label><select class="in"><option>unknown (judge from transcript only)</option>${VL.scenarios.map(s => `<option>${s.id} ${s.name}</option>`).join("")}</select><span class="help">With a scenario the judge can score the rubric.</span></div>
+            <div class="field"><label>Bot version or profile</label><input class="in" placeholder="e.g. prod 2026-10-28" value="prod, unknown build"></div>
+          </div>
+          <div class="field"><label>Bot transcript with intended text (optional)</label><textarea class="in mono" placeholder="JSON or plain lines, one per bot turn. Without this pronunciation can only compare two ASR passes."></textarea></div>
+          <div class="field"><label>Tool log (optional)</label><textarea class="in mono" placeholder="One tool call per line. Without this, tool and database checks are skipped."></textarea></div>
+        </div></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;position:sticky;top:16px">
+        <div class="panel"><div class="ph"><h2>Evidence available</h2></div><div class="pb">
+          <div class="evidence">
+            <div><span class="ok">${VL.icons.check}</span><span>Audio, both channels</span><span class="r">timing, overlap, audio quality, listening</span></div>
+            <div><span class="ok">${VL.icons.check}</span><span>Transcript from our STT</span><span class="r">transcript judge, general</span></div>
+            <div><span class="no">${VL.icons.x}</span><span>Scenario and rubric</span><span class="r">pick a scenario to enable</span></div>
+            <div><span class="no">${VL.icons.x}</span><span>Intended bot text</span><span class="r">pronunciation reduced to ASR vs ASR</span></div>
+            <div><span class="no">${VL.icons.x}</span><span>Tool log</span><span class="r">tool checks skipped</span></div>
+            <div><span class="no">${VL.icons.x}</span><span>Database before and after</span><span class="r">state assertions skipped</span></div>
+          </div>
+          <div class="note warn" style="margin-top:12px">${VL.icons.warn}<span>With this evidence the call cannot be marked <b>pass</b> or <b>fail</b> automatically. It will land in <b>needs review</b> with findings from timing, pronunciation, audio quality, and the advisory listener.</span></div>
+          <div class="btn-row" style="margin-top:12px"><a class="btn primary lg" href="talk.html?phase=evaluating">Evaluate</a><span class="faint">about 40 s for 5 min of audio</span></div>
+        </div></div>
+      </div>
+    </div>`;
+};
+</script>
+</body>
+</html>

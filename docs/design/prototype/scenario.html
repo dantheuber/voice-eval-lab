@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scenario builder · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="scenario">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Scenarios", "S-03 Refund for duplicate invoice FH-4419"], keys: [["Save", "Ctrl S"], ["Add beat below", "Ctrl Enter"], ["Move beat up / down", "Alt ↑ ↓"], ["Draft with AI", "Ctrl D"]] });
+  const page = document.getElementById("page");
+  const beats = [
+    ["Open with the complaint: charged twice this month, wants it fixed today", true],
+    ["Give postcode SY23 4AF only when asked. If asked for the account number, say you don't have it to hand", false],
+    ["Name the invoice FH-4419 and the date, the 14th, if the bot has not found it by turn 6", true],
+    ["Ask how long the refund takes. Push back once if the answer is vague", false],
+    ["Ask for a reference number before hanging up", true],
+  ];
+  const facts = [["account", "10482"], ["company", "Lindqvist Ceramics Ltd"], ["caller name", "Rosa Lindqvist (or persona name if overriding)"], ["postcode", "SY23 4AF"], ["phone on file", "07700 900 412"], ["invoice", "FH-4419, £29.00, charged twice on 2026-10-14"], ["card last four", "4471 (never read in full)"]];
+  const must = ["Verifies identity (postcode) before discussing billing", "Identifies the duplicate charge on FH-4419", "States the refund timeframe as 5 to 7 business days", "Issues the refund with the issue_refund tool", "Offers a ticket or reference number"];
+  const mustnot = ["Offers account credit instead of a refund without asking", "Reads back a full card number"];
+  const draftOpen = new URLSearchParams(location.search).get("draft") === "1";
+  page.innerHTML = `
+    <div class="page-head"><div><h1>S-03 Refund for duplicate invoice FH-4419</h1><div class="sub">Used in 34 calls over 7 days, 68% pass. Editing creates version 4; old calls keep version 3.</div></div>
+      <div class="actions"><span class="faint">saved 2 min ago</span><button class="btn">Dry run (text only)</button><button class="btn primary">Save <kbd>Ctrl</kbd><kbd>S</kbd></button></div></div>
+    <div class="builder">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div class="panel"><div class="ph"><h2>The issue</h2></div><div class="pb" style="display:flex;flex-direction:column;gap:12px">
+          <div class="form-row">
+            <div class="field" style="grid-column:span 2"><label>Name</label><input class="in" value="Refund for duplicate invoice FH-4419"></div>
+            <div class="field"><label>Tags</label><input class="in" value="billing, refund"></div>
+          </div>
+          <div class="field"><label>What the caller wants, in their words</label><textarea class="in">I've been charged twice for the same invoice this month, FH-4419, 29 pounds each time on the 14th. I want the second payment refunded and I want to know how long it takes.</textarea><span class="help">The caller bot sees this and the fact sheet. It does not see the rules below.</span></div>
+          <div class="form-row">
+            <div class="field"><label>Mock account</label><select class="in"><option>10482 Lindqvist Ceramics Ltd (email + web, 2 domains)</option><option>20917 Okafor family (email only)</option><option>31250 Brierley Plumbing (web, suspended)</option><option>44871 Patel Consulting (email + domain)</option></select><span class="help">Each call gets a fresh copy of this account's seeded state. <a href="#">View seed</a></span></div>
+            <div class="field"><label>Turn limit</label><input class="in" value="20" style="width:80px"><span class="help">Call ends as invalid if the caller has not reached checkpoint 3 by then.</span></div>
+          </div>
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Caller's fact sheet</h2><span class="faint">the caller may only use these facts</span><span class="grow"></span><button class="btn sm ghost">Add fact</button></div><div class="pb" style="display:flex;flex-direction:column;gap:4px">
+          ${facts.map(([k, v]) => `<div class="fact"><input class="in mono" value="${k}" aria-label="fact name"><input class="in" value="${v}" aria-label="fact value"><button class="x btn ghost sm" aria-label="remove">×</button></div>`).join("")}
+        </div></div>
+        <div class="panel"><div class="ph"><h2>Beats, in order</h2><span class="faint">checkpoints decide whether a run is valid</span><span class="grow"></span><button class="btn sm ghost">Add beat <kbd>Ctrl</kbd><kbd>↵</kbd></button></div><div class="pb"><div class="beats">
+          ${beats.map(([b, cp], i) => `<div class="beat"><span class="n">${i + 1}</span><div><input class="in" value="${b}"><label class="check checkpoint" style="margin-top:2px"><input type="checkbox" ${cp ? "checked" : ""}> checkpoint</label></div><span class="drag" aria-label="drag to reorder">⋮⋮</span></div>`).join("")}
+        </div></div></div>
+        <div class="panel"><div class="ph"><h2>Rules the bot is judged on</h2><span class="faint">the transcript judge quotes evidence for each. A failed "must not" always fails the call.</span><span class="grow"></span><button class="btn sm ghost">Add</button></div><div class="pb"><div class="rules">
+          ${must.map((r, i) => `<div class="rule"><span class="k must">must C${i + 1}</span><input class="in" value="${r}"><button class="x" aria-label="remove">×</button></div>`).join("")}
+          ${mustnot.map((r, i) => `<div class="rule"><span class="k mustnot">not N${i + 1}</span><input class="in" value="${r}"><button class="x" aria-label="remove">×</button></div>`).join("")}
+        </div></div></div>
+        <div class="grid cols-2">
+            <div class="panel"><div class="ph"><h2>Expected database changes</h2></div><div class="pb">
+              <textarea class="in mono" style="min-height:92px">invoices[FH-4419].status: paid -> refund_pending
+refunds: +1 row where invoice = FH-4419 and amount = 29.00
+notes: any (allowed)</textarea><div class="help" style="margin-top:4px">Checked by diffing the call's database copy against the seed. Unlisted changes are flagged.</div></div></div>
+            <div class="panel"><div class="ph"><h2>Pronunciation watch list</h2></div><div class="pb">
+              <input class="in mono" value="FH-4419, SY23 4AF, Lindqvist, 29.00, lindqvist-ceramics.co.uk"><div class="help" style="margin-top:4px">Tokens weighted heavily by the pronunciation evaluator. Numbers and names are added automatically from the fact sheet.</div></div></div>
+        </div>
+      </div>
+      <div class="panel ai-draft" style="position:sticky;top:16px">
+        <div class="ph"><h2>Draft with AI</h2><span class="grow"></span><span class="faint mono">Qwen3.5-9B</span></div>
+        <div class="pb">
+          <div class="field"><label>Describe the situation in plain words</label><textarea class="in" style="min-height:90px">Customer whose website got suspended for non-payment but they actually paid two days ago. Angry, wants it back up now and wants to know if there's a reinstatement fee.</textarea></div>
+          <div class="btn-row"><button class="btn primary" id="draftBtn">Draft scenario <kbd>Ctrl</kbd><kbd>D</kbd></button><label class="check"><input type="checkbox" checked> replace empty fields only</label></div>
+          <div id="draftOut" ${draftOpen ? "" : "hidden"}>
+            <div class="note info" style="margin:8px 0">${VL.icons.info}<span>Draft ready in 6 s. Nothing is saved until you accept. Facts marked <b>guessed</b> need checking against the seed.</span></div>
+            <div class="diff">
+              <div class="label">Proposed</div>
+              <div class="ins"><b>Issue</b> Site brierleyplumbing.co.uk shows suspended. Paid FH-4471 (£18.00) on 2026-10-28.</div>
+              <div class="ins"><b>Account</b> 31250 Brierley Plumbing <span class="tag">guessed</span></div>
+              <div class="ins"><b>Beats</b> 1 state site is down and paid · 2 give postcode HD7 2RL when asked · 3 push back if told to wait 24 h (checkpoint) · 4 ask about a reinstatement fee · 5 ask for written confirmation</div>
+              <div class="ins"><b>Must</b> verify identity · confirm payment received · reinstate with reinstate_site tool · state there is no fee · offer email confirmation</div>
+              <div class="ins"><b>Must not</b> ask the caller to pay again · promise a timeframe longer than 1 hour</div>
+              <div class="ins"><b>Expected db</b> sites[brierleyplumbing.co.uk].status: suspended -> active · fees: no new row</div>
+              <div class="ins"><b>Watch list</b> FH-4471, HD7 2RL, brierleyplumbing.co.uk, 18.00</div>
+            </div>
+            <div class="btn-row" style="margin-top:8px"><button class="btn primary">Accept into a new scenario</button><button class="btn">Accept into this one</button><button class="btn ghost">Discard</button></div>
+          </div>
+          <div id="draftWait" hidden><div class="skel" style="width:70%;margin:8px 0"></div><div class="skel" style="width:90%;margin:8px 0"></div><div class="skel" style="width:60%;margin:8px 0"></div><div class="faint">Drafting, usually 5 to 10 s.</div></div>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById("draftBtn").addEventListener("click", () => { document.getElementById("draftWait").hidden = false; document.getElementById("draftOut").hidden = true; setTimeout(() => { document.getElementById("draftWait").hidden = true; document.getElementById("draftOut").hidden = false; }, 1400); });
+};
+</script>
+</body>
+</html>

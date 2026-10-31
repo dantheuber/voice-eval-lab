@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calls · voice-eval-lab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-page="calls">
+<div class="app">
+  <nav class="rail" id="rail" aria-label="Main"></nav>
+  <div class="main">
+    <header class="topbar" id="topbar"></header>
+    <div class="content"><div class="page" id="page"></div></div>
+  </div>
+</div>
+<script src="data.js"></script>
+<script src="app.js"></script>
+<script>
+VL.pageInit = function () {
+  VL.renderShell({ crumbs: ["Calls"], keys: [["Move selection", "j k"], ["Open selected call", "Enter"], ["Open in review", "o"], ["Filter verdict", "v"], ["Clear filters", "Esc"]] });
+  const q = new URLSearchParams(location.search);
+  const f = { verdict: q.get("verdict") || "", scenario: q.get("scenario") || "", persona: "", mode: "", profile: "", run: q.get("run") || "" };
+  const page = document.getElementById("page");
+  let sel = 0;
+  function rows() {
+    return VL.calls.filter(c => (!f.verdict || c.verdict === f.verdict) && (!f.scenario || c.scenario === f.scenario) && (!f.persona || c.persona === f.persona) && (!f.mode || c.mode === f.mode) && (!f.profile || c.profile === f.profile) && (!f.run || c.run === f.run));
+  }
+  function render() {
+    const list = rows();
+    const opt = (arr, cur, lab) => `<option value="">${lab}</option>` + arr.map(([v, l]) => `<option value="${v}" ${cur === v ? "selected" : ""}>${l}</option>`).join("");
+    page.innerHTML = `
+      <div class="page-head"><div><h1>Calls</h1><div class="sub">${list.length} of ${VL.calls.length} calls. Click a row to review it. Invalid calls are test problems and are excluded from pass rates.</div></div>
+        <div class="actions"><button class="btn sm">Export CSV</button></div></div>
+      <div class="filters" role="group" aria-label="Filters">
+        <span class="seg" role="group" aria-label="Verdict">${["", "pass", "fail", "needs_review", "invalid"].map(v => `<button data-k="verdict" data-v="${v}" aria-pressed="${f.verdict === v}">${v ? VL.verdictLabel[v] : "all"} <span class="faint num">${v ? VL.calls.filter(c => c.verdict === v).length : VL.calls.length}</span></button>`).join("")}</span>
+        <select class="in" data-k="scenario" aria-label="Scenario">${opt(VL.scenarios.map(s => [s.id, `${s.id} ${s.name}`]), f.scenario, "Any scenario")}</select>
+        <select class="in" data-k="persona" aria-label="Persona">${opt(VL.personas.map(p => [p.id, p.name]), f.persona, "Any persona")}</select>
+        <select class="in" data-k="mode" aria-label="Mode">${opt([["live", "live"], ["turn", "turn-based"], ["human", "mic"], ["upload", "upload"]], f.mode, "Any mode")}</select>
+        <select class="in" data-k="profile" aria-label="Model profile">${opt(VL.profiles.map(p => [p.id, p.label]), f.profile, "Any profile")}</select>
+        ${f.run ? `<button class="chip" data-k="run" data-v="" aria-pressed="true">${f.run} <span class="x">×</span></button>` : ""}
+        <span class="grow"></span>
+        <label class="check"><input type="checkbox" checked> open findings only</label>
+      </div>
+      <div class="panel flush"><div class="pb" style="overflow:auto">
+      ${list.length ? `<table class="t" id="tbl">
+        <thead><tr><th></th><th>Call</th><th>Verdict</th><th>Scenario</th><th>Persona</th><th>Mode</th><th>Profile</th><th>Run</th><th class="num">Dur</th><th class="num" title="median bot reply latency">Reply p50</th><th class="num">Overlaps</th><th class="num">Findings</th></tr></thead>
+        <tbody>${list.map((c, i) => { const p = VL.personaById(c.persona), s = VL.scenarioById(c.scenario); return `<tr tabindex="0" data-id="${c.id}" class="${i === sel ? "sel" : ""}">
+          <td style="width:18px;color:var(--ink-4)">${i === sel ? "▸" : ""}</td>
+          <td class="id">${c.id}</td>
+          <td>${VL.verdict(c.verdict)}${c.verdict === "invalid" ? `<div class="faint" style="font-size:10px;max-width:220px;white-space:normal">${c.invalidReason}</div>` : ""}</td>
+          <td>${s ? `<b class="mono">${s.id}</b> <span class="muted">${s.name}</span>` : `<span class="faint">unknown (upload)</span>`}</td>
+          <td>${p ? p.name : c.mode === "human" ? "you" : "<span class='faint'>unknown</span>"}</td>
+          <td>${VL.mode(c.mode)}</td>
+          <td class="mono">${c.profile}</td>
+          <td class="id">${c.run} <span class="faint">r${c.rep}</span></td>
+          <td class="num mono">${VL.fmtShort(c.dur)}</td>
+          <td class="num mono">${c.latency == null ? `<span class="faint" title="Turn-based call, timing not measured">n/a</span>` : c.latency.toFixed(2) + " s"}</td>
+          <td class="num mono">${c.overlap == null ? `<span class="faint">n/a</span>` : c.overlap}</td>
+          <td class="num mono">${c.findings}${c.open ? ` <span class="tag mono" style="color:var(--review)">${c.open} open</span>` : ""}</td></tr>`; }).join("")}</tbody></table>`
+        : `<div class="empty"><b>No calls match these filters</b>Clear a filter, or <a href="run.html">launch a run</a> for this scenario.</div>`}
+      </div></div>`;
+    page.querySelectorAll("[data-k]").forEach(el => el.addEventListener(el.tagName === "SELECT" ? "change" : "click", () => { f[el.dataset.k] = el.dataset.v !== undefined ? el.dataset.v : el.value; sel = 0; render(); }));
+    page.querySelectorAll("#tbl tbody tr").forEach((tr, i) => { tr.addEventListener("click", () => open(tr.dataset.id)); tr.addEventListener("focus", () => { sel = i; }); });
+  }
+  function open(id) { location.href = `review.html?call=${id in VL.reviews ? id : "c_1030_0917_a3f2"}`; }
+  document.addEventListener("keydown", e => {
+    const tag = (e.target.tagName || "").toLowerCase(); if (["input", "select", "textarea"].includes(tag)) return;
+    const list = rows(); if (!list.length) return;
+    if (e.key === "j") { sel = Math.min(list.length - 1, sel + 1); render(); }
+    if (e.key === "k") { sel = Math.max(0, sel - 1); render(); }
+    if (e.key === "Enter" || e.key === "o") open(list[sel].id);
+    if (e.key === "Escape") { Object.keys(f).forEach(k => f[k] = ""); render(); }
+  });
+  render();
+};
+</script>
+</body>
+</html>
