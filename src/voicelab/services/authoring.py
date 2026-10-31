@@ -31,8 +31,8 @@ from voicelab.core.models import (
     VoiceRef,
 )
 from voicelab.core.profiles import ProviderStack
-from voicelab.providers.base import LLM, TTS, ChatMessage
-from voicelab.services.errors import ServiceError
+from voicelab.providers.base import LLM, ChatMessage
+from voicelab.services.errors import Invalid, ServiceError
 from voicelab.telephony.line import PhoneLine
 
 _PROMPT_PLACEHOLDER = "(from the scenario)"
@@ -199,29 +199,28 @@ def persona_prompt(persona: Persona) -> str:
 # Voices ----------------------------------------------------------------------------------------
 
 
-def _tts_for(stack: ProviderStack, provider: str | None) -> TTS:
-    choices = [stack.tts_caller, stack.tts_bot]
-    return next((tts for tts in choices if tts.name == provider), stack.tts_caller)
-
-
 async def list_voices(stack: ProviderStack) -> list[dict[str, str]]:
-    items: dict[tuple[str, str], dict[str, str]] = {}
-    for tts in (stack.tts_caller, stack.tts_bot):
-        for voice in await tts.voices():
-            items[(tts.name, voice.id)] = {
-                "provider": tts.name,
-                "voiceId": voice.id,
-                "label": voice.label,
-                "language": voice.language,
-            }
-    return list(items.values())
+    """What a persona can sound like. Calls always speak a persona's voice through `tts_caller`,
+    so a bot voice in this list would preview fine and then fail the call."""
+    tts = stack.tts_caller
+    return [
+        {
+            "provider": tts.name,
+            "voiceId": voice.id,
+            "label": voice.label,
+            "language": voice.language,
+        }
+        for voice in await tts.voices()
+    ]
 
 
 async def preview_voice(
     stack: ProviderStack, text: str, voice: VoiceRef, line: LineConditions | None
 ) -> bytes:
-    tts = _tts_for(stack, voice.provider)
-    clip = await tts.synthesize(text, voice_id=voice.voice_id, style=voice.style)
+    try:
+        clip = await stack.tts_caller.synthesize(text, voice_id=voice.voice_id, style=voice.style)
+    except ValueError as exc:  # the adapter refused the voice: not on the license-safe list
+        raise Invalid(str(exc)) from exc
     return await asyncio.to_thread(_through_line, clip, line)
 
 

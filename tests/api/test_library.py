@@ -368,3 +368,15 @@ def test_loading_models_answer_model_not_ready(client, rig, role_blocks, route, 
 def test_stack_factory_is_the_injected_one(rig):
     stack = rig.services.profiles.stack(rig.services.profiles.require("local-default"))
     assert stack.llm_support.name == fake_stack(stack.profile).llm_support.name
+
+
+def test_a_voice_the_caller_tts_refuses_is_a_clear_400(client, rig, monkeypatch):
+    async def refuse(*_args, **_kwargs):
+        raise ValueError("'Easton' is not a license-safe Pocket TTS voice")
+
+    stack = rig.services.profiles.stack(rig.services.profiles.resolve(None))
+    monkeypatch.setattr(type(stack.tts_caller), "synthesize", refuse)
+    voice = {"provider": None, "voiceId": "Easton", "style": None}
+    response = client.post("/api/tts/preview", json={"text": "Hi", "voice": voice, "line": None})
+    assert response.status_code == 400
+    assert "license-safe" in response.json()["error"]["message"]
