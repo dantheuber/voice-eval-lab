@@ -1,0 +1,15 @@
+# Runs a whole call with no models and no GPU, for development and tests.
+# Set delay_s on any role to slow it down and watch a call play out in the dashboard.
+id: fake
+label: Fake (no models)
+description: Deterministic rule-based bots and tone-coded audio. Nothing here is a real model.
+live_capable: false
+roles:
+  stt_live: {type: fake, name: fake-stt-live}
+  stt_eval: {type: fake, name: fake-stt-eval}
+  tts_bot: {type: fake, name: fake-tts-bot, voice_id: default_female_1}
+  tts_caller: {type: fake, name: fake-tts-caller}
+  llm_support: {type: fake, name: fake-llm-support}
+  llm_caller: {type: fake, name: fake-llm-caller}
+  llm_judge: {type: fake, name: fake-llm-judge}
+  audio_analyst: {type: fake}

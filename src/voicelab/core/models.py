@@ -213,6 +213,7 @@ class CallArtifact(BaseModel):
     has_tool_log: bool = True  # False for uploads
     has_intended_text: bool = True  # False for humans' side and uploads
     error: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)  # e.g. real compute times, run labels
 
 
 # Evaluation ------------------------------------------------------------------------------------
