@@ -182,26 +182,28 @@ function Evaluating({ callId, onAgain, onOpen }: { callId: string; onAgain: () =
   const [findings, setFindings] = useState<Finding[]>([]);
   const [done, setDone] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   const open = useCallback(() => endpoints.callSocket(callId), [callId]);
   useSocket<CallWsMessage>(open, (m) => {
     if (m.type === "evaluator") setEvals((e) => [...e.filter((x) => x.name !== m.evaluator.name), m.evaluator]);
     if (m.type === "finding") setFindings((f) => [...f, m.finding]);
     if (m.type === "eval") setDone(m.eval.verdict);
-  }, { onClose: () => setClosed(true) });
+  }, { onClose: () => { setClosed(true); void endpoints.call(callId).then((c) => { if (c.call.status === "failed") setFailure(c.call.error ?? "The call failed."); }); } });
   // Server-reported evaluators first (any new one appears automatically), then the expected set still to come.
   const order = orderedEvaluators(evals, findings, !done && !closed);
   const running = order.find((n) => !evals.some((e) => e.name === n));
   return (
     <div className="panel" style={{ maxWidth: 720, margin: "0 auto" }}>
-      <div className="ph"><h2>Call ended, evaluating</h2><span className="mono faint">{callId}</span><ModeBadge mode="human" /><span className="grow" />{done ? <VerdictBadge v={done as "pass"} /> : closed ? <span className="faint">connection closed</span> : <HealthDot state="loading">running</HealthDot>}</div>
+      <div className="ph"><h2>{failure ? "Call failed" : "Call ended, evaluating"}</h2><span className="mono faint">{callId}</span><ModeBadge mode="human" /><span className="grow" />{failure ? <VerdictBadge v="failed" /> : done ? <VerdictBadge v={done as "pass"} /> : closed ? <span className="faint">connection closed</span> : <HealthDot state="loading">running</HealthDot>}</div>
       <div className="pb">
+        {failure && <Note kind="err" style={{ marginBottom: 12 }}><b>The call stopped because a model failed, so it won't be evaluated.</b> {failure} What was recorded is kept, and the model server restarts by itself.</Note>}
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><tbody>
           <tr><td style={{ width: 90, padding: "6px 0" }}><span className="v pass">done</span></td><td>Recording saved<div className="faint">stereo, you left, bot right</div></td></tr>
           {order.map((n) => { const e = evals.find((x) => x.name === n); const fs = findings.filter((f) => f.evaluator === n); return (
             <tr key={n}><td style={{ padding: "6px 0" }}>{e ? (e.status === "skipped" ? <span className="v queued">skipped</span> : e.status === "error" ? <VerdictBadge v="failed" /> : <span className="v pass">done</span>) : n === running && !done && !closed ? <VerdictBadge v="running" /> : <VerdictBadge v="queued" />}</td>
               <td>{evalName(n)}{isAdvisoryEvaluator(n, findings) ? " (advisory)" : ""}<div className="faint">{e?.status === "skipped" ? e.reason : fs.length ? `${fs.length} finding${fs.length === 1 ? "" : "s"}: ${fs.map((f) => f.title).join("; ")}` : e ? "no findings" : n === "transcript_judge" && n === running ? "waiting on the judge LLM" : ""}</div></td></tr>); })}
         </tbody></table>
-        <div className="btn-row" style={{ marginTop: 24 }}><Button variant="primary" onClick={onOpen}>{done ? "Open review" : "Open review as results arrive"}</Button><Button onClick={onAgain}>Call again</Button><span className="faint">You can leave. The call appears in the review queue when evals finish.</span></div>
+        <div className="btn-row" style={{ marginTop: 24 }}><Button variant="primary" onClick={onOpen}>{done || failure ? "Open review" : "Open review as results arrive"}</Button><Button onClick={onAgain}>Call again</Button>{!failure && <span className="faint">You can leave. The call appears in the review queue when evals finish.</span>}</div>
       </div>
     </div>
   );
