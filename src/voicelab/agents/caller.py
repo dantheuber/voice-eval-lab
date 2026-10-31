@@ -317,7 +317,7 @@ class CallerBot:
         """The model also forgets to call a step done, and then it replays that step for ever.
 
         These steps can be read off the words: a real opening line is the first step, the zip and
-        PIN got said, a step that asks got asked, or the agent asked and the answer opens with a yes.
+        PIN got said, a step that asks got asked, or the agent asked and the answer starts with yes.
         """
         if self.turns == 1 and len(text.split()) >= OPENING_WORDS:
             return True
