@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
-import { Button, ErrorBox, ModeBadge, Panel, RateLegend, Skeleton, VerdictBadge } from "@/components/ui";
-import { keys, useRun } from "@/api/queries";
+import { Button, ErrorBox, ModeBadge, Panel, RateLegend, Skeleton, Untested, VerdictBadge } from "@/components/ui";
+import { keys, useProfiles, useRun } from "@/api/queries";
+import { isUntested } from "@/lib/untested";
 import { endpoints } from "@/api/client";
 import { useSocket } from "@/hooks/useSocket";
 import { ciText, valid } from "@/lib/stats";
@@ -16,9 +17,12 @@ type Line = { kind: "turn" | "partial" | "event"; speaker?: Speaker; text: strin
 export function RunProgressScreen() {
   const { id = "" } = useParams();
   const q = useRun(id);
+  const profiles = useProfiles();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const [watch, setWatch] = useState<string | null>(null);
+  const [watch, setWatchState] = useState<string | null>(null);
+  const watchRef = useRef<string | null>(null);
+  const setWatch = (id: string | null) => { watchRef.current = id; setWatchState(id); };
   const [lines, setLines] = useState<Line[]>([]);
   const [liveT, setLiveT] = useState(0);
   const [connected, setConnected] = useState(false);
@@ -41,7 +45,11 @@ export function RunProgressScreen() {
       case "callEvaluated": upCall(m.call); qc.invalidateQueries({ queryKey: ["calls"] }); qc.invalidateQueries({ queryKey: ["overview"] }); break;
       case "runDone": patch((d) => ({ ...d, run: m.run })); qc.invalidateQueries({ queryKey: ["runs"] }); break;
     }
-  }, { enabled: !!active, reconnect: true, onClose: () => setConnected(false) });
+  }, {
+    enabled: !!active, reconnect: true, onClose: () => setConnected(false),
+    // After a reconnect, restore the watched call and refresh everything missed while offline.
+    onOpen: (sk, attempt) => { if (watchRef.current) sk.send(JSON.stringify({ type: "watch", callId: watchRef.current })); if (attempt > 0) { qc.invalidateQueries({ queryKey: keys.run(id) }); qc.invalidateQueries({ queryKey: ["calls"] }); } },
+  });
   useEffect(() => { liveRef.current?.scrollTo({ top: 1e9 }); }, [lines]);
   const watchCall = (c: CallSummary) => { setWatch(c.id); setLines([]); sock.current?.send(JSON.stringify({ type: "watch", callId: c.id })); };
 
@@ -61,7 +69,7 @@ export function RunProgressScreen() {
             <>
               <div className="page-head">
                 <div><h1 style={{ display: "flex", gap: 8, alignItems: "center" }}>{run.id} {run.status === "running" ? <VerdictBadge v="running" /> : <span className="tag">{run.status}</span>} <ModeBadge mode={run.mode} /></h1>
-                  <div className="page-sub">{run.label}, {run.profile}, started {fmtWhen(run.startedAt)}.{run.status === "stopped" ? " Stopped early; partial results kept." : ""}{run.status === "paused" ? " Paused after the calls in flight." : ""}{active && !connected ? " Reconnecting to live updates…" : ""}</div></div>
+                  <div className="page-sub">{run.label}, <span className="mono">{run.profile}</span> {isUntested(run, profiles.data?.items) && <Untested />}, started {fmtWhen(run.startedAt)}.{run.status === "stopped" ? " Stopped early; partial results kept." : ""}{run.status === "paused" ? " Paused after the calls in flight." : ""}{active && !connected ? " Reconnecting to live updates…" : ""}</div></div>
                 <div className="actions">
                   {run.status === "running" && <Button onClick={() => act("pause")}>Pause after current calls</Button>}
                   {run.status === "paused" && <Button onClick={() => act("resume")}>Resume</Button>}

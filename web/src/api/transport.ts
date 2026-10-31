@@ -34,8 +34,18 @@ export interface Transport {
   mediaUrl(path: string | null): string | null;
 }
 
-export const isMock = (): boolean =>
-  import.meta.env.VITE_API_MOCK === "1" || new URLSearchParams(window.location.search).get("mock") === "1";
+/* The transport mode is decided once per tab and frozen. `?mock=1` is remembered in sessionStorage so that
+   client-side navigation (which drops the flag from the URL) and reloads keep the same transport; `?mock=0` clears it. */
+const MOCK_MODE: boolean = (() => {
+  if (typeof window === "undefined") return false;
+  const fromEnv = import.meta.env.VITE_API_MOCK === "1";
+  const param = new URLSearchParams(window.location.search).get("mock");
+  let stored: string | null = null;
+  try { stored = sessionStorage.getItem("vl-mock"); } catch { /* private mode */ }
+  try { if (param === "1") sessionStorage.setItem("vl-mock", "1"); if (param === "0") sessionStorage.removeItem("vl-mock"); } catch { /* ignore */ }
+  return fromEnv || param === "1" || (param !== "0" && stored === "1");
+})();
+export const isMock = (): boolean => MOCK_MODE;
 
 const realTransport: Transport = {
   async request<T>(method: Method, path: string, body?: unknown, init?: { form?: FormData; signal?: AbortSignal }): Promise<T> {

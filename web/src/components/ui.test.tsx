@@ -20,12 +20,13 @@ describe("badges", () => {
 describe("rates", () => {
   it("rate bar has a full text label including invalid", () => {
     wrap(<RateBar counts={{ pass: 3, fail: 1, needsReview: 2, invalid: 4 }} />);
-    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "3 pass, 1 fail, 2 needs review, 4 invalid of 10");
+    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "3 pass, 1 fail, 2 needs review of 6 valid; 4 invalid excluded");
+    expect(screen.getByText("+4 invalid")).toBeInTheDocument();
   });
   it("pass rate excludes invalid and shows an interval", () => {
     wrap(<PassRate counts={{ pass: 17, fail: 4, needsReview: 2, invalid: 1 }} />);
     expect(screen.getByText("74%")).toBeInTheDocument();
-    expect(screen.getByText("54-87%")).toBeInTheDocument();
+    expect(screen.getByText("54-87%, n=23")).toBeInTheDocument();
   });
 });
 

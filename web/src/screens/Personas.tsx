@@ -37,8 +37,13 @@ export function PersonasScreen() {
 
 const blank = (): PersonaInput => ({ name: "", summary: "", age: null, temperament: "neutral", speakingStyle: "", patience: 3, verbosity: 3, techSavviness: 3, interruptionRate: 0, voice: { provider: null, voiceId: "default_female_1", style: null }, line: { codec: "mulaw_8k", noise: "none", snrDb: 20, packetLossPct: 0, oneWayLatencyMs: 80 } });
 
+/* Editor state is keyed by resource id, so jumping from one persona to another never carries the previous form over. */
 export function PersonaEditorScreen() {
   const { id } = useParams();
+  return <PersonaEditor key={id ?? "new"} id={id} />;
+}
+
+function PersonaEditor({ id }: { id: string | undefined }) {
   const isNew = !id;
   const q = usePersona(id);
   const voices = useVoices();

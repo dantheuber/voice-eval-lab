@@ -1,5 +1,39 @@
 import { describe, expect, it } from "vitest";
-import { addCounts, ciText, median, passPct, wilson } from "./stats";
+import { addCounts, ciText, intervalsOverlap, median, passPct, rateDirection, serialize, wilson } from "./stats";
+
+describe("rateDirection", () => {
+  it("judges on rates, so 2/2 -> 3/10 is worse", () => {
+    expect(rateDirection({ pass: 2, n: 2 }, { pass: 3, n: 10 })).toBe("worse");
+    expect(rateDirection({ pass: 1, n: 3 }, { pass: 2, n: 3 })).toBe("better");
+    expect(rateDirection({ pass: 1, n: 2 }, { pass: 2, n: 4 })).toBe("same");
+  });
+  it("is null with no valid calls on either side", () => {
+    expect(rateDirection({ pass: 0, n: 0 }, { pass: 1, n: 1 })).toBeNull();
+  });
+});
+
+describe("intervalsOverlap", () => {
+  it("small samples overlap, large disjoint ones do not", () => {
+    expect(intervalsOverlap({ pass: 17, n: 23 }, { pass: 19, n: 24 })).toBe(true);
+    expect(intervalsOverlap({ pass: 300, n: 500 }, { pass: 400, n: 500 })).toBe(false);
+  });
+  it("is null when a side is empty", () => {
+    expect(intervalsOverlap({ pass: 0, n: 0 }, { pass: 1, n: 2 })).toBeNull();
+  });
+});
+
+describe("serialize", () => {
+  it("runs writes for one key in order and keeps going after a failure", async () => {
+    const order: string[] = [];
+    const slow = serialize("k", () => new Promise<string>((r) => setTimeout(() => { order.push("a"); r("a"); }, 20)));
+    const failing = serialize("k", async () => { order.push("b"); throw new Error("no"); });
+    const fast = serialize("k", async () => { order.push("c"); return "c"; });
+    await expect(slow).resolves.toBe("a");
+    await expect(failing).rejects.toThrow("no");
+    await expect(fast).resolves.toBe("c");
+    expect(order).toEqual(["a", "b", "c"]);
+  });
+});
 
 describe("wilson", () => {
   it("returns null for n = 0", () => {

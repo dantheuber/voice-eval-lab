@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
-import { Button, ErrorBox, HealthDot, Icon, Kbd, ModeBadge, Note, Skeleton, VerdictBadge } from "@/components/ui";
-import { keys, useCall, useDecideFinding, useSetVerdict } from "@/api/queries";
+import { Button, ErrorBox, HealthDot, Icon, Kbd, ModeBadge, Note, Skeleton, Untested, VerdictBadge } from "@/components/ui";
+import { keys, useCall, useDecideFinding, useProfiles, useSetVerdict } from "@/api/queries";
+import { isUntested } from "@/lib/untested";
 import { endpoints } from "@/api/client";
 import { useSocket } from "@/hooks/useSocket";
 import { useHotkeys, useScope } from "@/hooks/useHotkeys";
@@ -13,7 +14,7 @@ import { fmtClock, fmtDuration, sevClass, verdictLabel } from "@/lib/format";
 import type { CallWsMessage, Finding, ReviewPayload, Verdict } from "@/api/types";
 import { Waveform } from "./Waveform";
 import { Transcript } from "./Transcript";
-import { DbDiff, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, selectFirstOpen } from "./Findings";
+import { DbDiff, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, selectFirstOpen, verdictAllowed } from "./Findings";
 import { useAudio } from "./useAudio";
 import s from "./review.module.css";
 
@@ -51,9 +52,12 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
   const isTurn = payload.call.mode === "turn_based";
   const sc = payload.call.scenarioSnapshot;
   const pe = payload.call.personaSnapshot;
+  const profiles = useProfiles();
+  const untested = isUntested({ untested: payload.summary.untested, profile: payload.call.profile, providers: payload.call.providers }, profiles.data?.items);
   useScope("review");
 
-  // live eval progress
+  // live eval progress. Streamed messages patch the cache for immediacy; the final `eval` and any reconnect
+  // refetch the whole payload so recording, timeline, duration, and timing are never left at their in-progress values.
   const openSock = useCallback(() => endpoints.callSocket(id), [id]);
   useSocket<CallWsMessage>(pending ? openSock : null, (m) => {
     qc.setQueryData<ReviewPayload>(keys.call(id), (prev) => {
@@ -61,12 +65,15 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
       const ev = prev.eval ?? { callId: id, verdict: "needs_review" as Verdict, summary: "", criteria: [], findings: [], evaluators: [], completedAt: "" };
       if (m.type === "evaluator") return { ...prev, eval: { ...ev, evaluators: [...ev.evaluators.filter((e) => e.name !== m.evaluator.name), m.evaluator] } };
       if (m.type === "finding") return { ...prev, eval: { ...ev, findings: ev.findings.some((f) => f.id === m.finding.id) ? ev.findings : [...ev.findings, m.finding] } };
-      if (m.type === "eval") return { ...prev, eval: m.eval, call: { ...prev.call, status: "done" }, summary: { ...prev.summary, status: "done", verdict: m.eval.verdict } };
-      if (m.type === "status") return { ...prev, call: { ...prev.call, status: m.status }, summary: { ...prev.summary, status: m.status } };
+      if (m.type === "status" && m.status !== "done") return { ...prev, call: { ...prev.call, status: m.status }, summary: { ...prev.summary, status: m.status } };
       return prev;
     });
-    if (m.type === "eval") { qc.invalidateQueries({ queryKey: ["calls"] }); qc.invalidateQueries({ queryKey: ["overview"] }); }
-  }, { enabled: pending });
+    if (m.type === "eval" || (m.type === "status" && m.status === "done") || m.type === "error") {
+      qc.invalidateQueries({ queryKey: keys.call(id) });
+      qc.invalidateQueries({ queryKey: ["calls"] }); qc.invalidateQueries({ queryKey: ["overview"] });
+      if (m.type === "error") toast(`Evaluation error: ${m.message}`, 4000);
+    }
+  }, { enabled: pending, reconnect: true, onOpen: (_s, attempt) => { if (attempt > 0) qc.invalidateQueries({ queryKey: keys.call(id) }); } });
 
   // initial selection: URL finding, else first open
   useEffect(() => {
@@ -101,7 +108,14 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
     }
   };
   const saveNote = (f: Finding, note: string) => { if (note !== f.humanNote) { decide.mutate({ findingId: f.id, humanVerdict: f.humanVerdict, humanNote: note }); toast(note ? "Note saved" : "Note removed"); } };
-  const setVerdict = (v: Verdict) => { setVerdictM.mutate({ verdict: v, note: "" }); toast(`Human verdict set to ${verdictLabel[v]}. Press ] for the next call.`, 2500); };
+  const setVerdict = (v: Verdict) => {
+    if (!verdictAllowed(v, payload.eval?.verdict ?? null, payload.summary.humanVerdict, pending)) {
+      toast(pending ? "Wait for evaluation to finish before setting a verdict." : "This run is invalid. Use \"Not invalid, count it\" (or 3) first.", 3000);
+      return;
+    }
+    setVerdictM.mutate({ verdict: v, note: "" });
+    toast(`Human verdict set to ${verdictLabel[v]}. Press ] for the next call.`, 2500);
+  };
   const goNext = async () => { const n = payload.nextReviewId ?? (await endpoints.nextReview(id)).callId; if (n) nav(`/calls/${n}`); else toast("Nothing else needs review"); };
   const goPrev = () => { if (payload.prevReviewId) nav(`/calls/${payload.prevReviewId}`); else toast("No previous call"); };
   const seek = (t: number) => { st.setClip(null); st.seek(t); };
@@ -136,7 +150,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
         <div className={s.meta}>
           <span>{sc ? <><b>{sc.title}</b></> : <span className="faint">no scenario</span>}</span>
           <span>persona <b>{pe?.name ?? (payload.call.mode === "human" ? "you" : "unknown")}</b></span>
-          <span>profile <b className="mono">{payload.call.profile ?? "?"}</b></span>
+          <span>profile <b className="mono">{payload.call.profile ?? "?"}</b> {untested && <Untested />}</span>
           {payload.call.batchId && <span>{payload.call.batchId}{payload.summary.rep ? <>, rep <b>{payload.summary.rep}</b></> : null}</span>}
           <span><b>{fmtClock(D)}</b> call time{isTurn && payload.call.endedAt && payload.call.startedAt ? <>, <b>{fmtDuration((new Date(payload.call.endedAt).getTime() - new Date(payload.call.startedAt).getTime()) / 1000)}</b> wall clock</> : null}</span>
           {sc && <span title="caller turns used of the scenario's limit">{payload.call.timeline.filter((e) => e.type === "utterance" && e.speaker === "caller").length}/{sc.maxTurns} turns</span>}
@@ -203,7 +217,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
               : <dl className={s.kvs}><dt>reply latency</dt><dd className={s.na}>{isTurn ? "not measured (turn-based)" : pending ? "waiting" : "not measured"}</dd><dt>overlaps</dt><dd className={s.na}>not measured</dd><dt>dead air</dt><dd className={s.na}>not measured</dd></dl>}
           </div>
           <div className={s.sec}><div className={s.sh}>Evaluators</div><Evaluators payload={payload} pending={pending} /></div>
-          <VerdictBar payload={payload} human={human} onSet={setVerdict} disabled={pending} />
+          <VerdictBar payload={payload} human={human} onSet={setVerdict} pending={pending} />
         </aside>
       </div>
     </div>

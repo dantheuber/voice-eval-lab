@@ -44,7 +44,7 @@ export function TalkScreen() {
 
   const create = useMutation({
     mutationFn: () => endpoints.createTalkSession({ scenarioId: scenarioId || null, personaId: personaId || null, line: LINES[line], record, profile: profiles.data?.activeId ?? null }),
-    onSuccess: async (sess) => { setSession(sess); setPhase("incall"); await call.start(sess); },
+    onSuccess: async (sess) => { setSession(sess); setPhase("incall"); await call.start(sess, { deviceId }); },
   });
   const endM = useMutation({
     mutationFn: async () => { call.end(); const r = await endpoints.endTalkSession(session!.sessionId); return r.callId; },

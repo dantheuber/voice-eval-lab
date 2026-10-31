@@ -318,3 +318,7 @@ a.rowlink:hover { text-decoration: none; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
 .grow { flex: 1; }
+.rate-wrap { display: inline-flex; align-items: center; gap: 6px; width: 100%; }
+.rate-wrap .rate { flex: 1; min-width: 60px; }
+.rate .none { background: var(--bg-4); }
+.rate-inv { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--invalid); white-space: nowrap; border: 1px dashed var(--invalid); border-radius: var(--r-1); padding: 0 4px; line-height: 14px; }

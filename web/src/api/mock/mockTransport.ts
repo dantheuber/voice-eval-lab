@@ -115,7 +115,11 @@ export function createMockTransport(): Transport {
       items = items.sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
       const facets: Record<string, number> = {};
       allCalls().forEach((c) => { if (c.verdict) facets[c.verdict] = (facets[c.verdict] ?? 0) + 1; });
-      const page: T.CallsPage = { items, nextCursor: null, total: items.length, facets: { verdict: facets } };
+      // opaque cursor = offset, limit defaults to 50 as in docs/API.md (`?limit=` lets tests exercise paging)
+      const limit = Math.max(1, Number(p.get("limit")) || 50);
+      const offset = Math.max(0, Number(p.get("cursor")) || 0);
+      const slice = items.slice(offset, offset + limit);
+      const page: T.CallsPage = { items: slice, nextCursor: offset + limit < items.length ? String(offset + limit) : null, total: items.length, facets: { verdict: facets } };
       return page;
     } },
     { method: "GET", re: /^\/api\/calls\/next-review$/, fn: (_m, _b, url) => {

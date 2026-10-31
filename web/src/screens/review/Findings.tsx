@@ -83,7 +83,7 @@ export function DbDiff({ payload }: { payload: ReviewPayload }) {
     const where = Object.entries(e.where).map(([k, v]) => `${k}=${v}`).join(", ");
     const what = e.op === "row_added" ? `+1 row (${where})` : e.op === "no_change" ? `unchanged (${where})` : `${where}: ${Object.entries(e.changes).map(([k, v]) => `${k} -> ${v}`).join(", ")}`;
     rows.push({ k: "exp", s: `expected  ${e.table.padEnd(10)} ${what}` });
-    rows.push(r?.status === "fail" ? { k: "miss", s: `actual    ${e.table.padEnd(10)} ${r.reason || "not as expected"}` } : { k: "ok", s: `actual    ${e.table.padEnd(10)} ${r ? "as expected" : "not checked yet"}` });
+    rows.push(dbActualRow(e.table, r?.status ?? null, r?.reason ?? ""));
   }
   for (const c of payload.call.dbChanges) {
     const expected = (sc?.expectedState ?? []).some((e) => e.table === c.table);
@@ -91,6 +91,23 @@ export function DbDiff({ payload }: { payload: ReviewPayload }) {
   }
   if (!rows.length) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>No expected changes and none observed.</div>;
   return <div className={s.dbdiff}>{rows.map((r, i) => <div key={i} className={s[r.k]}>{r.s}</div>)}</div>;
+}
+
+/* Only a pass may claim success. Unknown means the evaluator could not decide; absent means it has not run. */
+export function dbActualRow(table: string, status: "pass" | "fail" | "unknown" | null, reason: string): { k: "ok" | "miss" | "unexp" | "exp"; s: string } {
+  const head = `actual    ${table.padEnd(10)} `;
+  if (status === "pass") return { k: "ok", s: `${head}as expected${reason ? ` (${reason})` : ""}` };
+  if (status === "fail") return { k: "miss", s: `${head}${reason || "not as expected"}` };
+  if (status === "unknown") return { k: "unexp", s: `${head}could not be checked${reason ? `: ${reason}` : ""}` };
+  return { k: "exp", s: `${head}not checked yet` };
+}
+
+/* Which human verdicts are allowed right now. Shared by the buttons and the hotkeys. */
+export function verdictAllowed(v: Verdict, machine: Verdict | null, human: Verdict | null, pending: boolean): boolean {
+  if (pending) return false;
+  const invalidLocked = machine === "invalid" && (human == null || human === "invalid");
+  if (invalidLocked && (v === "pass" || v === "fail")) return false;
+  return true;
 }
 
 export function Evaluators({ payload, pending }: { payload: ReviewPayload; pending: boolean }) {
@@ -123,17 +140,17 @@ function summarize(name: string, m: Record<string, unknown>): string {
   }
 }
 
-export function VerdictBar({ payload, human, onSet, disabled }: { payload: ReviewPayload; human: Verdict | null; onSet: (v: Verdict) => void; disabled?: boolean }) {
+export function VerdictBar({ payload, human, onSet, pending }: { payload: ReviewPayload; human: Verdict | null; onSet: (v: Verdict) => void; pending: boolean }) {
   const machine = payload.eval?.verdict ?? null;
-  const invalid = machine === "invalid" && human !== "pass" && human !== "fail";
+  const invalidLocked = machine === "invalid" && (human == null || human === "invalid");
   return (
     <div className={s.verdictBar} id="verdictBar">
       <span className="muted">Call verdict</span>{machine ? <VerdictBadge v={machine} /> : <HealthDot state="loading">evaluating</HealthDot>}
       {human && human !== machine && <span className="faint">human: {verdictLabel[human]}</span>}
-      {invalid && <span className="faint" title="Un-mark invalid first to count this call against the bot">invalid runs do not count against the bot</span>}
+      {invalidLocked && <span className="faint">invalid runs do not count against the bot. <button type="button" className="btn ghost sm" onClick={() => onSet("needs_review")} title="Mark this run as a real test of the bot; pass and fail unlock">Not invalid, count it</button></span>}
       <span className="grow" />
       <span className="seg" role="group" aria-label="Set human verdict">
-        {(["pass", "fail", "needs_review", "invalid"] as Verdict[]).map((v, i) => <button key={v} type="button" disabled={disabled || (invalid && (v === "pass" || v === "fail"))} aria-pressed={(human ?? machine) === v} onClick={() => onSet(v)}><kbd>{i + 1}</kbd> {v === "needs_review" ? "review" : v}</button>)}
+        {(["pass", "fail", "needs_review", "invalid"] as Verdict[]).map((v, i) => <button key={v} type="button" disabled={!verdictAllowed(v, machine, human, pending)} aria-pressed={(human ?? machine) === v} onClick={() => onSet(v)}><kbd>{i + 1}</kbd> {v === "needs_review" ? "review" : v}</button>)}
       </span>
     </div>
   );

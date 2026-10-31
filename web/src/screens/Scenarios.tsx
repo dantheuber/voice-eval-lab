@@ -37,8 +37,13 @@ export function ScenariosScreen() {
 const blank = (): ScenarioInput => ({ title: "", description: "", goal: "", customerId: null, facts: {}, beats: [], must: [], mustNot: [], expectedState: [], maxTurns: 24, pronunciationWatch: [], tags: [] });
 const nid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 8)}`;
 
+/* Editor state is keyed by resource id, so jumping from one scenario to another never carries the previous form over. */
 export function ScenarioEditorScreen() {
   const { id } = useParams();
+  return <ScenarioEditor key={id ?? "new"} id={id} />;
+}
+
+function ScenarioEditor({ id }: { id: string | undefined }) {
   const isNew = !id;
   const q = useScenario(id);
   const customers = useCustomers();

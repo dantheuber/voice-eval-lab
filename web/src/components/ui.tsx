@@ -3,7 +3,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import type { CallMode, Counts, HealthState, Verdict } from "@/api/types";
 import { modeLabel, modeTitle, verdictLabel } from "@/lib/format";
-import { ciText, passPct, valid } from "@/lib/stats";
+import { ciText, valid } from "@/lib/stats";
 import { ApiError } from "@/api/transport";
 
 const PATHS: Record<string, string> = {
@@ -72,13 +72,18 @@ export function Panel({ title, meta, actions, children, flush, className = "", s
   );
 }
 
+/* The bar is normalised over valid calls only, so its pass segment matches the pass rate shown beside it.
+   Invalid calls sit outside the bar as a count. */
 export function RateBar({ counts, title }: { counts: Counts; title?: string }) {
-  const n = counts.pass + counts.fail + counts.needsReview + counts.invalid;
-  const seg = (c: string, v: number, lab: string) => (v ? <i key={c} className={c} style={{ flex: v }} title={`${lab}: ${v}`} /> : null);
+  const v = valid(counts);
+  const seg = (c: string, k: number, lab: string) => (k ? <i key={c} className={c} style={{ flex: k }} title={`${lab}: ${k} of ${v} valid`} /> : null);
   return (
-    <div className="rate" role="img" title={title} aria-label={`${counts.pass} pass, ${counts.fail} fail, ${counts.needsReview} needs review, ${counts.invalid} invalid of ${n}`}>
-      {seg("p", counts.pass, "pass")}{seg("f", counts.fail, "fail")}{seg("r", counts.needsReview, "needs review")}{seg("i", counts.invalid, "invalid")}
-    </div>
+    <span className="rate-wrap" title={title}>
+      <span className="rate" role="img" aria-label={v ? `${counts.pass} pass, ${counts.fail} fail, ${counts.needsReview} needs review of ${v} valid${counts.invalid ? `; ${counts.invalid} invalid excluded` : ""}` : `no valid calls${counts.invalid ? `; ${counts.invalid} invalid` : ""}`}>
+        {v ? <>{seg("p", counts.pass, "pass")}{seg("f", counts.fail, "fail")}{seg("r", counts.needsReview, "needs review")}</> : <i className="none" style={{ flex: 1 }} />}
+      </span>
+      {counts.invalid > 0 && <span className="rate-inv" title="invalid runs are test problems and are not in the bar">+{counts.invalid} invalid</span>}
+    </span>
   );
 }
 export function RateLegend({ counts }: { counts?: Counts }) {
@@ -92,10 +97,18 @@ export function RateLegend({ counts }: { counts?: Counts }) {
     </div>
   );
 }
-export function PassRate({ counts, bold = true }: { counts: Counts; bold?: boolean }) {
-  const p = passPct(counts);
-  if (p == null) return <span className="faint">no valid calls</span>;
-  return <>{bold ? <b>{p}%</b> : <span>{p}%</span>} <span className="ci">{ciText(counts.pass, valid(counts))}</span></>;
+/* One display for every pass rate: percentage of valid calls, the 95% Wilson interval, and valid n.
+   `compact` keeps the interval in the title for tight cells. */
+export function PassRate({ counts, bold = true, compact = false }: { counts: Counts; bold?: boolean; compact?: boolean }) {
+  return <PassFrac pass={counts.pass} n={valid(counts)} bold={bold} compact={compact} />;
+}
+export function PassFrac({ pass, n, bold = true, compact = false }: { pass: number; n: number; bold?: boolean; compact?: boolean }) {
+  if (!n) return <span className="faint">{compact ? "no data" : "no valid calls"}</span>;
+  const p = Math.round((100 * pass) / n);
+  const ci = ciText(pass, n);
+  const pct = bold ? <b>{p}%</b> : <span>{p}%</span>;
+  if (compact) return <span title={`${pass} of ${n} valid, 95% interval ${ci}`}>{pct} <span className="ci">n{n}</span></span>;
+  return <span title={`${pass} of ${n} valid calls`}>{pct} <span className="ci">{ci}, n={n}</span></span>;
 }
 
 export function Field({ label, help, children, style, className = "" }: { label: ReactNode; help?: ReactNode; children: ReactNode; style?: React.CSSProperties; className?: string }) {

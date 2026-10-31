@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel, useReactTable, type SortingState } from "@tanstack/react-table";
 import { Shell } from "@/components/Shell";
-import { Button, Empty, ModeBadge, Panel, QueryState, Skeleton, VerdictBadge } from "@/components/ui";
+import { Button, Empty, ModeBadge, Panel, QueryState, Skeleton, Untested, VerdictBadge } from "@/components/ui";
 import { useCalls, usePersonas, useProfiles, useScenarios } from "@/api/queries";
 import { useHotkeys } from "@/hooks/useHotkeys";
+import { isUntested } from "@/lib/untested";
 import { fmtClock, verdictLabel } from "@/lib/format";
 import type { CallMode, CallSummary, CallsQuery, Verdict } from "@/api/types";
 import s from "./screens.module.css";
@@ -19,15 +20,23 @@ export function CallsScreen() {
   const q: CallsQuery = useMemo(() => ({
     verdict: sp.getAll("verdict") as Verdict[], scenario: sp.get("scenario") ?? undefined, persona: sp.get("persona") ?? undefined,
     mode: (sp.get("mode") as CallMode) ?? undefined, profile: sp.get("profile") ?? undefined, run: sp.get("run") ?? undefined, openOnly: sp.get("open") === "1",
+    cursor: sp.get("cursor") ?? undefined, limit: sp.get("limit") ? Number(sp.get("limit")) : undefined,
   }), [sp]);
+  // Cursors are opaque, so previous pages are a stack kept while the filters stay the same.
+  const [cursorStack, setCursorStack] = useState<string[]>([]);
   const calls = useCalls(q);
   const scenarios = useScenarios();
   const personas = usePersonas();
   const profiles = useProfiles();
   const [sel, setSel] = useState(0);
   const [sorting, setSorting] = useState<SortingState>([]);
-  const set = (k: string, v: string | null) => { const n = new URLSearchParams(sp); if (v) n.set(k, v); else n.delete(k); setSp(n, { replace: true }); setSel(0); };
-  const setVerdict = (v: Verdict | "") => { const n = new URLSearchParams(sp); n.delete("verdict"); if (v) n.set("verdict", v); setSp(n, { replace: true }); setSel(0); };
+  const set = (k: string, v: string | null) => { const n = new URLSearchParams(sp); if (v) n.set(k, v); else n.delete(k); n.delete("cursor"); setSp(n, { replace: true }); setSel(0); setCursorStack([]); };
+  const setVerdict = (v: Verdict | "") => { const n = new URLSearchParams(sp); n.delete("verdict"); n.delete("cursor"); if (v) n.set("verdict", v); setSp(n, { replace: true }); setSel(0); setCursorStack([]); };
+  const goPage = (cursor: string | null, dir: "next" | "prev") => {
+    const n = new URLSearchParams(sp); if (cursor) n.set("cursor", cursor); else n.delete("cursor");
+    setCursorStack((st) => (dir === "next" ? [...st, sp.get("cursor") ?? ""] : st.slice(0, -1)));
+    setSp(n); setSel(0);
+  };
 
   const items = calls.data?.items ?? [];
   const columns = useMemo(() => [
@@ -37,13 +46,13 @@ export function CallsScreen() {
     col.accessor("scenarioTitle", { header: "Scenario", cell: (c) => c.getValue() ? <span>{c.getValue()}</span> : <span className="faint">unknown{c.row.original.mode === "upload" ? " (upload)" : ""}</span> }),
     col.accessor("personaName", { header: "Persona", cell: (c) => c.getValue() ?? <span className="faint">unknown</span> }),
     col.accessor("mode", { header: "Mode", cell: (c) => <ModeBadge mode={c.getValue()} /> }),
-    col.accessor("profile", { header: "Profile", cell: (c) => <span className="mono">{c.getValue()}</span> }),
+    col.accessor("profile", { header: "Profile", cell: (c) => <span className="mono">{c.getValue()} {isUntested(c.row.original, profiles.data?.items) && <Untested />}</span> }),
     col.accessor("batchId", { header: "Run", cell: (c) => <span className="id">{c.getValue()} {c.row.original.rep ? <span className="faint">r{c.row.original.rep}</span> : null}</span> }),
     col.accessor("durationS", { header: () => <span className="num">Dur</span>, cell: (c) => <span className="mono">{fmtClock(c.getValue())}</span>, meta: { num: true } }),
     col.accessor("replyP50S", { header: () => <span title="median bot reply latency">Reply p50</span>, cell: (c) => c.getValue() == null ? <span className="faint" title={c.row.original.timingIsReal ? "not measured" : "Turn-based call, timing not measured"}>n/a</span> : <span className="mono">{c.getValue()!.toFixed(2)} s</span>, meta: { num: true } }),
     col.accessor("overlaps", { header: "Overlaps", cell: (c) => c.getValue() == null ? <span className="faint">n/a</span> : <span className="mono">{c.getValue()}</span>, meta: { num: true } }),
     col.accessor("findings", { header: "Findings", cell: (c) => <span className="mono">{c.getValue()}{c.row.original.openFindings ? <> <span className="tag mono" style={{ color: "var(--review)" }}>{c.row.original.openFindings} open</span></> : null}</span>, meta: { num: true } }),
-  ], [sel]);
+  ], [sel, profiles.data]);
   const table = useReactTable({ data: items, columns, state: { sorting }, onSortingChange: setSorting, getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel() });
   const rows = table.getRowModel().rows;
   const open = (r: CallSummary) => nav(`/calls/${r.id}`);
@@ -60,8 +69,8 @@ export function CallsScreen() {
   return (
     <Shell crumbs={["Calls"]} keys={KEYS}>
       <div className="page">
-        <div className="page-head"><div><h1>Calls</h1><div className="page-sub">{calls.data ? `${calls.data.total} of ${total} calls.` : ""} Click a row to review it. Invalid calls are test problems and are excluded from pass rates.</div></div>
-          <div className="actions"><Button size="sm" onClick={() => exportCsv(items)} disabled={!items.length}>Export CSV</Button></div></div>
+        <div className="page-head"><div><h1>Calls</h1><div className="page-sub">{calls.data ? `${calls.data.total} of ${total} calls match${calls.data.total > items.length ? `, showing ${items.length} on this page` : ""}.` : ""} Click a row to review it. Invalid calls are test problems and are excluded from pass rates.</div></div>
+          <div className="actions"><Button size="sm" onClick={() => exportCsv(items)} disabled={!items.length} title="Exports the rows on this page only">Export CSV ({items.length} on this page)</Button></div></div>
         <div className={s.filters} role="group" aria-label="Filters">
           <span className="seg" role="group" aria-label="Verdict">
             <button type="button" aria-pressed={q.verdict!.length === 0} onClick={() => setVerdict("")}>all <span className="faint num">{total}</span></button>
@@ -88,6 +97,13 @@ export function CallsScreen() {
               )}
             </QueryState>
           </div>
+          {calls.data && (calls.data.nextCursor || cursorStack.length > 0) && (
+            <div className="ph" style={{ borderTop: "1px solid var(--line-1)", borderBottom: 0 }}>
+              <span className="faint">page {cursorStack.length + 1}{calls.data.total ? `, ${calls.data.total} matching calls` : ""}</span><span className="grow" />
+              <Button size="sm" disabled={cursorStack.length === 0} onClick={() => goPage(cursorStack[cursorStack.length - 1] || null, "prev")}>Previous page</Button>
+              <Button size="sm" disabled={!calls.data.nextCursor} onClick={() => goPage(calls.data!.nextCursor, "next")}>Next page</Button>
+            </div>
+          )}
         </Panel>
       </div>
     </Shell>

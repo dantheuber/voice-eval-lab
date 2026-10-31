@@ -1,6 +1,6 @@
 /* The live call to the support bot. Real mode drives Pipecat's client with the small-WebRTC transport against
    the session's offer URL. Fixture mode runs a scripted bot so the screen is explorable with no backend. */
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { TalkSession, VoicelabServerMessage, ToolCallEvent, BargeInEvent, SystemEvent } from "@/api/types";
 import { isMock } from "@/api/transport";
 import { MIC_CONSTRAINTS } from "./useMic";
@@ -39,12 +39,26 @@ export function useBotCall(botAudioRef: React.RefObject<HTMLAudioElement | null>
     else if (m.type === "warning") addEvent("warning", m.message);
   };
 
-  const start = useCallback(async (session: TalkSession) => {
+  // Each start gets a generation number; anything that resolves after end() or a newer start is torn down.
+  const gen = useRef(0);
+  useEffect(() => () => { gen.current++; clientRef.current?.disconnect(); clientRef.current = null; }, []);
+
+  const start = useCallback(async (session: TalkSession, opts: { deviceId?: string | null } = {}) => {
+    const my = ++gen.current;
+    const stale = () => gen.current !== my;
+    clientRef.current?.disconnect(); clientRef.current = null;
     setSt({ ...initial(), status: "connecting" });
     try {
       if (isMock()) { clientRef.current = startMock({ up, addLine, addEvent, onServer, micLevelRef, session }); return; }
       const [{ PipecatClient, RTVIEvent }, { SmallWebRTCTransport }] = await Promise.all([import("@pipecat-ai/client-js"), import("@pipecat-ai/small-webrtc-transport")]);
+      if (stale()) return;
       const transport = new SmallWebRTCTransport({ iceServers: session.iceServers });
+      let clientHandle: InstanceType<typeof PipecatClient> | null = null;
+      // Captured before connect() so end() or unmount during connection still releases the mic.
+      clientRef.current = {
+        disconnect: () => { try { clientHandle?.disconnect(); } catch { /* not connected yet */ } },
+        mute: (on) => { try { clientHandle?.enableMic(!on); clientHandle?.sendClientMessage("voicelab", { type: "mute", on }); } catch { /* not connected */ } },
+      };
       const client = new PipecatClient({
         transport, enableMic: true, enableCam: false,
         callbacks: {
@@ -63,22 +77,25 @@ export function useBotCall(botAudioRef: React.RefObject<HTMLAudioElement | null>
           onError: (msg) => up({ status: "error", error: String((msg as { data?: { message?: string } }).data?.message ?? "transport error") }),
         },
       });
+      clientHandle = client;
       client.on(RTVIEvent.TransportStateChanged, (state) => { if (state === "error") up({ status: "error", error: "WebRTC connection failed" }); });
+      // Open devices first so the selected microphone is the one Pipecat records, not the system default.
+      await client.initDevices();
+      if (stale()) { client.disconnect(); return; }
+      if (opts.deviceId) await transport.updateMic(opts.deviceId).catch(() => undefined);
       await client.connect({ webrtcRequestParams: { endpoint: session.offerUrl }, iceConfig: { iceServers: session.iceServers } });
-      // Pipecat opens the mic itself; apply the brief's constraints to its track.
+      if (stale()) { client.disconnect(); return; }
+      // Apply the brief's constraints to Pipecat's track.
       const local = client.tracks().local.audio;
       await local?.applyConstraints(MIC_CONSTRAINTS).catch(() => undefined);
-      clientRef.current = {
-        disconnect: () => { client.disconnect(); },
-        mute: (on) => { client.enableMic(!on); try { client.sendClientMessage("voicelab", { type: "mute", on }); } catch { /* not connected */ } },
-      };
     } catch (e) {
+      if (stale()) return;
       up({ status: "error", error: (e as Error).message || String(e) });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const end = useCallback(() => { clientRef.current?.disconnect(); clientRef.current = null; up({ status: "ended", youSpeaking: false, botSpeaking: false }); }, []);
+  const end = useCallback(() => { gen.current++; clientRef.current?.disconnect(); clientRef.current = null; up({ status: "ended", youSpeaking: false, botSpeaking: false }); }, []);
   const setMuted = useCallback((on: boolean) => { clientRef.current?.mute(on); up({ muted: on }); }, []);
   return { state: st, start, end, setMuted };
 }

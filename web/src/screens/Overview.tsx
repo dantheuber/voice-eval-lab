@@ -1,7 +1,8 @@
 import { Link, useNavigate } from "react-router-dom";
 import { Shell } from "@/components/Shell";
-import { Button, Empty, HealthDot, Kbd, ModeBadge, Note, Panel, PassRate, QueryState, RateBar, RateLegend, Skeleton } from "@/components/ui";
-import { useOverview } from "@/api/queries";
+import { Button, Empty, HealthDot, Kbd, ModeBadge, Note, Panel, PassRate, QueryState, RateBar, RateLegend, Skeleton, Untested } from "@/components/ui";
+import { useOverview, useProfiles } from "@/api/queries";
+import { isUntested } from "@/lib/untested";
 import { endpoints } from "@/api/client";
 import { ciText, valid } from "@/lib/stats";
 import { evalName, fmtAgo, fmtWhen } from "@/lib/format";
@@ -25,6 +26,7 @@ export function OverviewScreen() {
 
 function OverviewBody({ d }: { d: Overview }) {
   const nav = useNavigate();
+  const profiles = useProfiles();
   const loading = d.health.find((h) => h.state === "loading");
   const down = d.health.filter((h) => h.state === "down");
   const v = valid(d.counts);
@@ -79,7 +81,7 @@ function OverviewBody({ d }: { d: Overview }) {
                 <thead><tr><th>Run</th><th>When</th><th>Profile</th><th>Mode</th><th>What</th><th className="num">Calls</th><th style={{ width: 170 }}>Outcome</th><th className="num">Pass</th></tr></thead>
                 <tbody>{d.recentRuns.map((r) => (
                   <tr key={r.id} tabIndex={0} onClick={() => nav(r.status === "running" ? `/runs/${r.id}` : `/calls?run=${r.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/calls?run=${r.id}`)}>
-                    <td className="id">{r.id}</td><td className="ts">{fmtWhen(r.startedAt)}</td><td className="mono">{r.profile}</td><td><ModeBadge mode={r.mode} /></td><td>{r.label}{r.status === "running" ? <span className="v running" style={{ marginLeft: 6 }}>running</span> : null}</td>
+                    <td className="id">{r.id}</td><td className="ts">{fmtWhen(r.startedAt)}</td><td className="mono">{r.profile} {isUntested(r, profiles.data?.items) && <Untested />}</td><td><ModeBadge mode={r.mode} /></td><td>{r.label}{r.status === "running" ? <span className="v running" style={{ marginLeft: 6 }}>running</span> : null}</td>
                     <td className="num">{r.calls}</td><td><RateBar counts={r.counts} /></td><td className="num"><PassRate counts={r.counts} /></td>
                   </tr>))}</tbody>
               </table>

@@ -87,12 +87,14 @@ interface CallSummary {                       // one row of the calls list
   findings: number; openFindings: number;     // openFindings excludes advisory findings
   durationS: number; replyP50S: number | null; overlaps: number | null;   // null when timingIsReal is false
   startedAt: string | null; timingIsReal: boolean;
+  untested: boolean;                          // true when any provider in CallArtifact.providers is an adapter never tested live (bedrock:*)
 }
 
 interface RunSummary {
   id: string; label: string; profile: string; mode: CallMode; status: "queued" | "running" | "paused" | "stopped" | "done";
   startedAt: string; endedAt: string | null; calls: number; done: number; running: number; counts: Counts; etaS: number | null;
   scenarioIds: string[]; personaIds: string[]; reps: number;
+  untested: boolean;                          // the profile's adapters at launch time, preserved even if the profile is edited later
 }
 
 interface Health { role: string; name: string; model: string; state: HealthState; detail: string; elapsedS: number | null; usualS: number | null; }
@@ -126,7 +128,7 @@ interface Profile { id: string; label: string; description: string; configPath: 
 `GET /api/calls?verdict=&scenario=&persona=&mode=&profile=&run=&openOnly=true&status=&cursor=&limit=50`
 → `{ "items": CallSummary[], "nextCursor": string | null, "total": number, "facets": { "verdict": { "pass": 3, "fail": 3, "needs_review": 5, "invalid": 1 } } }`
 
-Repeating a filter (`?verdict=pass&verdict=fail`) means "any of". `run` filters by `batchId`.
+Repeating a filter (`?verdict=pass&verdict=fail`) means "any of". `run` filters by `batchId`. `limit` defaults to 50; `cursor` is opaque and comes from the previous page's `nextCursor`. `total` counts every call matching the filters, not only the page.
 
 `GET /api/calls/next-review?after=<callId>` → `{ "callId": string | null }`. Oldest call with open findings or verdict `needs_review`, skipping `after` and anything already human-verdicted.
 

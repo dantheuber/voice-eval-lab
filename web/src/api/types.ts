@@ -81,12 +81,14 @@ export interface CallSummary {
   verdict: Verdict | null; humanVerdict: Verdict | null; invalidReason: string | null;
   findings: number; openFindings: number; durationS: number; replyP50S: number | null; overlaps: number | null;
   startedAt: string | null; timingIsReal: boolean;
+  untested?: boolean; // true when any adapter used was never tested against a live provider (Bedrock)
 }
 export type RunStatus = "queued" | "running" | "paused" | "stopped" | "done";
 export interface RunSummary {
   id: string; label: string; profile: string; mode: CallMode; status: RunStatus;
   startedAt: string; endedAt: string | null; calls: number; done: number; running: number; counts: Counts; etaS: number | null;
   scenarioIds: string[]; personaIds: string[]; reps: number;
+  untested?: boolean;
 }
 export interface Health { role: string; name: string; model: string; state: HealthState; detail: string; elapsedS: number | null; usualS: number | null }
 export interface Profile {

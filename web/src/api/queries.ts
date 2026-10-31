@@ -2,6 +2,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { endpoints as E } from "./client";
 import type * as T from "./types";
+import { serialize } from "@/lib/stats";
+import { toast } from "@/store/toast";
 
 export const keys = {
   overview: (profile?: string) => ["overview", profile ?? ""] as const,
@@ -52,19 +54,23 @@ export function useInvalidate() {
 
 export function useDecideFinding(callId: string) {
   const qc = useQueryClient();
+  // Writes for one call run in order (serialize), the optimistic patch and its rollback touch only the finding
+  // concerned, and the server's response replaces the optimistic finding so local state matches what was stored.
+  const patchFinding = (findingId: string, fn: (f: T.Finding) => T.Finding) =>
+    qc.setQueryData<T.ReviewPayload>(keys.call(callId), (prev) => (prev?.eval ? { ...prev, eval: { ...prev.eval, findings: prev.eval.findings.map((f) => (f.id === findingId ? fn(f) : f)) } } : prev));
   return useMutation({
-    mutationFn: ({ findingId, humanVerdict, humanNote }: { findingId: string; humanVerdict: T.HumanVerdict | null; humanNote: string }) => E.decideFinding(callId, findingId, { humanVerdict, humanNote }),
+    mutationFn: ({ findingId, humanVerdict, humanNote }: { findingId: string; humanVerdict: T.HumanVerdict | null; humanNote: string }) =>
+      serialize(`decide:${callId}`, () => E.decideFinding(callId, findingId, { humanVerdict, humanNote })),
     onMutate: async (vars) => {
-      await qc.cancelQueries({ queryKey: keys.call(callId) });
-      const prev = qc.getQueryData<T.ReviewPayload>(keys.call(callId));
-      if (prev?.eval) {
-        qc.setQueryData<T.ReviewPayload>(keys.call(callId), {
-          ...prev, eval: { ...prev.eval, findings: prev.eval.findings.map((f) => (f.id === vars.findingId ? { ...f, humanVerdict: vars.humanVerdict, humanNote: vars.humanNote, humanAt: vars.humanVerdict ? new Date().toISOString() : null } : f)) },
-        });
-      }
+      const prev = qc.getQueryData<T.ReviewPayload>(keys.call(callId))?.eval?.findings.find((f) => f.id === vars.findingId) ?? null;
+      patchFinding(vars.findingId, (f) => ({ ...f, humanVerdict: vars.humanVerdict, humanNote: vars.humanNote, humanAt: vars.humanVerdict ? new Date().toISOString() : null }));
       return { prev };
     },
-    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(keys.call(callId), ctx.prev); },
+    onSuccess: (saved, vars) => { patchFinding(vars.findingId, () => saved); },
+    onError: (e, vars, ctx) => {
+      if (ctx?.prev) patchFinding(vars.findingId, () => ctx.prev!);
+      toast(`Could not save the decision (${(e as Error).message}). Reverted.`, 4000);
+    },
     onSettled: () => { qc.invalidateQueries({ queryKey: ["calls"] }); qc.invalidateQueries({ queryKey: ["overview"] }); },
   });
 }
@@ -72,10 +78,11 @@ export function useDecideFinding(callId: string) {
 export function useSetVerdict(callId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { verdict: T.Verdict; note: string }) => E.setVerdict(callId, body),
+    mutationFn: (body: { verdict: T.Verdict; note: string }) => serialize(`decide:${callId}`, () => E.setVerdict(callId, body)),
     onSuccess: (summary) => {
       qc.setQueryData<T.ReviewPayload>(keys.call(callId), (prev) => (prev ? { ...prev, summary } : prev));
       qc.invalidateQueries({ queryKey: ["calls"] }); qc.invalidateQueries({ queryKey: ["overview"] });
     },
+    onError: (e) => toast(`Could not save the verdict (${(e as Error).message}).`, 4000),
   });
 }

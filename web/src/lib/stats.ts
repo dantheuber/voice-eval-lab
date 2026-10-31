@@ -31,6 +31,33 @@ export function addCounts(a: Counts, b: Counts): Counts {
 
 export const zeroCounts = (): Counts => ({ pass: 0, fail: 0, needsReview: 0, invalid: 0 });
 
+export interface Frac { pass: number; n: number }
+
+/** Direction of change between two pass fractions, judged on rates, not counts. Null when either side has no valid calls. */
+export function rateDirection(a: Frac, b: Frac): "better" | "worse" | "same" | null {
+  if (!a.n || !b.n) return null;
+  const ra = a.pass / a.n, rb = b.pass / b.n;
+  if (Math.abs(ra - rb) < 1e-9) return "same";
+  return rb > ra ? "better" : "worse";
+}
+
+/** Whether two Wilson intervals share any range. Null when either sample is empty. */
+export function intervalsOverlap(a: Frac, b: Frac): boolean | null {
+  const wa = wilson(a.pass, a.n), wb = wilson(b.pass, b.n);
+  if (!wa || !wb) return null;
+  return wa[0] <= wb[1] && wb[0] <= wa[1];
+}
+
+/** Runs async writes for one key one at a time, in order, so a slow earlier write cannot overwrite a later one. */
+const queues = new Map<string, Promise<unknown>>();
+export function serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = queues.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(fn);
+  queues.set(key, next);
+  next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => undefined);
+  return next;
+}
+
 /** Median of a list, or null. */
 export function median(xs: number[]): number | null {
   if (!xs.length) return null;

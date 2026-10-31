@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
-import { Button, Field, HealthDot, Kbd, ModeBadge, Note, Panel, Seg, Skeleton } from "@/components/ui";
+import { Button, Field, HealthDot, Kbd, ModeBadge, Note, Panel, PassFrac, Seg, Skeleton } from "@/components/ui";
 import { useHealth, useInvalidate, useMatrix, usePersonas, useProfiles, useScenarios, keys } from "@/api/queries";
 import { endpoints } from "@/api/client";
 import { useHotkeys } from "@/hooks/useHotkeys";
@@ -66,7 +66,7 @@ export function RunLauncherScreen() {
                       <tr key={sc.id}>
                         <td className={s.s}>{sc.title}<small>{sc.customerId ?? ""}</small></td>
                         {pes.map((pe) => { const c = cells.get(key(sc.id, pe.id)); const p = c ? passPct(c) : null; return (
-                          <td key={pe.id}><label className="check" style={{ justifyContent: "center", flexDirection: "column", gap: 1 }}><input type="checkbox" checked={sel.has(key(sc.id, pe.id))} onChange={(e) => toggle(key(sc.id, pe.id), e.target.checked)} aria-label={`${sc.title} with ${pe.name}`} /><span className={`${s.hist} ${p != null && p < 70 ? s.low : ""}`}>{p == null ? "no data" : `${p}%`}{c && valid(c) ? <span className="faint"> n{valid(c)}</span> : null}</span></label></td>); })}
+                          <td key={pe.id}><label className="check" style={{ justifyContent: "center", flexDirection: "column", gap: 1 }}><input type="checkbox" checked={sel.has(key(sc.id, pe.id))} onChange={(e) => toggle(key(sc.id, pe.id), e.target.checked)} aria-label={`${sc.title} with ${pe.name}`} /><span className={`${s.hist} ${p != null && p < 70 ? s.low : ""}`}>{c ? <PassFrac pass={c.pass} n={valid(c)} bold={false} compact /> : "no data"}</span></label></td>); })}
                         <td><input type="checkbox" checked={pes.every((pe) => sel.has(key(sc.id, pe.id)))} onChange={(e) => pes.forEach((pe) => toggle(key(sc.id, pe.id), e.target.checked))} aria-label={`all personas for ${sc.title}`} /></td>
                       </tr>))}</tbody>
                   </table>
