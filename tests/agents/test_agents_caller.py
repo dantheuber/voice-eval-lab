@@ -418,6 +418,7 @@ async def test_a_disclosed_pin_cannot_replace_the_sheet_on_the_seeded_scenario()
         ("Your card ends in 2290.", "Right, 2290."),
         ("Is your email renee@castillostudio.example?", "Yes, renee@castillostudio.example."),
         ("Your ticket is 3197.", "My PIN is 3197."),
+        ("Your invoice went to renee@other.example.", "Yes, renee@other.example."),
     ],
 )
 async def test_disclosed_identity_details_are_not_the_callers_to_state(heard, say):
@@ -759,6 +760,27 @@ async def test_tools_in_later_rounds_never_run_after_the_cut(db):
     assert [e for e in result.timeline if isinstance(e, ToolCallEvent)] == []
     assert len(llm.requests) == 1
     assert llm.closed_streams == 1
+
+
+async def test_the_llm_stream_closes_before_the_caller_answers(db):
+    class WatchingLLM(ScriptedLLM):
+        def __init__(self, watched, *script):
+            super().__init__(*script)
+            self.watched = watched
+            self.closed_when_asked = []
+
+        async def chat(self, messages, **options):
+            self.closed_when_asked.append(self.watched.closed_streams)
+            return await super().chat(messages, **options)
+
+    support_llm = ScriptedLLM(f"{LONG_LINE} {LONG_LINE}")
+    caller_llm = WatchingLLM(
+        support_llm, caller_says("Go."), caller_says("Bye.", hang_up=True, reason="x")
+    )
+    bot = SupportBot(support_llm, ToolDispatcher(db))
+    who = CallerBot(caller_llm, always_interrupts(), scenario())
+    await run_text_call(bot, who)
+    assert caller_llm.closed_when_asked == [0, 1]
 
 
 async def test_tools_finished_before_the_cut_are_kept(db):

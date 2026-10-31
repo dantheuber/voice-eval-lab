@@ -354,7 +354,8 @@ async def test_a_crashing_timeline_callback_leaves_history_valid(db):
 async def test_lone_surrogates_cannot_poison_history_or_the_timeline(db):
     bad = json.loads('"\\ud800"')
     batch = uses(call("create_ticket", subject=bad, summary="x"))
-    bot, _, events = make_bot(db, batch, f"Sorry {bad}about that.")
+    # The second sentence keeps the first in the streaming path, not the final flush.
+    bot, _, events = make_bot(db, batch, f"Sorry {bad}about that. Anything else?")
     await turn(bot)
     for message in bot.messages:
         message.model_dump_json()
@@ -662,6 +663,18 @@ async def test_tools_never_run_after_an_interrupt(db):
     assert events == []
     assert diff_against_seed(db) == []
     assert all(not message.tool_calls for message in bot.messages)
+
+
+async def test_tools_after_the_last_sentence_never_run_after_an_interrupt(db):
+    unlock = call("unlock_mailbox", address="evelyn@hartfamily.example")
+    bot, _, events = make_bot(db, uses(unlock, text="One moment."))
+    stream = bot.respond("Hi")
+    await anext(stream)
+    bot.on_interrupted("One")
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    assert events == []
+    assert diff_against_seed(db) == []
 
 
 async def test_an_interrupt_during_a_slow_generation_adds_nothing_later(db):
