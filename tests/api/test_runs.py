@@ -129,6 +129,15 @@ def test_concurrency_one_runs_each_call_through_its_eval_first(client, start_run
     assert len(rig.runner.requests) == 2
 
 
+def test_a_profile_with_one_session_runs_one_call_at_a_time(client, start_run, rig):
+    profiles = rig.services.profiles
+    profiles.items["local-default"] = profiles.require("local-default").model_copy(
+        update={"max_calls": 1}
+    )
+    run = start_run(reps=2, concurrency=2)["run"]
+    assert rig.services.runs.get(run["id"])["concurrency"] == 1
+
+
 def test_concurrency_two_runs_two_at_once(client, start_run, rig, waiter):
     rig.runner.hold = True
     run = start_run(reps=3, concurrency=2)["run"]

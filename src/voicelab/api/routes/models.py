@@ -36,6 +36,7 @@ def _profile_json(svc: Svc, profile: Profile) -> dict[str, Any]:
         "configPath": str(path.relative_to(root)) if path.is_relative_to(root) else str(path),
         "health": svc.profiles.overall_state(profile),
         "liveCapable": profile.live_capable,
+        "maxCalls": profile.max_calls,
         "benchmark": svc.profiles.benchmark(profile),
         "untested": profile.untested,
     }

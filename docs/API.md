@@ -99,7 +99,7 @@ interface RunSummary {
 
 interface Health { role: string; name: string; model: string; state: HealthState; detail: string; elapsedS: number | null; usualS: number | null; }
 
-interface Profile { id: string; label: string; description: string; configPath: string; health: HealthState; liveCapable: boolean; benchmark: { botReplyP50S: number; at: string } | null; untested: boolean; }
+interface Profile { id: string; label: string; description: string; configPath: string; health: HealthState; liveCapable: boolean; maxCalls: number | null; benchmark: { botReplyP50S: number; at: string } | null; untested: boolean; }
 ```
 
 ## Overview

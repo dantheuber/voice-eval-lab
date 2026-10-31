@@ -185,7 +185,7 @@ class RunWorker:
                     status="queued",
                     started_at=timestamp(),
                     reps=plan.reps,
-                    concurrency=plan.concurrency,
+                    concurrency=min(plan.concurrency, profile.max_calls or plan.concurrency),
                     pairs=[{"scenario_id": s, "persona_id": p} for s, p in plan.pairs],
                     line=plan.line.model_dump() if plan.line else None,
                     untested=int(profile.untested),

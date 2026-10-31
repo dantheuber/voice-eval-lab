@@ -47,6 +47,7 @@ class Profile(BaseModel):
     live_capable: bool = False  # benchmarks showed bot-to-bot can run in real time
     untested: bool = False  # adapters here have never run against the real service
     support_engine: Literal["cascade", "realtime"] = "cascade"  # what plays the bot in live calls
+    max_calls: int | None = None  # at once. Set when a server here has only so many sessions
     roles: dict[str, dict[str, Any]]
     services: list[LocalService] = Field(default_factory=list)
     benchmark: dict[str, Any] = Field(default_factory=dict)

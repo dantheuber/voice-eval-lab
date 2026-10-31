@@ -12,6 +12,8 @@ label: "Local: LFM3 speech-to-speech"
 description: "LFM3-Audio realtime plays the bot, 528 ms plain turn. One voice, no transcript of its own, and its tool calls are the weakest here."
 live_capable: true
 support_engine: realtime
+# llama-server runs one realtime session per slot, and this profile has one.
+max_calls: 1
 roles:
   stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18101", name: qwen3-asr-0.6b, word_timing: false}
   # Whisper, not the live STT: Parakeet reports confidence 1.0 on every word, Qwen3-ASR reports none,

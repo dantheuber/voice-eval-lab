@@ -31,12 +31,13 @@ export function RunLauncherScreen() {
   const [reps, setReps] = useState(3);
   const [mode, setMode] = useState<"auto" | "live_bots" | "turn_based">("auto");
   const [line, setLine] = useState<"persona" | "clean" | "phone" | "noisy">("persona");
-  const [concurrency, setConcurrency] = useState(2);
+  const [wanted, setConcurrency] = useState(2);
   const [label, setLabel] = useState("");
   const key = (sc: string, pe: string) => `${sc}:${pe}`;
   const toggle = (k: string, on: boolean) => setSel((prev) => { const n = new Set(prev); if (on) n.add(k); else n.delete(k); return n; });
   const cells = useMemo(() => new Map((matrix.data?.cells ?? []).map((c) => [key(c.scenarioId, c.personaId), c.counts])), [matrix.data]);
   const pairs = [...sel].map((k) => { const [scenarioId, personaId] = k.split(":"); return { scenarioId, personaId }; });
+  const concurrency = Math.min(wanted, prof?.maxCalls ?? wanted);
   const calls = pairs.length * reps;
   const effectiveMode: CallMode = mode === "auto" ? (prof?.liveCapable ? "live_bots" : "turn_based") : mode;
   const perCall = effectiveMode === "live_bots" ? 210 : 420;
@@ -81,7 +82,7 @@ export function RunLauncherScreen() {
                   <Field label="Call mode" help={<>{effectiveMode === "live_bots" ? <>Live: real time, full duplex, timing metrics measured.{prof?.benchmark ? ` Benchmark says this profile keeps up (bot reply p50 ${prof.benchmark.botReplyP50S} s).` : ""}</> : <>Turn-based: slower than real time, each side waits. Timing metrics are not measured. Calls will carry a dashed <b>turn-based</b> badge.</>}{mode === "auto" ? " Chosen from the last benchmark." : ""}</>}>
                     <Seg value={mode} options={[{ value: "auto", label: "auto" }, { value: "live_bots", label: "live" }, { value: "turn_based", label: "turn-based" }]} onChange={setMode} /></Field>
                   <Field label="Line conditions" help="Per persona uses each persona's own line. Overriding applies one condition to every call."><Seg value={line} options={[{ value: "persona", label: "per persona" }, { value: "clean", label: "clean" }, { value: "phone", label: "8 kHz" }, { value: "noisy", label: "noisy mobile" }]} onChange={setLine} /></Field>
-                  <Field label="Concurrency" help={effectiveMode === "live_bots" ? "2 concurrent live calls fit the GPU." : "Turn-based can go to 4."}><input className="in" type="number" min={1} max={4} value={concurrency} onChange={(e) => setConcurrency(Math.max(1, Math.min(4, +e.target.value)))} style={{ width: 60 }} /></Field>
+                  <Field label="Concurrency" help={prof?.maxCalls ? `This profile has room for ${prof.maxCalls} call at a time.` : effectiveMode === "live_bots" ? "2 concurrent live calls fit the GPU." : "Turn-based can go to 4."}><input className="in" type="number" min={1} max={prof?.maxCalls ?? 4} disabled={prof?.maxCalls === 1} value={concurrency} onChange={(e) => setConcurrency(Math.max(1, Math.min(4, +e.target.value)))} style={{ width: 60 }} /></Field>
                   <Field label="Label (optional)"><input className="in" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. after prompt change" /></Field>
                 </div>
               </Panel>
