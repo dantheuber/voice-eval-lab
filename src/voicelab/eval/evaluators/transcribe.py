@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from voicelab.core.audio import AudioClip
-from voicelab.core.models import Speaker, Word
+from voicelab.core.models import Speaker, Utterance, Word
 from voicelab.eval.config import TranscribeConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
 from voicelab.eval.transcript import estimate_words, speech_chunks
@@ -49,7 +49,8 @@ async def _transcribe(ctx: EvalContext, stt: STT, speaker: Speaker) -> tuple[Tra
         return Transcript(text="", model=stt.name), False
     audio = ctx.audio(speaker)
     if getattr(stt, "speech_only", False):
-        return await _transcribe_speech(stt, audio, regions, ctx.config.transcribe)
+        scripted = _scripted_turns(ctx, speaker)
+        return await _transcribe_speech(stt, audio, regions, scripted, ctx.config.transcribe)
     transcript = await stt.transcribe(audio, language="en", hints=None)
     if transcript.words or not transcript.text.strip():
         return transcript, False
@@ -57,10 +58,31 @@ async def _transcribe(ctx: EvalContext, stt: STT, speaker: Speaker) -> tuple[Tra
     return transcript.model_copy(update={"words": words}), True
 
 
+def _scripted_turns(ctx: EvalContext, speaker: Speaker) -> list[Region]:
+    """When a side with a script was talking. A human's side has none, so nothing narrows it."""
+    return [
+        Region(event.start_s, event.end_s)
+        for event in ctx.artifact.timeline
+        if isinstance(event, Utterance) and event.speaker == speaker and event.intended_text
+    ]
+
+
+def _heard_in(chunk: Region, turns: list[Region]) -> bool:
+    return any(turn.start_s < chunk.end_s and turn.end_s > chunk.start_s for turn in turns)
+
+
 async def _transcribe_speech(
-    stt: STT, audio: AudioClip, regions: list[Region], cfg: TranscribeConfig
+    stt: STT,
+    audio: AudioClip,
+    regions: list[Region],
+    scripted: list[Region],
+    cfg: TranscribeConfig,
 ) -> tuple[Transcript, bool]:
-    """One request per stretch of speech, with word times moved back onto the call's clock."""
+    """One request per stretch of speech, with word times moved back onto the call's clock.
+
+    Speech-like line noise passes the energy VAD, and Whisper writes words for it. A stretch that
+    overlaps none of a scripted side's turns can only be that noise, so it isn't sent.
+    """
     words: list[Word] = []
     estimated = False
     model = stt.name
@@ -68,6 +90,8 @@ async def _transcribe_speech(
         regions, gap_s=cfg.chunk_gap_s, pad_s=cfg.chunk_pad_s, end_s=audio.duration_s
     )
     for chunk in chunks:
+        if scripted and not _heard_in(chunk, scripted):
+            continue
         part = await stt.transcribe(
             audio.slice(chunk.start_s, chunk.end_s), language="en", hints=None
         )

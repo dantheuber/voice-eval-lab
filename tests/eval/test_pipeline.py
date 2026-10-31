@@ -580,3 +580,30 @@ async def test_whole_channel_stt_still_gets_the_whole_channel(store):
     await TranscribeEvaluator().run(ctx, EvaluatorOutput())
 
     assert [c["duration_s"] for c in stt.calls] == [30.0]
+
+
+async def test_noise_outside_a_scripted_speakers_turns_never_reaches_the_asr(store):
+    """TV noise on a line reads as speech, and Whisper writes "*Vibrating*" as the bot's words."""
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS)
+    artifact.timeline.append(
+        Utterance(speaker=Speaker.BOT, start_s=1.5, end_s=3.0, intended_text="hello there")
+    )
+    artifact, paths = write_call(store, artifact, bot=[(2.0, 3.0), (20.0, 21.0)], duration_s=30.0)
+    stt = ChunkHearingSTT()
+    await TranscribeEvaluator().run(
+        EvalContext(artifact, paths, EvalDeps(stt=stt)), EvaluatorOutput()
+    )
+    assert len(stt.durations) == 1
+
+
+async def test_a_human_has_no_script_to_narrow_their_speech_by(store):
+    artifact = CallArtifact(mode=CallMode.HUMAN)
+    artifact.timeline.append(Utterance(speaker=Speaker.CALLER, start_s=1.5, end_s=3.0))
+    artifact, paths = write_call(
+        store, artifact, caller=[(2.0, 3.0), (20.0, 21.0)], duration_s=30.0
+    )
+    stt = ChunkHearingSTT()
+    await TranscribeEvaluator().run(
+        EvalContext(artifact, paths, EvalDeps(stt=stt)), EvaluatorOutput()
+    )
+    assert len(stt.durations) == 2
