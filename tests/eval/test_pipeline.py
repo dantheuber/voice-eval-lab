@@ -1,9 +1,11 @@
 import json
 
+import numpy as np
 import pytest
 from evalfakes import FakeAnalyst, FakeLLM, FakeSTT, verdict_json, write_call
 from evalfakes import transcript as make_transcript
 
+from voicelab.core.audio import AudioClip
 from voicelab.core.models import (
     Beat,
     CallArtifact,
@@ -11,6 +13,7 @@ from voicelab.core.models import (
     DbChange,
     Evidence,
     Finding,
+    LineConditions,
     Rule,
     Scenario,
     Speaker,
@@ -18,6 +21,7 @@ from voicelab.core.models import (
     Utterance,
     Verdict,
 )
+from voicelab.engine.recorder import CallRecorder
 from voicelab.eval.config import EvalConfig
 from voicelab.eval.context import EvalDeps, Skip
 from voicelab.eval.evaluators.transcribe import TranscribeEvaluator
@@ -28,6 +32,7 @@ from voicelab.eval.pipeline import (
     set_clip_bounds,
 )
 from voicelab.providers.base import Transcript
+from voicelab.telephony import PhoneLine
 
 CALLER_SAID = "hi I was charged twice for invoice FH-4419"
 BOT_SAID = "your refund of $49.99 is done goodbye"
@@ -401,3 +406,57 @@ async def test_every_finding_in_a_real_run_has_clamped_bounds(store):
 
 def test_transcribe_is_first_in_the_default_order():
     assert isinstance(default_evaluators()[0], TranscribeEvaluator)
+
+
+def syllables(seconds: float, rate: int = 24000, amp: float = 0.25) -> AudioClip:
+    """Tone with a 4 Hz speech-like envelope, at a typical TTS rate."""
+    t = np.arange(round(seconds * rate)) / rate
+    envelope = 0.55 + 0.45 * np.sin(2 * np.pi * 4 * t)
+    fade = np.minimum(1.0, (seconds - t) / 0.05)
+    samples = amp * envelope * fade * np.sin(2 * np.pi * 700 * t)
+    return AudioClip.from_samples(samples.astype(np.float32), rate)
+
+
+@pytest.mark.parametrize("noise", ["none", "office", "cafe", "street"])
+async def test_turn_based_call_through_a_noisy_line_is_measured_correctly(store, noise):
+    conditions = LineConditions(noise=noise, snr_db=20, packet_loss_pct=1, one_way_latency_ms=80)
+    to_bot, to_caller = PhoneLine(conditions, seed=1), PhoneLine(conditions, seed=2)
+    artifact = CallArtifact(mode=CallMode.TURN_BASED, timing_is_real=False)
+    recorder = CallRecorder(artifact, store)
+    recorder.place(Speaker.CALLER, to_bot.process(syllables(2.0)), 0.5)
+    recorder.place(Speaker.BOT, to_caller.process(syllables(3.0)), 3.5)
+    recorder.place(Speaker.CALLER, to_bot.process(syllables(1.5)), 7.5)
+    finished = recorder.finish()
+
+    result = await run_evaluation(finished, store.paths(finished.id), EvalDeps())
+    timing = next(r for r in result.evaluators if r.name == "timing")
+    assert timing.status == "ok"
+    assert timing.metrics["caller_talk_s"] == pytest.approx(3.5, abs=0.5)
+    assert timing.metrics["bot_talk_s"] == pytest.approx(3.0, abs=0.4)
+    assert timing.metrics["overlap"]["count"] == 0
+    assert timing.metrics["response_latency"] is None
+
+
+async def test_live_call_with_a_barge_in_is_measured_through_the_line(store):
+    line = PhoneLine(LineConditions(noise="office", snr_db=25), seed=3)
+    artifact = CallArtifact(mode=CallMode.HUMAN)
+    recorder = CallRecorder(artifact, store)
+
+    def stream(speaker: Speaker, clip: AudioClip, at_s: float) -> None:
+        size = round(clip.sample_rate * 0.02) * 2
+        for i in range(0, len(clip.pcm), size):
+            frame = line.process_frame(AudioClip(clip.pcm[i : i + size], clip.sample_rate))
+            recorder.write_frame(speaker, frame, at_s + i / 2 / clip.sample_rate)
+
+    stream(Speaker.CALLER, syllables(2.0), 0.0)
+    stream(Speaker.BOT, syllables(3.0), 2.5)
+    stream(Speaker.CALLER, syllables(2.0), 4.0)
+    recorder.truncate(Speaker.BOT, 4.3)
+    finished = recorder.finish()
+
+    result = await run_evaluation(finished, store.paths(finished.id), EvalDeps())
+    timing = next(r for r in result.evaluators if r.name == "timing").metrics
+    assert timing["response_latency"]["max_s"] == pytest.approx(0.5, abs=0.2)
+    event = timing["barge_in"]["events"][0]
+    assert event["caller_start_s"] == pytest.approx(4.0, abs=0.15)
+    assert event["reaction_s"] == pytest.approx(0.3, abs=0.15)
