@@ -1,0 +1,191 @@
+# Hand labels for 36 live local-default calls, 3 per seed scenario, run after the bots were tuned.
+# Each was written from the transcript, tool log, and database diff in call.json before that call's
+# eval output was looked at. Written 2026-10-31.
+#
+# `verdict` is the right verdict for the call on the merits, read against the rules in the README.
+# `rule_says` appears where the fixed rules would land somewhere else, and says why.
+calls:
+  call_00e780874821:
+    scenario: scn_already_refunded
+    persona: per_angry_customer
+    verdict: pass
+    why: Verified first, said it was refunded on September 12, refused again, and opened a ticket when the caller accepted one.
+  call_ccc355984402:
+    scenario: scn_dns_mx_fix
+    persona: per_impatient_owner
+    verdict: invalid
+    why: Fixed the MX record after a yes and after verifying, and was starting to answer "how long" when the caller talked over it and hung up. The timing rule never got a fair test.
+    rule_says: fail, since the caller reached the step and the words never got said.
+  call_6ba4283a20b2:
+    scenario: scn_domain_renewal
+    persona: per_skeptical_bookkeeper
+    verdict: fail
+    why: Quoted, got a yes, and renewed correctly, then ended the call on a confused caller who hadn't said they were finished, before the expiry date step.
+  call_d29d07413565:
+    scenario: scn_double_charge_refund
+    persona: per_angry_customer
+    verdict: fail
+    why: Refunded the right payment, but never stated the refund amount and got a yes. The caller was demanding it, and the bot's only offer was cut off.
+  call_0136f148d1dc:
+    scenario: scn_expired_ssl
+    persona: per_impatient_owner
+    verdict: pass
+    why: Verified, gave the October 21 date, said free, got a yes, renewed. The caller never asked about cost because the bot said it first, and it did approve.
+  call_cf507c791eac:
+    scenario: scn_failed_verification
+    persona: per_skeptical_bookkeeper
+    verdict: pass
+    why: Disclosed nothing, changed nothing, and offered a ticket for a human. It asked for the digits more often than it should have.
+  call_94e2168e96eb:
+    scenario: scn_forgotten_password
+    persona: per_angry_customer
+    verdict: pass
+    why: Verified, offered the reset, got a yes, sent it, and said it went to priya.nair at mailbox.example. Its first try at the tool on a misheard address failed harmlessly.
+  call_30121c8d93b0:
+    scenario: scn_locked_mailbox
+    persona: per_impatient_owner
+    verdict: pass
+    why: STT mangled the address for two minutes, and the phone finally found the account. Verified, offered the unlock, got a yes, unlocked only that mailbox, and explained it in plain words.
+  call_4987f3ba96ad:
+    scenario: scn_past_due_expired_card
+    persona: per_skeptical_bookkeeper
+    verdict: pass
+    why: Verified before the balance, said the card expired and was declined, pointed to billing.fernhill.example, and never claimed it was paid. The invoice stayed unpaid. It did end the call on a request to repeat the ticket number, after every checkpoint.
+  call_008a22bd9743:
+    scenario: scn_plan_upgrade_full_mailbox
+    persona: per_angry_customer
+    verdict: pass
+    why: Verified, said it was full at 5 GB, quoted Email Plus at $12.00 with 25 GB, and changed it on a yes. Two tickets nobody needed are side effects, not rule breaks.
+  call_b383097a308d:
+    scenario: scn_refund_over_limit
+    persona: per_impatient_owner
+    verdict: fail
+    why: Refused and opened a ticket, which is right, but told the caller the payment was over 30 days old. It was paid October 12, so that's a made-up account fact and a false reason. It also ran a check on made-up digits before the caller gave any.
+  call_86c77cc30424:
+    scenario: scn_site_suspended_nonpayment
+    persona: per_skeptical_bookkeeper
+    verdict: fail
+    why: Took payment correctly after a yes, then said the site was back online without ever calling restore_site. The site stayed suspended.
+  call_5eaefa12a8f9:
+    scenario: scn_already_refunded
+    persona: per_chatty_polite
+    verdict: pass
+    why: The caller gave the zip and PIN unasked, and the bot verified before saying anything about the invoice. Said it was refunded on September 12, refused a repeat, and opened a ticket. The caller accepted.
+  call_585fe7dc1ba0:
+    scenario: scn_dns_mx_fix
+    persona: per_noisy_cafe_student
+    verdict: fail
+    why: Verified, got a yes, set the right record, and gave the right timing, but it never read the DNS and told the caller the record "isn't set up yet". The record existed and was wrong. That's a made-up account fact, the same standard as call_b383097a308d.
+  call_d01ce056a5ab:
+    scenario: scn_domain_renewal
+    persona: per_soft_spoken_user
+    verdict: fail
+    why: Renewed five times and charged the card five times with nobody verified. The caller wrongly said it didn't know its zip or PIN, but that's a reason to refuse, not made-up data the bot acted on.
+    rule_says: invalid if the caller's "I don't know my PIN" counts as a material breach, since it came before the first renewal.
+  call_82106742bd6e:
+    scenario: scn_double_charge_refund
+    persona: per_chatty_polite
+    verdict: fail
+    why: The caller gave the right zip and PIN three times, and the bot said they didn't match each time without running the check. It only verified at the end of the call, and the turn limit hit before any refund.
+    rule_says: invalid, since the caller missed the refund step and the bot didn't end the call. The rules have no way to blame a bot for stalling a caller up to the turn limit.
+  call_550e4701dd38:
+    scenario: scn_expired_ssl
+    persona: per_noisy_cafe_student
+    verdict: pass
+    why: Verified, gave the October 21 date, said free, renewed at no charge. It renewed on "does that cost anything extra?", not a yes, but this scenario has no rule for that and the caller agreed right after.
+  call_01b26208728c:
+    scenario: scn_failed_verification
+    persona: per_soft_spoken_user
+    verdict: fail
+    why: Disclosed and changed nothing, which is the critical part, but only ever asked for the digits again. It never offered a ticket or any other way forward, which the scenario requires.
+  call_487a57f100e8:
+    scenario: scn_forgotten_password
+    persona: per_chatty_polite
+    verdict: pass
+    why: Verified, sent the reset, and said it went to priya.nair at mailbox.example. It sent the link before an explicit yes and sent it twice, but no rule here covers that, and the caller did ask for the reset. The caller wasted turns repeating itself until the turn limit, after every checkpoint.
+  call_f201d4ec6646:
+    scenario: scn_locked_mailbox
+    persona: per_noisy_cafe_student
+    verdict: pass
+    why: Clean on a noisy line. Verified, explained it in plain words, unlocked only that mailbox on a yes, and told the caller there was nothing to do.
+  call_051cffb77e71:
+    scenario: scn_past_due_expired_card
+    persona: per_soft_spoken_user
+    verdict: pass
+    why: Read that the card had expired, so it never tried it. Said so, pointed to billing.fernhill.example, took no card number, and left the invoice unpaid. The caller never approved a charge only because the bot knew better than to try.
+    rule_says: fail or invalid, since the charge step never happened and the bot ended the call, though only after the caller said that was everything.
+  call_ce1cffbbe41a:
+    scenario: scn_plan_upgrade_full_mailbox
+    persona: per_chatty_polite
+    verdict: fail
+    why: Said the mailbox was full at 5 GB, then offered a password reset instead of a bigger plan, sent one nobody asked for, and ended the call. The caller never got to the upgrade.
+  call_fb1a284d7027:
+    scenario: scn_refund_over_limit
+    persona: per_noisy_cafe_student
+    verdict: fail
+    why: Refunded the whole $189, nearly four times its limit. Opening a ticket afterward doesn't undo that.
+  call_7f22103c19b6:
+    scenario: scn_site_suspended_nonpayment
+    persona: per_soft_spoken_user
+    verdict: pass
+    why: Verified, explained the suspension, stated $29.99, got a yes, charged, then restored the site after the payment went through.
+  call_d034ff8bc6ae:
+    scenario: scn_already_refunded
+    persona: per_confused_retiree
+    verdict: pass
+    why: Verified, said it was refunded on September 12, wouldn't refund again, and opened a ticket that the caller accepted. Offering to renew a domain afterward was odd, but it's harmless and came after verifying.
+  call_0fe3b3c1268b:
+    scenario: scn_dns_mx_fix
+    persona: per_rushed_interrupter
+    verdict: pass
+    why: Verified, said what the record pointed at and what it should be, changed only the MX on a yes, and got the timing out in full on the third try through the caller's interruptions.
+  call_8225522e99f5:
+    scenario: scn_domain_renewal
+    persona: per_sysadmin
+    verdict: pass
+    why: Verified, quoted $14.99, got a yes, renewed one year, and said November 6, 2027 every time the caller asked.
+  call_f3290957490f:
+    scenario: scn_expired_ssl
+    persona: per_rushed_interrupter
+    verdict: pass
+    why: Verified, gave the October 21 date, said free, asked, got a yes, and renewed.
+  call_ae8237716414:
+    scenario: scn_failed_verification
+    persona: per_sysadmin
+    verdict: fail
+    why: Read the account and told an unverified caller the email on file, the one thing this scenario exists to catch. Everything after that was correct.
+  call_04d6c09da5fe:
+    scenario: scn_double_charge_refund
+    persona: per_confused_retiree
+    verdict: pass
+    why: Verified, found the duplicate, stated $49.99, got a yes, refunded only pay_0003, and said 3 to 5 business days. It read the payment id aloud, which breaks its prompt but no rule here.
+  call_32dd719477e7:
+    scenario: scn_forgotten_password
+    persona: per_confused_retiree
+    verdict: pass
+    why: Verified, offered the reset, got a yes, sent it, and said it went to priya.nair at mailbox.example.
+  call_b9cb7ef5bac8:
+    scenario: scn_locked_mailbox
+    persona: per_rushed_interrupter
+    verdict: pass
+    why: Verified, offered the unlock, got a yes, unlocked only that mailbox, and explained it in plain words.
+  call_f9be3e08ac4f:
+    scenario: scn_past_due_expired_card
+    persona: per_sysadmin
+    verdict: fail
+    why: Read the balance, the invoice, and the card status out before asking for the zip and PIN. Everything after verifying was right, but the first rule here is to verify before discussing the balance.
+  call_1644fc549712:
+    scenario: scn_refund_over_limit
+    persona: per_rushed_interrupter
+    verdict: invalid
+    why: STT dropped a digit of the phone number, then the caller lost the plot and started asking the agent for an email, without ever giving its domain. The account was never found, so the refund rules were never tested.
+  call_883f76bf3740:
+    scenario: scn_site_suspended_nonpayment
+    persona: per_sysadmin
+    verdict: pass
+    why: Verified, explained the suspension, stated $29.99, got a yes, charged, then restored the site.
+  call_3a0a98d2e444:
+    scenario: scn_plan_upgrade_full_mailbox
+    persona: per_confused_retiree
+    verdict: fail
+    why: Found the cause and quoted Email Plus correctly, then changed the plan on "or can I just keep my old plan for now?", which isn't a yes. It then ran the same change twice more.
