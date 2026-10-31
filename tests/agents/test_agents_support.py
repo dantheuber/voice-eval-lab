@@ -537,7 +537,26 @@ async def test_interruption_mid_sentence(db):
     bot, _, _ = make_bot(db, "Your invoice FH-4419 was paid on Friday.")
     await turn(bot)
     bot.on_interrupted("Your invoice F H dash 4")
-    assert bot.messages[-1].content == "Your invoice F H dash 4"
+    assert bot.messages[-1].role == "user"  # nothing finished, so the reply never happened
+    assert all("F H dash 4" not in m.content for m in bot.messages if m.role == "assistant")
+
+
+async def test_a_cut_sentence_stays_out_of_the_bots_turn_and_reaches_the_next_request(db):
+    """A real call: history ending "two charges of forty nine" made Qwen3.5-4B end its later
+    replies at "forty nine" too, 7 times in 8."""
+    bot, llm, _ = make_bot(db, "You have two charges of $49.99.", "Five days.", "Goodbye.")
+    await turn(bot, "Hi")
+    bot.on_interrupted("Thanks for checking. You have two charges of forty nine")
+    assert bot.messages[-1].content == "Thanks for checking."
+
+    await turn(bot, "How long do refunds take?")
+    asked = llm.requests[-1]["messages"][-1]
+    assert asked.role == "user"
+    assert '"You have two charges of forty nine"' in asked.content
+    assert asked.content.endswith("How long do refunds take?")
+
+    await turn(bot, "Thanks.")
+    assert "forty nine" not in llm.requests[-1]["messages"][-1].content
 
 
 async def test_the_next_request_sees_only_what_was_heard(db):
@@ -585,18 +604,18 @@ async def test_interruption_leaves_earlier_turns_alone(db):
     bot, _, _ = make_bot(db, "First reply.", "Second reply is long.")
     await turn(bot, "One")
     await turn(bot, "Two")
-    bot.on_interrupted("Second")
+    bot.on_interrupted("Second.")
     assert [m.content for m in bot.messages if m.role == "assistant"] == [
         GREETING,
         "First reply.",
-        "Second",
+        "Second.",
     ]
 
 
 async def test_interrupting_the_greeting(db):
     bot, _, _ = make_bot(db)
     bot.on_interrupted("Thanks for calling")
-    assert bot.messages[-1].content == "Thanks for calling"
+    assert (bot.messages[-1].role, bot.messages[-1].content) == ("user", "(The phone rings and you answer.)")
 
 
 async def test_abandoned_stream_keeps_what_was_yielded_and_closes_the_llm(db):
@@ -606,8 +625,8 @@ async def test_abandoned_stream_keeps_what_was_yielded_and_closes_the_llm(db):
     await stream.aclose()
     assert llm.closed_streams == 1
     assert bot.messages[-1].content == first.display
-    bot.on_interrupted("Spoken")
-    assert bot.messages[-1].content == "Spoken"
+    bot.on_interrupted("Spoken.")
+    assert bot.messages[-1].content == "Spoken."
 
 
 TRIMMED_REPLY = "First sentence with unheard words. Second sentence."
@@ -617,9 +636,9 @@ async def test_interrupt_then_close_keeps_only_what_was_played(db):
     bot, _, _ = make_bot(db, TRIMMED_REPLY)
     stream = bot.respond("Hi")
     await anext(stream)
-    bot.on_interrupted("First")
+    bot.on_interrupted("First.")
     await stream.aclose()
-    assert bot.messages[-1].content == "First"
+    assert bot.messages[-1].content == "First."
 
 
 async def test_close_then_interrupt_keeps_only_what_was_played(db):
@@ -627,8 +646,8 @@ async def test_close_then_interrupt_keeps_only_what_was_played(db):
     stream = bot.respond("Hi")
     await anext(stream)
     await stream.aclose()
-    bot.on_interrupted("First")
-    assert bot.messages[-1].content == "First"
+    bot.on_interrupted("First.")
+    assert bot.messages[-1].content == "First."
 
 
 @pytest.mark.parametrize("close_first", [True, False])
@@ -647,10 +666,10 @@ async def test_resuming_after_an_interrupt_ends_the_turn(db):
     bot, llm, _ = make_bot(db, TRIMMED_REPLY)
     stream = bot.respond("Hi")
     await anext(stream)
-    bot.on_interrupted("First")
+    bot.on_interrupted("First.")
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
-    assert bot.messages[-1].content == "First"
+    assert bot.messages[-1].content == "First."
     assert llm.closed_streams == 1
 
 
@@ -697,11 +716,11 @@ async def test_an_interrupt_during_a_slow_generation_adds_nothing_later(db):
     await anext(stream)
     pending = asyncio.create_task(anext(stream))
     await asyncio.sleep(0)
-    bot.on_interrupted("First")
+    bot.on_interrupted("First.")
     llm.release.set()
     with pytest.raises(StopAsyncIteration):
         await pending
-    assert bot.messages[-1].content == "First"
+    assert bot.messages[-1].content == "First."
 
 
 async def test_a_new_turn_stops_an_abandoned_generator(db):
@@ -757,7 +776,7 @@ async def test_interruption_during_a_second_tool_round_keeps_both_tool_results(d
     await anext(stream)
     await anext(stream)
     await stream.aclose()
-    bot.on_interrupted("Checking. Final")
+    bot.on_interrupted("Checking. Final.")
     assert len(tool_events(events)) == 2
     assert roles(bot.messages)[-6:] == [
         "user",
@@ -767,7 +786,7 @@ async def test_interruption_during_a_second_tool_round_keeps_both_tool_results(d
         "tool",
         "assistant",
     ]
-    assert bot.messages[-1].content == "Checking. Final"
+    assert bot.messages[-1].content == "Checking. Final."
 
 
 # Ending the call ------------------------------------------------------------------------------

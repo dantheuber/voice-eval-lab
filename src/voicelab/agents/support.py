@@ -59,6 +59,7 @@ FILLER_LINE = "One moment, let me check that."
 
 # Some chat templates reject a conversation whose first turn isn't from the user.
 _CALL_CONNECTED = "(The phone rings and you answer.)"
+_CUT_OFF_NOTE = '(You were interrupted just after saying "{words}". Carry on with the call.)'
 _RETRY_NOTE = (
     "(Note from the system, not the caller: your last reply was not usable. Either call a tool "
     "with valid JSON arguments, or answer the caller in plain spoken sentences.)"
@@ -169,6 +170,7 @@ class SupportBot:
         self.ended = False
         self.end_reason = ""
         self._turn = 0  # bumped by each new turn and each interrupt, which stops the running turn
+        self._cut_off = ""  # words of a sentence a barge-in stopped, for the next caller turn
         system = support_instructions(dispatcher.db.today, policy)
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system)]
 
@@ -272,8 +274,14 @@ class SupportBot:
         Everything else the bot wrote never happened as far as the caller knows. Tool calls stay,
         since they really ran and the bot has to remember them. `spoken_text` is the TTS form, and
         small models read that back without trouble. Works mid-turn too, and stops that turn.
+
+        Only finished sentences go back in the bot's own turn. A small model copies its last turn,
+        so one ending "two charges of forty nine" made it end later replies the same way, 7 times
+        in 8, and every marker on that text got copied too. The words of the sentence it was cut
+        off in go in front of the caller's next turn, where they read as context.
         """
         self._turn += 1
+        finished, self._cut_off = split_sentences(f"{spoken_text.strip()} ")
         start = next(
             index + 1
             for index in range(len(self.messages) - 1, -1, -1)
@@ -285,11 +293,14 @@ class SupportBot:
                 kept.append(message)
             elif message.tool_calls:
                 kept.append(message.model_copy(update={"content": ""}))
-        if spoken_text.strip():
-            kept.append(ChatMessage(role="assistant", content=spoken_text.strip()))
+        if finished:
+            kept.append(ChatMessage(role="assistant", content=" ".join(finished)))
         self.messages[start:] = kept
 
     def _add_caller_text(self, text: str) -> None:
+        if self._cut_off:
+            text = f"{_CUT_OFF_NOTE.format(words=self._cut_off)} {text}"
+            self._cut_off = ""
         # Two caller turns in a row happen when a barge-in erases a whole reply. Strict chat
         # templates reject that, so they merge.
         last = self.messages[-1]
