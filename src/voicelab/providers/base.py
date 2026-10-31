@@ -153,6 +153,7 @@ class RealtimeEvent(BaseModel):
     text: str = ""
     audio_pcm16: bytes = b""
     tool_call: ToolCall | None = None
+    response_id: str | None = None  # the response this event belongs to, when the model has ids
 
 
 class RealtimeSession(Protocol):
@@ -160,8 +161,13 @@ class RealtimeSession(Protocol):
 
     async def send_tool_result(self, call_id: str, result: str) -> None: ...
 
-    async def interrupt(self) -> None:
-        """Stop the current response. The model keeps only what was played."""
+    async def interrupt(self, *, response_id: str | None, played_ms: int) -> None:
+        """Stop a response after `played_ms` of its audio actually reached the listener.
+
+        Audio arrives faster than it plays, so the session alone can't know the cut point. The
+        engine tracks playback and passes it here so the adapter can drop unheard text from the
+        model's context. An adapter whose model can't do that must document the limitation.
+        """
         ...
 
     def events(self) -> AsyncIterator[RealtimeEvent]: ...

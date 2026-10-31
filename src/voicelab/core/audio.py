@@ -64,9 +64,9 @@ class AudioClip:
         return AudioClip.from_samples(out, sample_rate)
 
     def slice(self, start_s: float, end_s: float) -> AudioClip:
-        start = max(0, round(start_s * self.sample_rate)) * 2
-        end = min(self.n_samples, round(end_s * self.sample_rate)) * 2
-        return AudioClip(self.pcm[start:end], self.sample_rate)
+        start = min(self.n_samples, max(0, round(start_s * self.sample_rate)))
+        end = min(self.n_samples, max(start, round(end_s * self.sample_rate)))
+        return AudioClip(self.pcm[start * 2 : end * 2], self.sample_rate)
 
     def __add__(self, other: AudioClip) -> AudioClip:
         if other.sample_rate != self.sample_rate:
