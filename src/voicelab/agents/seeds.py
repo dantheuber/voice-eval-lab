@@ -24,7 +24,11 @@ def load_scenarios(directory: Path = SCENARIOS_DIR) -> dict[str, Scenario]:
 def _load[T: (Persona, Scenario)](directory: Path, model: type[T]) -> dict[str, T]:
     loaded: dict[str, T] = {}
     for path in sorted(Path(directory).glob("*.yaml")):
-        item = model.model_validate(yaml.safe_load(path.read_text()))
+        data = yaml.safe_load(path.read_text())
+        unknown = set(data) - set(model.model_fields)
+        if unknown:  # Pydantic would drop a mistyped field and leave the default in place
+            raise ValueError(f"{path} has unknown fields: {sorted(unknown)}")
+        item = model.model_validate(data)
         if item.id in loaded:
             raise ValueError(f"duplicate id {item.id} in {path}")
         loaded[item.id] = item

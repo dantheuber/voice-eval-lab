@@ -13,6 +13,7 @@ from voicelab.agents.support import (
     SupportBot,
     parse_text_tool_calls,
     speakable_text,
+    support_instructions,
 )
 from voicelab.company import ToolDispatcher, create_call_db, diff_against_seed, load_policy
 from voicelab.core.models import SystemEvent, ToolCallEvent
@@ -354,6 +355,21 @@ def test_speakable_text_cuts_at_tool_markup():
     assert speakable_text("It costs $5 {roughly}") == "It costs $5 {roughly}"
 
 
+@pytest.mark.parametrize("cut_off", ["Okay. <tool_", "Okay. {", "Okay. <thi", "Okay. [TOOL"])
+def test_a_reply_cut_off_inside_markup_stays_silent(cut_off):
+    assert speakable_text(cut_off) == "Okay. "
+
+
+async def test_retried_speech_then_tool_call_keeps_one_assistant_message(db):
+    bot, llm, _ = make_bot(
+        db, "Let me look. <tool_call>{broken", uses(call("list_plans")), "We have six."
+    )
+    await turn(bot)
+    assert roles(bot.messages)[-3:] == ["assistant", "tool", "assistant"]
+    assert bot.messages[-3].content == "Let me look."
+    assert bot.messages[-3].tool_calls
+
+
 def test_parse_ignores_plain_speech():
     assert parse_text_tool_calls("Your site is back online.") == ([], False)
 
@@ -525,6 +541,18 @@ async def test_end_call_runs_after_other_tools_in_the_same_reply(db):
     await turn(bot)
     assert [event.name for event in events] == ["create_ticket", "end_call"]
     assert bot.ended
+
+
+async def test_nothing_happens_after_the_call_ended(db):
+    bot, llm, _ = make_bot(db, uses(call("end_call")))
+    await turn(bot)
+    assert await turn(bot, "Hello?") == []
+    assert len(llm.requests) == 1
+
+
+def test_instructions_match_what_the_bot_uses(db):
+    bot, _, _ = make_bot(db)
+    assert support_instructions(db.today) == bot.messages[0].content
 
 
 async def test_a_new_bot_has_not_ended(db):

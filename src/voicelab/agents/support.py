@@ -11,6 +11,7 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator, Callable
+from datetime import date
 from typing import Any
 
 from voicelab.agents.speech import Lexicon, SpeechText, load_lexicon, normalize, split_sentences
@@ -46,6 +47,7 @@ _RETRY_NOTE = (
 )
 
 _THINK = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
+_CUT_OFF_MARKUP = re.compile(r"[<{\[][^>}\]]*$")  # a reply that hit max_tokens inside a tag
 _TOOL_MARKUP = re.compile(
     r"<tool_call|<\|tool_call|<\|python_tag|<function[=\s]|\[TOOL_CALLS\]|```"
     r"|\{\s*\"|\[\s*\{\s*\""
@@ -61,7 +63,7 @@ def speakable_text(raw: str) -> str:
     """
     text = _THINK.sub("", raw)
     markup = _TOOL_MARKUP.search(text)
-    return text[: markup.start()] if markup else text
+    return _CUT_OFF_MARKUP.sub("", text[: markup.start()] if markup else text)
 
 
 def _tool_call_from_json(value: Any) -> ToolCall | None:
@@ -110,6 +112,12 @@ def _unsaid(text: str, said: list[str], *, include_tail: bool = False) -> list[s
     return sentences[len(said) :]
 
 
+def support_instructions(today: date, policy: str | None = None) -> str:
+    """The system prompt. Speech-to-speech sessions take this as their instructions."""
+    day = f"{today:%B} {today.day}, {today.year}"
+    return SYSTEM_PROMPT.format(today=day, policy=load_policy() if policy is None else policy)
+
+
 class SupportBot:
     """Holds one conversation. `respond` runs the LLM and tools until the bot has spoken."""
 
@@ -138,9 +146,7 @@ class SupportBot:
         self.max_tool_rounds = max_tool_rounds
         self.ended = False
         self.end_reason = ""
-        today = dispatcher.db.today.strftime("%B %-d, %Y")
-        rules = load_policy() if policy is None else policy
-        system = SYSTEM_PROMPT.format(today=today, policy=rules)
+        system = support_instructions(dispatcher.db.today, policy)
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system)]
 
     def greet(self) -> SpeechText:
@@ -155,6 +161,8 @@ class SupportBot:
         The engine may stop iterating at any point on a barge-in. Text already yielded stays in
         history for `on_interrupted` to trim, and a finished tool call is never undone.
         """
+        if self.ended:
+            return
         self._add_caller_text(caller_text)
         retry = False
         spoke = False
@@ -271,6 +279,10 @@ class SupportBot:
     def _run_tools(self, text: str, calls: list[ToolCall]) -> None:
         # History updates together with no await in between. A cancelled turn can't leave a tool
         # call without its result, which backends reject on the next request.
+        last = self.messages[-1]
+        if last.role == "assistant" and not last.tool_calls:  # speech from a round that was retried
+            self.messages.pop()
+            text = f"{last.content} {text}".strip()
         self.messages.append(ChatMessage(role="assistant", content=text, tool_calls=calls))
         for call in calls:
             at_s = self.clock()

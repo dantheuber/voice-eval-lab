@@ -10,7 +10,7 @@ from voicelab.agents.caller import (
 from voicelab.agents.draft import DraftError, draft_scenario
 from voicelab.agents.seeds import load_personas, load_scenarios, validate_seeds
 from voicelab.agents.speech import Lexicon, SpeechText, load_lexicon, normalize, split_sentences
-from voicelab.agents.support import SupportBot
+from voicelab.agents.support import SupportBot, support_instructions
 
 __all__ = [
     "CallerBot",
@@ -28,5 +28,6 @@ __all__ = [
     "normalize",
     "run_text_call",
     "split_sentences",
+    "support_instructions",
     "validate_seeds",
 ]

@@ -162,6 +162,7 @@ class CallerBot:
         )
 
     async def next_line(self, heard: str) -> CallerLine:
+        """Produce the caller's next line. `max_turns` counts these lines, not both sides."""
         if self.hung_up:
             return CallerLine("", hang_up=True, hang_up_reason=self.hang_up_reason)
         if heard.strip():
