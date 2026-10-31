@@ -152,14 +152,14 @@ Then press **Dry run (text only)**. It plays the scenario as text with no audio 
 You can evaluate a call recorded somewhere else. Open **Upload**.
 
 1. Choose a `.wav`, `.flac`, `.mp3`, or `.ogg` file, then press **Upload and probe**. Files can be up to 2 GiB and 2 hours.
-2. If the file is stereo, say which channel is the caller. You can listen to the first 10 seconds to check. A mono file gets split by energy, which is a guess, so timing checks that need two clean channels are skipped.
+2. If the file is stereo, say which channel is the caller. You can listen to the first 10 seconds to check. A mono file gets split by energy, which is a guess and can put words on the wrong side. Reply latency, overlap, and barge-in checks are skipped, since they need to know who spoke.
 3. Add what you know. Each field unlocks more checks:
    - **Scenario** lets the judge score its rules.
    - **Bot transcript with intended text** is one bot turn per line, or JSON `[{ "text": "...", "startS": 1.2 }]`. Without it, pronunciation can only compare two ASR passes.
    - **Tool log** is one JSON tool call per line. Without it, tool and database checks are skipped.
 4. Press **Evaluate**.
 
-Read the summary's "Not checked" line on the review screen. An uploaded call is the same artifact with less evidence, and that line lists what wasn't checked. A call with little evidence can still get `pass` from the general rules that do run, so a pass here means less than a pass on a full bot call. The review screen's note says such a call can't pass automatically, but the evaluator code does allow it, so trust the summary line.
+Read the summary's "Not checked" line on the review screen. An uploaded call is the same artifact with less evidence, and that line lists what wasn't checked. An upload with no tool log always ends as `needs_review`, because it can't show what the bot did to the account. Its findings say what to listen to, and you set the verdict.
 
 ## Compare two runs
 

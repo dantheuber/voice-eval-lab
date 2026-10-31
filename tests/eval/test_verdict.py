@@ -196,9 +196,23 @@ def test_call_with_nothing_confirmed_cannot_pass():
 
 
 def test_no_scenario_call_with_failed_general_finding_fails():
-    artifact = CallArtifact(mode=CallMode.UPLOAD, has_tool_log=False)
+    artifact = CallArtifact(mode=CallMode.HUMAN)
     decision = decide(artifact, findings=[finding("major")])
     assert decision.verdict == Verdict.FAIL
+
+
+@pytest.mark.parametrize("findings", [(), (finding("major"),)])
+def test_an_upload_with_no_tool_log_goes_to_a_person_either_way(findings):
+    artifact = CallArtifact(mode=CallMode.UPLOAD, has_tool_log=False)
+    decision = decide(artifact, findings=list(findings))
+    assert decision.verdict == Verdict.NEEDS_REVIEW
+    assert any("no tool log" in reason for reason in decision.reasons)
+
+
+def test_an_upload_with_a_tool_log_can_pass_and_fail():
+    artifact = CallArtifact(mode=CallMode.UPLOAD, has_tool_log=True)
+    assert decide(artifact).verdict == Verdict.PASS
+    assert decide(artifact, findings=[finding("major")]).verdict == Verdict.FAIL
 
 
 def summary_for(artifact, criteria=(PASSED,), findings=(), evaluators=()) -> str:
@@ -227,7 +241,8 @@ def test_summary_for_a_call_without_scenario_says_what_was_not_checked():
         run(name="timing", skipped={"overlap": "channels were inferred"}),
     ]
     text = summary_for(artifact, evaluators=evaluators)
-    assert text.startswith("Verdict: pass.")
+    assert text.startswith("Verdict: needs_review.")
+    assert "no tool log" in text
     assert "Not checked: scenario rules" in text
     assert "audio_listening (no audio analyst configured)" in text
     assert "facts against tool results" in text

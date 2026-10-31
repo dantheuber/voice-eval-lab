@@ -57,7 +57,7 @@ export function UploadScreen() {
           <div className="stack">
             <Panel>
               <div className={`${s.drop} ${over ? s.over : ""}`} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={(e) => { e.preventDefault(); setOver(false); pick(e.dataTransfer.files[0] ?? null); }}>
-                <b>Drop a WAV, FLAC, MP3, or OGG here</b>Stereo with caller left and bot right gives the best results. Mono is accepted and split by diarisation, which is less reliable for overlap.
+                <b>Drop a WAV, FLAC, MP3, or OGG here</b>Stereo with caller left and bot right gives the best results. Mono is accepted and split by energy, which is a guess, so reply and overlap timing are skipped.
                 <div className="btn-row" style={{ justifyContent: "center", marginTop: 12 }}><Button onClick={() => inputRef.current?.click()}>Choose file</Button><input ref={inputRef} type="file" accept=".wav,.flac,.mp3,.ogg,audio/*" hidden onChange={(e) => pick(e.target.files?.[0] ?? null)} /></div>
               </div>
               {file && (
@@ -70,8 +70,13 @@ export function UploadScreen() {
                 </div>
               )}
               {upload.data && (upload.data.probe.channels === 1 || upload.data.probe.channelMap === "unknown") && (
-                <Field label="Which channel is the caller?" style={{ marginTop: 12 }} help="Listen to the first 10 seconds in the review screen if unsure; you can re-map there.">
-                  <select className="in" value={channelMap} onChange={(e) => setChannelMap(e.target.value as typeof channelMap)} style={{ width: "auto" }}><option value="caller_left">caller left, bot right</option><option value="caller_right">caller right, bot left</option><option value="mono">mono, split by diarisation</option></select>
+                <Field label={upload.data.probe.channels === 1 ? "Who speaks first?" : "Which channel is the caller?"} style={{ marginTop: 12 }} help="Listen to the first 10 seconds if you're not sure.">
+                  <div className="btn-row">
+                    {upload.data.probe.channels === 1
+                      ? <select className="in" aria-label="Who speaks first" value={channelMap} onChange={(e) => setChannelMap(e.target.value as typeof channelMap)} style={{ width: "auto" }}><option value="caller_left">the bot, then the caller</option><option value="caller_right">the caller, then the bot</option></select>
+                      : <select className="in" aria-label="Which channel is the caller" value={channelMap} onChange={(e) => setChannelMap(e.target.value as typeof channelMap)} style={{ width: "auto" }}><option value="caller_left">caller left, bot right</option><option value="caller_right">caller right, bot left</option><option value="mono">one mixed channel, split by energy</option></select>}
+                    <audio controls preload="none" src={endpoints.mediaUrl(`/api/uploads/${upload.data.callId}/preview?startS=0&durationS=10`) ?? undefined} style={{ height: 32 }} />
+                  </div>
                 </Field>
               )}
             </Panel>

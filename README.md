@@ -98,7 +98,7 @@ The rules apply in this order, and the first match wins:
 | `fail` | An omission of something the caller reached |
 | `invalid` | The caller missed a required checkpoint, with nothing above to blame on the bot. This is a test problem, not a bot failure, and the call stays out of pass rates. The summary says who ended the call and which failed rules weren't counted |
 | `fail` | A non-advisory finding is major or critical |
-| `needs_review` | A rule or a beat it depends on couldn't be decided, an evaluator errored, the caller slipped on a minor fact, advisory findings reached a score of 3, or nothing could be confirmed |
+| `needs_review` | A rule or a beat it depends on couldn't be decided, an evaluator errored, the caller slipped on a minor fact, advisory findings reached a score of 3, or nothing could be confirmed. An upload with no tool log lands here whatever the rules above said |
 | `pass` | None of the above, and at least one rule was confirmed |
 
 A major advisory finding scores 3 and a minor one scores 1, so one major or three minor findings send a call to review. `info` findings score nothing and stay out of the default list, behind a details button on the review screen. Repeats of one kind of problem roll up into one finding that lists every occurrence and plays the worst. People confirm or dismiss findings on the review screen, and their verdict is stored beside the machine's, never over it.

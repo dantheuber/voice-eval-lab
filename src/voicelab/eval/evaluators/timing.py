@@ -28,7 +28,7 @@ from voicelab.eval.vad import Region
 _SYNTHETIC_REASON = (
     "timing_is_real is False: this was a turn-based call, so its pauses come from the scheduler"
 )
-_INFERRED_REASON = "channels were inferred from a mono recording, so they can't overlap"
+_INFERRED_REASON = "channels were guessed from a mono recording, so who spoke when isn't known"
 _WAITS = ("slow_response", "unanswered_turn")
 _NOISE_REASON = "noise on this line reads as speech on the bot channel, so its turns can't be timed"
 
@@ -293,13 +293,14 @@ class TimingEvaluator:
             }
 
         if real and not noisy:
+            out.findings.extend(_dead_air_findings(silences, cfg))
+        if real and not noisy and not inferred:
             latencies = response_latencies(caller_turns, bot_turns)
             out.metrics["response_latency"] = _latency_metrics(ctx, latencies)
-            out.findings.extend(_dead_air_findings(silences, cfg))
             out.findings.extend(_slow_response_findings(latencies, cfg))
             out.findings.extend(_unanswered_findings(unanswered, cfg))
         else:
-            reason = _NOISE_REASON if real else _SYNTHETIC_REASON
+            reason = _SYNTHETIC_REASON if not real else _NOISE_REASON if noisy else _INFERRED_REASON
             skipped["latency"] = reason
             skipped["barge_in"] = reason
             out.metrics["response_latency"] = None

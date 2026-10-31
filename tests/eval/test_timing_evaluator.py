@@ -187,7 +187,7 @@ async def test_synthetic_timing_skips_latency_and_barge_in_and_says_why(store):
     assert m["talk_ratio_bot"] is not None
 
 
-async def test_inferred_channels_skip_overlap_and_barge_in(store):
+async def test_inferred_channels_skip_everything_that_needs_to_know_who_spoke(store):
     artifact = CallArtifact(
         mode=CallMode.UPLOAD,
         timeline=[SystemEvent(at_s=0, kind=SEPARATION_EVENT, detail="split")],
@@ -196,7 +196,8 @@ async def test_inferred_channels_skip_overlap_and_barge_in(store):
     assert out.metrics["overlap"] is None
     assert out.metrics["barge_in"] is None
     assert "mono" in out.metrics["skipped"]["overlap"]
-    assert out.metrics["response_latency"]["max_s"] == pytest.approx(1.0, abs=TOLERANCE)
+    assert out.metrics["response_latency"] is None
+    assert "mono" in out.metrics["skipped"]["latency"]
 
 
 async def test_engine_reports_sit_beside_audio_measurements(store):

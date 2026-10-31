@@ -53,6 +53,26 @@ def decide_verdict(
     evaluators: list[EvaluatorRun],
     config: VerdictConfig | None = None,
 ) -> VerdictDecision:
+    """Decide the call, then hold back an outside recording too thin to be sure of.
+
+    An upload with no tool log can't show what the bot did to the account, so the rules that ran
+    say what to look at and a person decides.
+    """
+    decision = _decide(artifact, criteria, findings, evaluators, config)
+    thin = artifact.mode == CallMode.UPLOAD and not artifact.has_tool_log
+    if thin and decision.verdict in (Verdict.PASS, Verdict.FAIL):
+        reason = f"an upload with no tool log can't {decision.verdict.value} on its own"
+        return VerdictDecision(Verdict.NEEDS_REVIEW, [*decision.reasons, reason])
+    return decision
+
+
+def _decide(
+    artifact: CallArtifact,
+    criteria: list[CriterionResult],
+    findings: list[Finding],
+    evaluators: list[EvaluatorRun],
+    config: VerdictConfig | None = None,
+) -> VerdictDecision:
     """Decide what the call shows about the bot.
 
     A commission is the bot doing something forbidden. It happened, so it fails the call whatever
