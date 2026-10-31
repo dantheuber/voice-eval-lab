@@ -317,3 +317,4 @@ a.rowlink:hover { text-decoration: none; }
   .cols-3, .cols-4, .cols-2 { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+.grow { flex: 1; }
