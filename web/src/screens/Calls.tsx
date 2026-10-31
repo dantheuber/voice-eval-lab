@@ -64,7 +64,7 @@ export function CallsScreen() {
   useEffect(() => { document.querySelector<HTMLElement>(`[data-row="${sel}"]`)?.scrollIntoView({ block: "nearest" }); }, [sel]);
 
   const facets = calls.data?.facets.verdict ?? {};
-  const total = Object.values(facets).reduce((a, b) => a + b, 0);
+  const total = calls.data?.facets.all ?? 0;
   const activeFilters = [...sp.keys()].length;
   return (
     <Shell crumbs={["Calls"]} keys={KEYS}>

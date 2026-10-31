@@ -53,7 +53,8 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
   const detailCount = allFindings.filter((f) => f.severity === "info").length;
   const audioSrc = endpoints.mediaUrl(payload.audio.available ? payload.audio.stereoUrl : null);
   const audio = useAudio(audioSrc, D);
-  const pending = payload.call.status === "running" || payload.call.status === "evaluating" || !payload.eval;
+  const failed = payload.call.status === "failed"; // a failed call is finished, and has no eval coming
+  const pending = !failed && (payload.call.status === "running" || payload.call.status === "evaluating" || !payload.eval);
   const isTurn = payload.call.mode === "turn_based";
   const sc = payload.call.scenarioSnapshot;
   const pe = payload.call.personaSnapshot;
@@ -151,7 +152,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
   return (
     <div className={s.review}>
       <div className={s.head}>
-        <div className={s.title}><span className="mono">{id}</span>{payload.eval ? <VerdictBadge v={payload.eval.verdict} /> : <VerdictBadge v={payload.call.status === "running" ? "running" : "evaluating"} />}<ModeBadge mode={payload.call.mode} /></div>
+        <div className={s.title}><span className="mono">{id}</span>{payload.eval ? <VerdictBadge v={payload.eval.verdict} /> : <VerdictBadge v={failed ? "failed" : payload.call.status === "running" ? "running" : "evaluating"} />}<ModeBadge mode={payload.call.mode} /></div>
         <div className={s.meta}>
           <span>{sc ? <><b>{sc.title}</b></> : <span className="faint">no scenario</span>}</span>
           <span>persona <b>{pe?.name ?? (payload.call.mode === "human" ? "you" : "unknown")}</b></span>
@@ -205,12 +206,12 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
         <aside className={s.side} aria-label="Findings and evaluators">
           <div className={s.sec} id="secFindings">
             <div className={s.sh}>Findings <span className="tag mono">{openCount} open</span>{pending && <HealthDot state="loading">evaluating</HealthDot>}<span className="grow" /><span className={s.hint}><kbd>j</kbd><kbd>k</kbd> move, <kbd>y</kbd> confirm, <kbd>n</kbd> dismiss</span></div>
-            {findings.length === 0 && !pending && <div className="empty" style={{ padding: 16 }}><b>No findings</b>Every evaluator passed this call. Set the verdict or press <kbd>]</kbd>.</div>}
+            {findings.length === 0 && !pending && <div className="empty" style={{ padding: 16 }}>{failed ? <><b>Not evaluated</b>The call failed before it finished, so nothing was checked. What was recorded is above.</> : <><b>No findings</b>Every evaluator passed this call. Set the verdict or press <kbd>]</kbd>.</>}</div>}
             {findings.length === 0 && pending && <div style={{ padding: 12 }}><Skeleton rows={3} /></div>}
             {findings.map((f) => <FindingCard key={f.id} payload={payload} f={f} onPlay={playClip} onDecide={decideFinding} onSaveNote={saveNote} />)}
             {detailCount > 0 && <div style={{ padding: "6px 12px" }}><Button size="sm" variant="ghost" onClick={() => setShowDetails(!showDetails)}>{showDetails ? "Hide" : "Show"} {detailCount} detail{detailCount === 1 ? "" : "s"}</Button></div>}
           </div>
-          <div className={s.sec}><div className={s.sh}>Rubric{sc ? `, ${sc.title}` : ""}</div><Rubric payload={payload} onSeek={seek} /></div>
+          <div className={s.sec}><div className={s.sh}>Rubric{sc ? `, ${sc.title}` : ""}</div><Rubric payload={payload} onSeek={seek} pending={pending} /></div>
           <div className={s.sec}><div className={s.sh}>Database changes</div><DbDiff payload={payload} /></div>
           <div className={s.sec}><div className={s.sh}>Timing</div>
             {payload.timing ? <dl className={s.kvs}><dt>reply p50 / p95</dt><dd>{payload.timing.replyP50S} s / {payload.timing.replyP95S} s</dd><dt>overlaps</dt><dd>{payload.timing.overlaps}</dd><dt>dead air events</dt><dd>{payload.timing.deadAirEvents}</dd><dt>barge-in stop time</dt><dd>{payload.timing.bargeStopS != null ? `${payload.timing.bargeStopS} s` : "no barge-ins"}</dd></dl>

@@ -74,10 +74,10 @@ export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
   );
 }
 
-export function Rubric({ payload, onSeek }: { payload: ReviewPayload; onSeek: (t: number) => void }) {
+export function Rubric({ payload, onSeek, pending }: { payload: ReviewPayload; onSeek: (t: number) => void; pending: boolean }) {
   const crit = payload.eval?.criteria ?? [];
   if (!payload.evidence.scenario) return <div className="kvs faint" style={{ padding: "8px 12px", fontSize: 12 }}>No scenario selected, so there is no rubric to score. Pick one when uploading to enable it.</div>;
-  if (!crit.length) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>Waiting for the transcript judge.</div>;
+  if (!crit.length) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>{pending ? "Waiting for the transcript judge." : "Not judged."}</div>;
   return (
     <table className={s.rubric}><tbody>
       {crit.map((c) => (
@@ -177,7 +177,7 @@ export function VerdictBar({ payload, human, onSet, pending }: { payload: Review
   const invalidLocked = machine === "invalid" && (human == null || human === "invalid");
   return (
     <div className={s.verdictBar} id="verdictBar">
-      <span className="muted">Call verdict</span>{machine ? <VerdictBadge v={machine} /> : <HealthDot state="loading">evaluating</HealthDot>}
+      <span className="muted">Call verdict</span>{machine ? <VerdictBadge v={machine} /> : pending ? <HealthDot state="loading">evaluating</HealthDot> : <VerdictBadge v="failed" />}
       {human && human !== machine && <span className="faint">human: {verdictLabel[human]}</span>}
       {invalidLocked && <span className="faint">invalid runs do not count against the bot. <button type="button" className="btn ghost sm" onClick={() => onSet("needs_review")} title="Mark this run as a real test of the bot; pass and fail unlock">Not invalid, count it</button></span>}
       <span className="grow" />

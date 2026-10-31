@@ -119,7 +119,7 @@ export function createMockTransport(): Transport {
       const limit = Math.max(1, Number(p.get("limit")) || 50);
       const offset = Math.max(0, Number(p.get("cursor")) || 0);
       const slice = items.slice(offset, offset + limit);
-      const page: T.CallsPage = { items: slice, nextCursor: offset + limit < items.length ? String(offset + limit) : null, total: items.length, facets: { verdict: facets } };
+      const page: T.CallsPage = { items: slice, nextCursor: offset + limit < items.length ? String(offset + limit) : null, total: items.length, facets: { verdict: facets, all: allCalls().length } };
       return page;
     } },
     { method: "GET", re: /^\/api\/calls\/next-review$/, fn: (_m, _b, url) => {

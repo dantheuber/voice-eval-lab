@@ -110,7 +110,7 @@ export interface CallsQuery {
   verdict?: Verdict[]; scenario?: string; persona?: string; mode?: CallMode; profile?: string; run?: string;
   openOnly?: boolean; status?: CallStatus; cursor?: string; limit?: number;
 }
-export interface CallsPage { items: CallSummary[]; nextCursor: string | null; total: number; facets: { verdict: Record<string, number> } }
+export interface CallsPage { items: CallSummary[]; nextCursor: string | null; total: number; facets: { verdict: Record<string, number>; all: number } }
 
 export interface EvidenceFlags { audio: boolean; transcript: boolean; intendedText: boolean; toolLog: boolean; dbSnapshots: boolean; scenario: boolean }
 export interface Timing { replyP50S: number; replyP95S: number; overlaps: number; deadAirEvents: number; bargeStopS: number | null }

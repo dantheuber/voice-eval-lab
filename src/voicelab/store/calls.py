@@ -58,6 +58,7 @@ class CallPage:
     next_cursor: str | None
     total: int
     facets: dict[str, int]
+    unfiltered_by_verdict: int  # includes calls with no verdict, such as failed and queued ones
 
 
 def timing_metrics(result: EvalResult | None) -> dict[str, Any] | None:
@@ -293,7 +294,8 @@ class CallIndex:
             [*params, limit + 1],
         )
         next_cursor = _encode_cursor(rows[limit - 1]) if len(rows) > limit else None
-        return CallPage(rows[:limit], next_cursor, total, facets)
+        everything = self.db.value(f"SELECT count(*) FROM calls WHERE {facet_where}", facet_params)
+        return CallPage(rows[:limit], next_cursor, total, facets, everything)
 
     def recent(self, column: str, value: str, limit: int = 8) -> list[dict[str, Any]]:
         return self.db.rows(

@@ -175,6 +175,8 @@ kbd {
 .v.invalid::before { background: transparent; border: 1.5px solid var(--invalid); border-radius: 50%; width: 6px; height: 6px; }
 .v.running { color: var(--accent); background: var(--accent-soft); }
 .v.running::before { border-radius: 50%; border: 1.5px solid var(--accent); border-top-color: transparent; width: 6px; height: 6px; animation: spin 900ms linear infinite; }
+.v.failed { color: var(--fail); border-color: var(--fail); }
+.v.failed::before { background: var(--fail); border-radius: 50%; width: 6px; height: 6px; }
 .v.queued { color: var(--ink-3); border-color: var(--line-2); }
 .v.queued::before { background: var(--ink-4); border-radius: 50%; width: 6px; height: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }

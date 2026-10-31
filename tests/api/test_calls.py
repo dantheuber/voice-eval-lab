@@ -95,6 +95,7 @@ def test_filters(client, many, query, expected):
 def test_facets_ignore_the_verdict_filter_but_keep_the_others(client, many):
     page = client.get("/api/calls?verdict=pass&scenario=scn_a").json()
     assert page["facets"]["verdict"] == {"fail": 2, "invalid": 1}
+    assert page["facets"]["all"] >= 3
 
 
 def test_limit_is_bounded(client):

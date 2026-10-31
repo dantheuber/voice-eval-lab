@@ -107,7 +107,7 @@ def list_calls(
         "items": [mapping.call_summary(row) for row in page.items],
         "nextCursor": page.next_cursor,
         "total": page.total,
-        "facets": {"verdict": page.facets},
+        "facets": {"verdict": page.facets, "all": page.unfiltered_by_verdict},
     }
 
 

@@ -126,9 +126,9 @@ interface Profile { id: string; label: string; description: string; configPath: 
 ## Calls
 
 `GET /api/calls?verdict=&scenario=&persona=&mode=&profile=&run=&openOnly=true&status=&cursor=&limit=50`
-→ `{ "items": CallSummary[], "nextCursor": string | null, "total": number, "facets": { "verdict": { "pass": 3, "fail": 3, "needs_review": 5, "invalid": 1 } } }`
+→ `{ "items": CallSummary[], "nextCursor": string | null, "total": number, "facets": { "verdict": { "pass": 3, "fail": 3, "needs_review": 5, "invalid": 1 }, "all": 14 } }`
 
-Repeating a filter (`?verdict=pass&verdict=fail`) means "any of". `run` filters by `batchId`. `limit` defaults to 50; `cursor` is opaque and comes from the previous page's `nextCursor`. `total` counts every call matching the filters, not only the page.
+Repeating a filter (`?verdict=pass&verdict=fail`) means "any of". `run` filters by `batchId`. `limit` defaults to 50; `cursor` is opaque and comes from the previous page's `nextCursor`. `total` counts every call matching the filters, not only the page. `facets` ignore the verdict filter, and `all` includes calls with no verdict, such as failed and queued ones.
 
 `GET /api/calls/next-review?after=<callId>` → `{ "callId": string | null }`. Oldest call with open findings or verdict `needs_review`, skipping `after` and anything already human-verdicted.
 
