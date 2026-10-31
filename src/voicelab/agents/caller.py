@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +38,7 @@ MAX_TURNS_LINE = "Look, I have to go. I'll call back later."
 REDIRECT_LINE = "Sorry, um, can we get back to why I called?"
 OPTIONAL_BEAT_TURNS = 2  # an optional beat that goes nowhere for this long gets dropped
 TRANSCRIPT_LINES = 20  # keeps the prompt small enough for a little local model
+TYPICAL_TURN_WORDS = 20  # one or two short sentences, as the support prompt asks for
 
 _PATIENCE = {
     1: "You have no patience and it shows fast.",
@@ -91,7 +93,11 @@ class CallerLine:
 
 @dataclass(frozen=True)
 class Interruption:
-    """Whether to cut in on a bot turn, and how far through its speech (0 to 1)."""
+    """Whether to cut in on a bot turn, and how far through a typical one (0 to 1).
+
+    A turn's length isn't known while it plays. `run_text_call` reads the fraction against
+    `TYPICAL_TURN_WORDS`, and a live engine can read it against the same word count or a duration.
+    """
 
     interrupt: bool
     after_fraction: float
@@ -364,13 +370,10 @@ class _TextLine:
             )
         )
 
-    def bot_speaks(self, segments: list[SpeechText], cut_at: float | None) -> str:
+    def bot_speaks(self, segments: list[SpeechText], cut_words: int | None) -> str:
         """Play the bot's turn and return what reached the caller."""
         intended = " ".join(segment.spoken for segment in segments)
-        words = intended.split()
-        spoken = intended
-        if cut_at is not None:
-            spoken = " ".join(words[: max(1, int(len(words) * cut_at))])
+        spoken = intended if cut_words is None else " ".join(intended.split()[:cut_words])
         start = self.now
         self.now += len(spoken.split()) * self.seconds_per_word
         utterance = Utterance(
@@ -380,10 +383,10 @@ class _TextLine:
             intended_text=intended,
             spoken_text=spoken,
             heard_text=spoken,
-            interrupted=cut_at is not None,
+            interrupted=cut_words is not None,
         )
         self.timeline.append(utterance)
-        if cut_at is not None:
+        if cut_words is not None:
             self.timeline.append(
                 BargeInEvent(
                     at_s=self.now,
@@ -392,6 +395,44 @@ class _TextLine:
                 )
             )
         return spoken
+
+
+async def _single(segment: SpeechText) -> AsyncIterator[SpeechText]:
+    yield segment
+
+
+async def _play_turn(
+    line: _TextLine,
+    support: SupportBot,
+    reply: AsyncIterator[SpeechText],
+    decision: Interruption,
+) -> str:
+    """Play one bot turn and return what reached the caller.
+
+    The reply is pulled only as far as playback gets. A caller cutting in closes it there, so
+    later sentences are never generated and later tool rounds never run. Whatever finished before
+    the cut stays done.
+    """
+    limit = max(1, round(decision.after_fraction * TYPICAL_TURN_WORDS))
+    segments: list[SpeechText] = []
+    words = 0
+    async for segment in reply:
+        segments.append(segment)
+        words += len(segment.spoken.split())
+        if decision.interrupt and words > limit and not support.ended:
+            break
+    await reply.aclose()
+
+    cut_words = None
+    if decision.interrupt and not support.ended:
+        # A reply shorter than the cut-in point is still cut, at the same fraction of itself.
+        cut_words = limit if words > limit else max(1, int(words * decision.after_fraction))
+        if cut_words >= words:
+            cut_words = None
+    heard = line.bot_speaks(segments, cut_words)
+    if cut_words is not None:
+        support.on_interrupted(heard)
+    return heard
 
 
 async def run_text_call(
@@ -407,16 +448,10 @@ async def run_text_call(
     support.on_event = line.timeline.append
     line.system("call_started")
 
-    def bot_turn(segments: list[SpeechText], number: int) -> str:
-        decision = caller.decide_interruption(number)
-        cut_at = decision.after_fraction if decision.interrupt and not support.ended else None
-        heard = line.bot_speaks(segments, cut_at)
-        if cut_at is not None:
-            support.on_interrupted(heard)
-        return heard
-
     turn = 0
-    heard = bot_turn([support.greet()], turn)
+    heard = await _play_turn(
+        line, support, _single(support.greet()), caller.decide_interruption(turn)
+    )
     while True:
         said = await caller.next_line(heard)
         if said.text:
@@ -429,8 +464,8 @@ async def run_text_call(
             detail = said.hang_up_reason
             break
         turn += 1
-        segments = [segment async for segment in support.respond(said.text)]
-        heard = bot_turn(segments, turn)
+        reply = support.respond(said.text)
+        heard = await _play_turn(line, support, reply, caller.decide_interruption(turn))
         if support.ended:
             end_reason, detail = "bot_ended", support.end_reason
             break

@@ -622,7 +622,7 @@ async def test_barge_in_trims_what_the_caller_hears_and_the_bots_memory(db):
     result = await run_text_call(bot, who)
 
     barge_ins = [event for event in result.timeline if isinstance(event, BargeInEvent)]
-    assert len(barge_ins) == 3
+    assert len(barge_ins) == 2  # the greeting and the long reply; "Okay." has nothing to cut
     interrupted = [event for event in utterances(result, Speaker.BOT) if event.interrupted]
     target = interrupted[1]
     assert target.intended_text == long_reply
@@ -637,12 +637,115 @@ async def test_barge_in_trims_what_the_caller_hears_and_the_bots_memory(db):
     assert target.spoken_text in " ".join(m.content for m in bot.messages)
 
 
-async def test_a_goodbye_is_never_cut_off(db):
-    bot = support(db, uses(call("end_call"), text="Goodbye now, and thanks for calling."))
-    who, _ = caller(caller_says("Bye."), who=persona(interruption_rate=1.0))
+LONG_LINE = " ".join(["word"] * 20) + "."  # longer than any cut-in point
+
+
+def always_interrupts(**fields):
+    return persona(interruption_rate=1.0, patience=5, **fields)
+
+
+async def test_tools_in_later_rounds_never_run_after_the_cut(db):
+    llm = ScriptedLLM(
+        uses(
+            call("list_plans"),
+            text=LONG_LINE,
+        ),
+        uses(call("unlock_mailbox", address="evelyn@hartfamily.example")),
+        "It's unlocked.",
+        default="Okay.",
+    )
+    bot = SupportBot(llm, ToolDispatcher(db))
+    who, _ = caller(
+        caller_says("Go."),
+        caller_says("Bye.", hang_up=True, reason="x"),
+        who=always_interrupts(),
+        seed=3,
+    )
+    result = await run_text_call(bot, who)
+
+    assert result.db_changes == []
+    assert [e for e in result.timeline if isinstance(e, ToolCallEvent)] == []
+    assert len(llm.requests) == 1
+    assert llm.closed_streams == 1
+
+
+async def test_tools_finished_before_the_cut_are_kept(db):
+    llm = ScriptedLLM(
+        uses(call("unlock_mailbox", address="evelyn@hartfamily.example")),
+        LONG_LINE,
+        default="Okay.",
+    )
+    bot = SupportBot(llm, ToolDispatcher(db))
+    who, _ = caller(
+        caller_says("Go."),
+        caller_says("Bye.", hang_up=True, reason="x"),
+        who=always_interrupts(),
+    )
+    result = await run_text_call(bot, who)
+    assert [change.table for change in result.db_changes] == ["mailboxes"]
+    assert utterances(result, Speaker.BOT)[1].interrupted is True
+
+
+async def test_unplayed_sentences_are_not_intended_speech(db):
+    sentences = ["Word " * 30 + "end.", "This later sentence never played."]
+    bot = SupportBot(ScriptedLLM(" ".join(sentences), default="Okay."), ToolDispatcher(db))
+    who, _ = caller(
+        caller_says("Go."),
+        caller_says("Bye.", hang_up=True, reason="x"),
+        who=always_interrupts(),
+    )
+    result = await run_text_call(bot, who)
+    cut = utterances(result, Speaker.BOT)[1]
+    assert cut.interrupted is True
+    assert "never played" not in cut.intended_text
+    assert "never played" not in " ".join(m.content for m in bot.messages)
+
+
+async def test_a_short_reply_can_still_be_cut_off(db):
+    bot = SupportBot(ScriptedLLM(default="One two three four."), ToolDispatcher(db))
+    who, _ = caller(
+        caller_says("Go."),
+        caller_says("Bye.", hang_up=True, reason="x"),
+        who=always_interrupts(),
+    )
+    result = await run_text_call(bot, who)
+    cut = utterances(result, Speaker.BOT)[1]
+    assert cut.interrupted is True
+    assert cut.spoken_text != cut.intended_text
+
+
+async def test_a_one_word_reply_has_nothing_to_cut(db):
+    bot = SupportBot(ScriptedLLM(default="Okay."), ToolDispatcher(db))
+    who, _ = caller(
+        caller_says("Go."),
+        caller_says("Bye.", hang_up=True, reason="x"),
+        who=always_interrupts(),
+    )
+    result = await run_text_call(bot, who)
+    assert utterances(result, Speaker.BOT)[1].interrupted is False
+
+
+async def test_the_final_goodbye_after_end_call_is_never_cut_off(db):
+    bot = support(db, uses(call("end_call")))
+    who, _ = caller(caller_says("Bye."), who=always_interrupts())
     result = await run_text_call(bot, who)
     assert result.end_reason == "bot_ended"
     assert utterances(result, Speaker.BOT)[-1].interrupted is False
+
+
+async def test_cutting_in_before_end_call_ran_keeps_the_call_open(db):
+    goodbye = "Well thank you so much for calling us today and have a really great rest of it."
+    llm = ScriptedLLM(uses(call("end_call"), text=goodbye), default="Okay.")
+    bot = SupportBot(llm, ToolDispatcher(db))
+    who, _ = caller(
+        caller_says("Bye."),
+        caller_says("Wait, one more thing.", hang_up=True, reason="x"),
+        who=always_interrupts(),
+    )
+    result = await run_text_call(bot, who)
+    assert bot.ended is False
+    assert result.end_reason == "caller_hung_up"
+    assert [e for e in result.timeline if isinstance(e, ToolCallEvent)] == []
 
 
 async def test_same_seed_same_call():
