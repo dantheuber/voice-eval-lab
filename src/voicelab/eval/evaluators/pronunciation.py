@@ -111,7 +111,7 @@ def _time_span(
     )
     start = max(before, utterance.start_s) if before is not None else utterance.start_s
     end = min(after, utterance.end_s) if after is not None else utterance.end_s
-    return (start, end) if end > start else (utterance.start_s, utterance.end_s)
+    return start, max(start, end)
 
 
 def _groups(aligned: list[Aligned], owners: list[_Spoken], kept: list[bool]) -> list[_Group]:

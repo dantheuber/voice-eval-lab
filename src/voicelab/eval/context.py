@@ -44,7 +44,7 @@ class EvalDeps:
     analyst: AudioAnalyst | None = None
     mos: MosPredictor | None = None
     config: EvalConfig = field(default_factory=EvalConfig)
-    lexicon_path: Path | None = None  # None means seeds/lexicon.yaml
+    lexicon_path: Path | None = None  # None means the repo's seeds/lexicon.yaml
 
 
 @dataclass

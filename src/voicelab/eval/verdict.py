@@ -94,7 +94,7 @@ def unchecked_items(artifact: CallArtifact, evaluators: list[EvaluatorRun]) -> l
             "scenario rules, expected database state, and caller checkpoints (no scenario)"
         )
     for run in evaluators:
-        if run.status == "skipped" and "scenario" not in run.reason:
+        if run.status == "skipped" and not run.reason.startswith("no scenario"):
             items.append(f"{run.name} ({run.reason})")
         items.extend(f"{run.name}: {item}" for item in run.metrics.get("not_checked") or [])
         for what, why in (run.metrics.get("skipped") or {}).items():

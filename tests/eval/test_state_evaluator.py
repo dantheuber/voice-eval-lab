@@ -95,6 +95,13 @@ async def test_no_change_fails_when_the_row_moved(store):
     assert "mb_1" in out.criteria[0].reason
 
 
+async def test_no_change_fails_when_a_matching_row_was_inserted(store):
+    expected = StateExpectation(table="refunds", where={"payment_id": "pay_2"}, op="no_change")
+    out = await evaluate(store, call(REFUND, expected=scenario(expected)))
+    assert out.criteria[0].status == "fail"
+    assert "ref_1" in out.criteria[0].reason
+
+
 async def test_row_added_matches_on_fields(store):
     expected = StateExpectation(
         table="refunds", where={"payment_id": "pay_2", "amount_cents": "4999"}, op="row_added"
@@ -107,6 +114,31 @@ async def test_row_added_rejects_an_update(store):
     expected = StateExpectation(table="mailboxes", where={"id": "mb_1"}, op="row_added")
     out = await evaluate(store, call(MAILBOX, expected=scenario(expected)))
     assert out.criteria[0].status == "fail"
+
+
+async def test_unexpected_side_effect_is_a_minor_advisory(store):
+    out = await evaluate(store, call(MAILBOX, expected=scenario()))
+    assert [(f.severity, f.advisory) for f in out.findings] == [("minor", True)]
+
+
+async def test_unexpected_write_to_another_customer_goes_to_review(store):
+    artifact = call(MAILBOX, expected=scenario())
+    artifact.scenario_snapshot.customer_id = "cus_2"
+    out = await evaluate(store, artifact)
+    assert [(f.severity, f.advisory) for f in out.findings] == [("major", True)]
+
+
+async def test_unexpected_write_to_the_callers_own_row_stays_minor(store):
+    artifact = call(MAILBOX, expected=scenario())
+    artifact.scenario_snapshot.customer_id = "cus_1"
+    out = await evaluate(store, artifact)
+    assert out.findings[0].severity == "minor"
+
+
+async def test_unexpected_deletion_goes_to_review(store):
+    deleted = DbChange(table="dns_records", key={"id": 1}, kind="delete", before={"id": 1})
+    out = await evaluate(store, call(deleted, expected=scenario()))
+    assert out.findings[0].severity == "major"
 
 
 async def test_unexpected_change_is_reported_as_advisory(store):
