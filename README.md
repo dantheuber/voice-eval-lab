@@ -45,7 +45,7 @@ Then open <http://127.0.0.1:18080>.
 | Caller TTS | Pocket TTS 18M | `pocket-tts`, CPU | 29 ms to first audio, 12.4x, 13 of 15 critical tokens |
 | VAD and turns | Silero, Smart Turn v3.2 | Pipecat 1.15.0, CPU | Silero 0.6 ms per 32 ms window. Smart Turn was not benchmarked |
 | Post-call STT | Whisper large-v3 q5_0 | whisper.cpp v1.9.5, Vulkan | 16.9x, WER 0.006 on human speech, 28 of 32 critical tokens, 1.7 GB |
-| Judge | Qwen3.8-27B UD-Q4_K_M | llama.cpp, Vulkan | 13 t/s, 35 to 111 s per transcript, 20 of 20 verdicts on one test transcript, 18.7 GB |
+| Judge | Qwen3.8-27B UD-Q4_K_M | llama.cpp, Vulkan, reasoning off, `draft-mtp` speculation | 30 t/s, 20 to 40 s per call, 18.7 GB. See the eval results below |
 
 Tool accuracy comes from 2 clips of one synthetic voice, and critical tokens from 12 synthetic clips. Those figures rank the stacks and don't predict accuracy on real callers.
 

@@ -2,6 +2,10 @@
 # models, so nothing here carries a revenue limit. Pocket presets are CC0 and CC-BY only.
 # No audio_analyst: LFM3-Audio, Gemma 4 E2B, and Voxtral all found 0 of 20 planted defects, which is
 # chance. Delivery measurements cover this, and the seam stays for a model that does better.
+# The judge runs with reasoning off, since thinking used its whole token budget on real calls, and
+# draft-mtp, which is the same output at 30 t/s instead of 12. Qwen3.5-4B was faster still at 18 s a
+# call but scored 90.7% against 95.6% with the same reply format, so 27B stayed. Past 3 minutes a
+# call, ASR and judge together took about a third of the call's length.
 id: local-default
 label: "Local: Qwen stack"
 description: "Qwen3-ASR, Qwen3.5-4B, Phonon. 833 ms plain turn and 2.0 s tool turn, 12 of 12 tool sessions from speech."

@@ -64,7 +64,7 @@ A run is a batch of bot-to-bot calls. Each pairs a scenario (what the caller wan
 
 The run page streams the transcript as it happens. **Pause after current calls** and **Stop** are at the top. Stopping marks the calls in flight as failed.
 
-Evaluation starts by itself when each call ends. The judge took 35 to 111 s per transcript in benchmarks, so expect a verdict a minute or two after a call finishes.
+Evaluation starts by itself when each call ends. On 18 real calls it took 34 to 65 s, so expect a verdict about a minute after a call finishes.
 
 A call ends as `pass`, `fail`, `needs_review`, or `invalid`. See [How evals work](../README.md#how-evals-work). An `invalid` call is a test problem: the caller never reached the scenario, so it says nothing about the bot and stays out of pass rates.
 
