@@ -153,6 +153,7 @@ class SupportBot:
         self.max_tool_rounds = max_tool_rounds
         self.ended = False
         self.end_reason = ""
+        self._turn = 0  # bumped by each new turn and each interrupt, which stops the running turn
         system = support_instructions(dispatcher.db.today, policy)
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system)]
 
@@ -165,19 +166,23 @@ class SupportBot:
     async def respond(self, caller_text: str) -> AsyncIterator[SpeechText]:
         """Yield speakable segments for one caller turn, sentence by sentence.
 
-        The engine may stop iterating at any point on a barge-in. Text already yielded stays in
-        history for `on_interrupted` to trim, and a finished tool call is never undone.
+        The engine may stop iterating at any point on a barge-in, and may call `on_interrupted`
+        before or after closing this stream. Each sentence is in history before it is yielded, so
+        closing adds nothing back. After an interrupt the turn stops: no more speech and no more
+        tools. A tool call that already finished is never undone.
         """
         if self.ended:
             return
         self._add_caller_text(caller_text)
+        self._turn += 1
+        turn = self._turn
         retry = False
-        spoke = False
+        segments_spoken = 0
         for _ in range(self.max_tool_rounds):
             said: list[str] = []
             raw = ""
             final: LLMResponse | None = None
-            finished = False
+            spoken_before_round = segments_spoken
             stream = self.llm.stream_chat(
                 self._retry_messages() if retry else self.messages,
                 tools=self.dispatcher.tools,
@@ -189,42 +194,44 @@ class SupportBot:
                     raw += unicode_safe(delta.text)
                     final = delta.final or final
                     for sentence in _unsaid(raw, said):
+                        if turn != self._turn:
+                            return
                         said.append(sentence)
-                        segment = normalize(sentence, self.lexicon)
-                        if segment.spoken:
+                        segment = self._commit_speech(sentence)
+                        if segment:
+                            segments_spoken += 1
                             yield segment
                 text = unicode_safe(final.text) if final and final.text else raw
                 for sentence in _unsaid(text, said, include_tail=True):
+                    if turn != self._turn:
+                        return
                     said.append(sentence)
-                    segment = normalize(sentence, self.lexicon)
-                    if segment.spoken:
+                    segment = self._commit_speech(sentence)
+                    if segment:
+                        segments_spoken += 1
                         yield segment
-                finished = True
             finally:
-                if not finished and said:
-                    self._add_assistant_text(said)
                 # An abandoned stream would keep a single-slot model server busy into the next turn.
                 close = getattr(stream, "aclose", None)
                 if close:
                     await close()
+            if turn != self._turn:
+                return
 
             calls = list(final.tool_calls) if final else []
             malformed = False
             if not calls:
                 calls, malformed = parse_text_tool_calls(text)
-            spoke = spoke or bool(said)
 
             if calls:
-                self._run_tools(" ".join(said), calls)
+                self._run_tools(calls)
                 retry = False
                 if self.ended:
-                    if not spoke:
+                    if not segments_spoken:
                         yield self._say(GOODBYE)
                     return
                 continue
-            if said:
-                self._add_assistant_text(said)
-            if said and not malformed:
+            if segments_spoken > spoken_before_round and not malformed:
                 return
             self._report("malformed_tool_call", text[:500])
             retry = True
@@ -237,8 +244,9 @@ class SupportBot:
 
         Everything else the bot wrote never happened as far as the caller knows. Tool calls stay,
         since they really ran and the bot has to remember them. `spoken_text` is the TTS form, and
-        small models read that back without trouble.
+        small models read that back without trouble. Works mid-turn too, and stops that turn.
         """
+        self._turn += 1
         start = next(
             index + 1
             for index in range(len(self.messages) - 1, -1, -1)
@@ -279,11 +287,18 @@ class SupportBot:
             return [*self.messages[:-1], note]
         return [*self.messages, ChatMessage(role="user", content=_RETRY_NOTE)]
 
+    def _commit_speech(self, sentence: str) -> SpeechText | None:
+        segment = normalize(sentence, self.lexicon)
+        if not segment.spoken:
+            return None
+        self._add_assistant_text([sentence])
+        return segment
+
     def _say(self, line: str) -> SpeechText:
         self._add_assistant_text([line])
         return normalize(line, self.lexicon)
 
-    def _run_tools(self, text: str, calls: list[ToolCall]) -> None:
+    def _run_tools(self, calls: list[ToolCall]) -> None:
         """Run a batch, then record it all at once.
 
         History only changes after every call has a result, with no await in between. A crash or
@@ -331,10 +346,10 @@ class SupportBot:
                 self.end_reason = result.get("reason", "")
 
         last = self.messages[-1]
-        if last.role == "assistant" and not last.tool_calls:  # speech from a round that was retried
-            self.messages.pop()
-            text = f"{last.content} {text}".strip()
-        self.messages.append(ChatMessage(role="assistant", content=text, tool_calls=calls))
+        spoken = ""
+        if last.role == "assistant" and not last.tool_calls:  # what this turn said before the calls
+            spoken = self.messages.pop().content
+        self.messages.append(ChatMessage(role="assistant", content=spoken, tool_calls=calls))
         self.messages.extend(results)
         if self.on_event:
             for event in events:

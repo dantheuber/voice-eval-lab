@@ -1,5 +1,6 @@
 """The support bot: streaming, tools, malformed output, barge-in, and hang-up."""
 
+import asyncio
 import json
 
 import pytest
@@ -17,7 +18,7 @@ from voicelab.agents.support import (
 )
 from voicelab.company import ToolDispatcher, create_call_db, diff_against_seed, load_policy
 from voicelab.core.models import SystemEvent, ToolCallEvent
-from voicelab.providers.base import LLM
+from voicelab.providers.base import LLM, LLMDelta
 
 
 @pytest.fixture
@@ -591,6 +592,120 @@ async def test_abandoned_stream_keeps_what_was_yielded_and_closes_the_llm(db):
     assert bot.messages[-1].content == first.display
     bot.on_interrupted("Spoken")
     assert bot.messages[-1].content == "Spoken"
+
+
+TRIMMED_REPLY = "First sentence with unheard words. Second sentence."
+
+
+async def test_interrupt_then_close_keeps_only_what_was_played(db):
+    bot, _, _ = make_bot(db, TRIMMED_REPLY)
+    stream = bot.respond("Hi")
+    await anext(stream)
+    bot.on_interrupted("First")
+    await stream.aclose()
+    assert bot.messages[-1].content == "First"
+
+
+async def test_close_then_interrupt_keeps_only_what_was_played(db):
+    bot, _, _ = make_bot(db, TRIMMED_REPLY)
+    stream = bot.respond("Hi")
+    await anext(stream)
+    await stream.aclose()
+    bot.on_interrupted("First")
+    assert bot.messages[-1].content == "First"
+
+
+@pytest.mark.parametrize("close_first", [True, False])
+async def test_nothing_played_leaves_no_reply_in_either_order(db, close_first):
+    bot, _, _ = make_bot(db, TRIMMED_REPLY)
+    stream = bot.respond("Hi")
+    await anext(stream)
+    if close_first:
+        await stream.aclose()
+    bot.on_interrupted("")
+    await stream.aclose()
+    assert (bot.messages[-1].role, bot.messages[-1].content) == ("user", "Hi")
+
+
+async def test_resuming_after_an_interrupt_ends_the_turn(db):
+    bot, llm, _ = make_bot(db, TRIMMED_REPLY)
+    stream = bot.respond("Hi")
+    await anext(stream)
+    bot.on_interrupted("First")
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    assert bot.messages[-1].content == "First"
+    assert llm.closed_streams == 1
+
+
+async def test_tools_never_run_after_an_interrupt(db):
+    unlock = call("unlock_mailbox", address="evelyn@hartfamily.example")
+    bot, llm, events = make_bot(db, uses(unlock, text="One moment. Let me unlock that."))
+    stream = bot.respond("Hi")
+    await anext(stream)
+    bot.on_interrupted("One")
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    assert events == []
+    assert diff_against_seed(db) == []
+    assert all(not message.tool_calls for message in bot.messages)
+
+
+async def test_an_interrupt_during_a_slow_generation_adds_nothing_later(db):
+    class SlowLLM(ScriptedLLM):
+        def __init__(self):
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def stream_chat(self, messages, **options):
+            yield LLMDelta(text="First sentence here. ")
+            await self.release.wait()
+            yield LLMDelta(text="Second sentence here. More")
+
+    llm = SlowLLM()
+    bot = SupportBot(llm, ToolDispatcher(db))
+    bot.greet()
+    stream = bot.respond("Hi")
+    await anext(stream)
+    pending = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0)
+    bot.on_interrupted("First")
+    llm.release.set()
+    with pytest.raises(StopAsyncIteration):
+        await pending
+    assert bot.messages[-1].content == "First"
+
+
+async def test_a_new_turn_stops_an_abandoned_generator(db):
+    bot, _, _ = make_bot(db, TRIMMED_REPLY, "Second turn reply.")
+    old = bot.respond("Hi")
+    await anext(old)
+    assert [s.display for s in await turn(bot, "Wait")] == ["Second turn reply."]
+    with pytest.raises(StopAsyncIteration):
+        await anext(old)
+    assert bot.messages[-1].content == "Second turn reply."
+
+
+async def test_speech_is_in_history_by_the_time_the_engine_gets_it(db):
+    bot, _, _ = make_bot(db, TRIMMED_REPLY)
+    stream = bot.respond("Hi")
+    await anext(stream)
+    assert bot.messages[-1].content == "First sentence with unheard words."
+    await anext(stream)
+    assert bot.messages[-1].content == TRIMMED_REPLY
+    await stream.aclose()
+
+
+async def test_a_reply_with_nothing_to_say_aloud_is_retried(db):
+    bot, llm, _ = make_bot(db, "\U0001f600", "Sure thing.")
+    assert [s.display for s in await turn(bot)] == ["Sure thing."]
+    assert len(llm.requests) == 2
+    assert bot.messages[-1].content == "Sure thing."
+
+
+async def test_silent_speech_before_end_call_still_gets_a_goodbye(db):
+    bot, _, _ = make_bot(db, uses(call("end_call"), text="\U0001f600"))
+    assert [s.display for s in await turn(bot)] == [GOODBYE]
 
 
 async def test_abandoned_turn_can_be_followed_by_another(db):
