@@ -232,6 +232,21 @@ async def test_a_cut_while_the_reply_is_still_generating_credits_only_what_playe
     assert cut.interrupted and len(cut.spoken_text.split()) < 3
 
 
+async def test_the_greeting_waits_for_a_session_that_is_slow_to_open(store):
+    """The pipeline reports started before the session is up. Greeting then was silently skipped,
+    and a real call sat in silence for 7 minutes."""
+
+    class Slow(ScriptedVoice):
+        async def connect(self, *, instructions, tools, voice_id=None):
+            await asyncio.sleep(0.3)
+            return await super().connect(instructions=instructions, tools=tools)
+
+    artifact = await run(store, Slow(says_aloud("Okay.")))
+
+    first = next(e for e in artifact.timeline if isinstance(e, Utterance))
+    assert first.speaker == Speaker.BOT and first.intended_text.startswith("Thanks for calling")
+
+
 async def test_a_realtime_server_that_refuses_the_connection_fails_the_call(store):
     class Busy(ScriptedVoice):
         async def connect(self, *, instructions, tools, voice_id=None):

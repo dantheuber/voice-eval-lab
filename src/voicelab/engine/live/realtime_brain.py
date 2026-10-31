@@ -71,6 +71,7 @@ class RealtimeBrain(BotBrain):
         self._reply_audio_started = False
         self._response_id: str | None = None
         self._ending: str | None = None
+        self._connect_settled = asyncio.Event()
 
     async def on_start(self) -> None:
         try:
@@ -80,11 +81,18 @@ class RealtimeBrain(BotBrain):
         except Exception as failure:  # a busy server is the usual cause: one session per process
             await self.fail(f"realtime failed to connect: {failure!r}")
             return
+        finally:
+            self._connect_settled.set()
         self._reader = self.create_task(self._read_events())
         self._sender = self.create_task(self._send_audio())
 
     async def greet(self) -> None:
-        """The opening line is fixed, so a call never starts with a model failure."""
+        """The opening line is fixed, so a call never starts with a model failure.
+
+        The pipeline reports started before `on_start` has connected. Greeting then would be
+        skipped, and both sides would sit in silence until the call timed out.
+        """
+        await self._connect_settled.wait()
         if self.session is None:
             return
         self.begin_turn()
