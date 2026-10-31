@@ -603,11 +603,11 @@ def test_a_letter_and_anchor_that_disagree_match_neither_reading(said):
     assert norms(said) != norms("S H 4 4 1 9")
 
 
-def test_a_contradicted_id_is_still_one_critical_token():
+def test_a_contradicted_letter_is_still_part_of_its_id():
     tokens = tokenize("F as in Sam H as in house 4 4 1 9".split())
 
-    assert len(tokens) == 1 and tokens[0].critical == "id"
-    assert (tokens[0].start, tokens[0].end) == (0, 10)
+    assert [t.critical for t in tokens] == ["id"] * 6
+    assert (tokens[0].start, tokens[0].end) == (0, 4)
 
 
 @pytest.mark.parametrize("anchor", ["x-ray", "X-ray.", "xray"])

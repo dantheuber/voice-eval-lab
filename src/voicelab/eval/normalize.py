@@ -377,7 +377,7 @@ def _without_spelling_anchors(tokens: list[Token]) -> list[Token]:
 
     That holds only when the letter and the word agree. "F as in Sam" reads as S to the bot, and
     "S as in Frank" came from an S on the audio, so a contradiction keeps both sides and can't
-    match either id. It stays one letter of its id, so the mismatch lands on the id.
+    match either id. It stays a letter of its id, so the mismatch is on a critical token.
     """
     kept: list[Token] = []
     i = 0
