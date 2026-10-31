@@ -51,7 +51,8 @@ class PlayoutLedger:
     """One bot turn: sentences given to TTS, the audio made for them, and the audio sent out."""
 
     segments: list[Segment] = field(default_factory=list)
-    played_s: float = 0.0
+    played_s: float = 0.0  # measured where audio leaves the server, which isn't the listener's ear
+    in_transit_s: float = 0.0  # how far behind that the listener is
 
     def reset(self) -> None:
         self.segments = []
@@ -67,11 +68,16 @@ class PlayoutLedger:
         self.played_s += seconds
 
     @property
+    def heard_s(self) -> float:
+        """An estimate. Nothing reports back what the listener's device actually played."""
+        return max(0.0, self.played_s - self.in_transit_s)
+
+    @property
     def intended_text(self) -> str:
         return " ".join(segment.text for segment in self.segments).strip()
 
     @property
     def spoken_text(self) -> str:
         return words_played(
-            [(segment.text, segment.duration_s) for segment in self.segments], self.played_s
+            [(segment.text, segment.duration_s) for segment in self.segments], self.heard_s
         )

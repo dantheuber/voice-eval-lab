@@ -324,7 +324,7 @@ class BotBrain(Brain):
             return
         self.cut_pending = True
         self.barged_at_s = self.log.now()
-        await self.stop_model(round(self.ledger.played_s * 1000))
+        await self.stop_model(round(self.ledger.heard_s * 1000))
         self.create_task(self._settle_cut())
 
     async def _settle_cut(self) -> None:

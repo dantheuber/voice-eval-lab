@@ -144,7 +144,7 @@ class LiveTalkSession:
             ),
         )
         self.db = create_call_db()
-        ledger = PlayoutLedger()
+        ledger = PlayoutLedger(in_transit_s=self.settings.client_buffer_s)
         brain, tts = support_side(
             self.stack,
             db=self.db,

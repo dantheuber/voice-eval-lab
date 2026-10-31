@@ -37,15 +37,32 @@ A failure in any of them ends the call as `failed` and keeps what was recorded.
 3. After `settle_s`, long enough for the chunk being written to finish, the `PlayoutLedger` turns seconds played into words finished. TTS gives no word timing, so a word's share of its sentence follows its characters, and a word still playing at the cut doesn't count.
 4. `SupportBot.on_interrupted` rewrites history to those words, and the utterance and `BargeInEvent` go on the timeline.
 
+Hanging up during a reply, or cancelling a live call, follows the same steps: stop the model, settle, and record what went out as an interrupted utterance, then finalize the artifact. Recording never waits, so a second cancel during settling can't lose the turn.
+
 If the caller's turn then transcribes to nothing, the bot stopped for noise or echo. That's a `false_barge_in` event and a count in `metadata`, the number to watch when tuning.
 
-The browser's jitter buffer holds a little audio past the tap, so the listener heard slightly less than the ledger says. This is not measured.
+What counts as heard is an estimate made at the server. The tap measures transmission, not playback: a frame passes it when aiortc takes its last 10 ms for encoding, and nothing reports back what the listener's device played. After the tap come Opus framing, the network, the client's jitter buffer, and its output device.
+
+The ledger allows for that with `in_transit_s`, taken off played time before words are credited. Live bot calls use the line's latency, which is known exactly. Mic calls use `LiveSettings.client_buffer_s`, 80 ms, from one run of Chrome 154 headless over loopback with the fake profile: 34 ms in the jitter buffer (`jitterBufferDelay` over `jitterBufferEmittedCount`, steady across 11 seconds), 24 to 34 ms of `AudioContext.outputLatency` on a null audio device, and about 10 ms of Opus framing on average. That's a fixed figure. It wasn't measured on a real network, a real sound card, Bluetooth, Firefox, or Safari, and any of those could hold more, in which case the ledger credits a word too many. When a cut lands in a gap between sentences, the whole allowance still comes off even though the audio has already arrived, so the last word of the sentence before can go uncredited.
 
 ## Echo
 
-Browser echo cancellation does the first pass. `EchoGate` catches what's left on speakers: it compares the rise and fall of the mic level against the bot's outgoing level across delays up to 400 ms, and blanks mic frames that follow it, so VAD never sees them. It compares level contours rather than waveforms because the codec and speaker change the waveform. A person's speech doesn't follow the bot's contour, so the bot stays interruptible. Sustained echo sends an `echo_suspected` warning to the browser.
+Browser echo cancellation does the first pass. `EchoGate` catches what's left on speakers. It compares eight band levels of the mic against the bot's outgoing audio, every 10 ms over a 400 ms window, across delays up to 400 ms, and blanks mic frames that follow the bot, so VAD never sees them. It compares band contours rather than waveforms because the codec and speaker change the waveform. Sustained echo sends an `echo_suspected` warning to the browser and counts blanked frames in `metadata`.
 
-Tested on synthetic audio only. It has not been tried on a real speaker in a real room.
+The output sends nothing between replies, so the mic is the detector's clock. Time the output stayed quiet goes into the outgoing contour as silence, and echo is only watched for until 300 ms after the bot's last audio. VAD fires at 200 ms, sooner than a contour of speech can fill, and silence followed by a rise is already a shape to compare. That lets the same check work from the first steps of a reply. Nothing compares how loud the two sides are, because a quiet person isn't echo.
+
+Measured by replaying real Phonon and Pocket audio from `local-default` calls, with room reverb on the echo path (direct sound plus a 120 ms decaying tail) and delays of 60 to 300 ms:
+
+| Case | Result |
+|---|---|
+| Echo at gain 0.05, 0.2, 0.4 | No run of 200 ms unblanked in 45 cases. 94% of frames blanked |
+| Person, no echo underneath | 1% of their frames blanked |
+| Person over echo at gain 0.1, person as loud or louder | 3 to 15% blanked, 200 ms clear within 70 ms at the median |
+| Person at half the echo's level | 18 to 35% blanked, 200 ms clear within 180 ms at the median |
+
+A person starting within 400 ms of a bot rise can match it for a moment, and someone quieter than the echo loses some of their speech. They aren't lost for the whole turn, and the recording keeps them either way, since `MicRecorder` runs before the gate.
+
+Replay and synthetic audio only. It has not been tried on a real speaker in a real room.
 
 ## Bot-to-bot
 
@@ -64,6 +81,8 @@ Profiles with `support_engine: realtime` use `RealtimeBrain`, on the support sid
 - Mic audio only goes to the model during a turn, with 400 ms of pre-roll, because anything sent stays in context.
 - Tool calls go through `tool_checks.py` and run one at a time in order. A bad call gets an error as its result.
 - On barge-in `Lfm3RealtimeSession.interrupt` closes the socket and opens a new one with heard-only history in `instructions`. Cancelling alone leaves unheard text in context, and the model recites it later.
+- The model finishes well before its audio plays, so a reply goes in the history when generated and a cut trims it. Played time counts from the start of the turn, across every reply in it. Text that outran its audio is timed at a speaking rate until the reply is done.
+- Events queued when a cut lands are dropped, by session epoch and while the cut settles, so a cancelled response's tools never run.
 - Pipecat's `OpenAIRealtimeLLMService` can't be used: it sends `conversation.item.truncate`, the server answers `unknown event type`, and the service stops receiving.
 
 ## Spoken ids
@@ -71,7 +90,7 @@ Profiles with `support_engine: realtime` use `RealtimeBrain`, on the support sid
 Run together, `AC9077` came out of TTS as "AC nineteen seventy seven" and went into STT as "SN977". So:
 
 - `speech.py` spells ids phone-style ("F, as in frank. H, as in house. Four, four, one, nine.") and reads digits as comma-separated words. Measured on ten numbers through real TTS and STT, that came back right 10 of 10 on every voice, against 5 of 10 for spaced numerals on Pocket.
-- `heard.py` collapses spelled forms for the brains. The word after "as in" outranks the letter before it, so "S as in Frank" is F. `heard_text` in the artifact stays raw STT output.
+- `heard.py` collapses spelled forms for the brains. The word after "as in" outranks the letter before it, so "S as in Frank" is F. `heard_text` in the artifact stays raw STT output. The eval tokenizer collapses a spelled letter only when it agrees with its word. A contradiction like "F as in Sam" matches neither F nor S, so it shows up as a mismatch on the id.
 - Lookups accept what a recognizer writes, such as "bell hardware dot example". They also compare against how an address sounds, since `nguyenauto.example` is said as "win auto" and no spelling match recovers that. A near match is only offered: `find_customer` returns `did_you_mean` and other tools refuse with the same suggestion, so the bot reads it back and then uses the exact address. No tool reads or changes an account on a near match, and matches that span two customers aren't offered at all. A misheard address costs one extra exchange with the caller. On the old behaviour it could change another customer's DNS.
 
 ## Hold

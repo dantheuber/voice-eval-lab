@@ -103,6 +103,7 @@ class LiveSettings:
     stop_timeout_s: float = 5.0  # an open turn with no transcript ends after this long
     caller_patience_s: float = 12.0  # a caller left in silence this long speaks up
     settle_s: float = 0.06  # the output's in-flight chunk finishes within this after a cut
+    client_buffer_s: float = 0.08  # past the tap on a mic call. See docs/LIVE_ENGINE.md, Barge-in
     settle_after_end_s: float = 1.5  # time for the far side to hear the last words of a call
     filler_after_s: float | None = 0.6  # say "one moment" if the tool call took this long to come
 
@@ -190,7 +191,7 @@ class PlayoutTap(FrameProcessor):
     """Goes after `transport.output()`, which pushes a frame on only once it has been written.
 
     So what passes here is what really went out, and a cut can't count audio that was queued and
-    thrown away. The browser's jitter buffer holds a little more back, which this can't see.
+    thrown away. It measures transmission, not playback, so the ledger allows for what's past it.
     """
 
     def __init__(self, on_audio: Callable[[AudioClip], None], **kwargs) -> None:

@@ -216,7 +216,7 @@ class _LiveBotCall:
         self.runs.append(asyncio.create_task(_run(worker)))
 
     def _support_pipeline(self, end: LinkEnd) -> tuple[BotBrain, Any]:
-        ledger = PlayoutLedger()
+        ledger = PlayoutLedger(in_transit_s=self.wires[0].line.latency_s)
 
         def turn_done(_item: Utterance) -> None:
             pass
@@ -247,7 +247,7 @@ class _LiveBotCall:
         return brain, pipeline
 
     def _caller_pipeline(self, end: LinkEnd) -> Any:
-        ledger = PlayoutLedger()
+        ledger = PlayoutLedger(in_transit_s=self.wires[0].line.latency_s)
         persona = self.request.persona
         caller = CallerBot(
             self.stack.llm_caller, persona, self.request.scenario, seed=self.request.seed

@@ -62,6 +62,21 @@ def test_spoken_text_follows_audio_sent_not_audio_made():
     assert ledger.intended_text == "one two three four"
 
 
+def test_audio_still_on_its_way_to_the_listener_is_not_credited():
+    ledger = PlayoutLedger(in_transit_s=0.2)
+    for text in ("one two", "three four"):
+        segment = ledger.start_segment(text)
+        segment.produced_s = 1.0
+        segment.finished = True
+
+    ledger.add_played(1.1)  # one two ended at 1.0, and 0.2 of what's gone out is still travelling
+    assert ledger.spoken_text == "one"
+
+    ledger.reset()
+    ledger.add_played(0.1)
+    assert ledger.heard_s == 0.0
+
+
 def test_a_sentence_still_in_tts_is_measured_by_its_length():
     ledger = PlayoutLedger()
     ledger.start_segment("one two three four five six seven eight nine ten").produced_s = 0.2
