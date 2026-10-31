@@ -98,7 +98,8 @@ class QwenAsrStt(HttpSTT):
 class WhisperServer:
     """whisper.cpp whisper-server, Vulkan build. Its HTTP route is /inference."""
 
-    def __init__(self, threads: int = 8):
+    def __init__(self, threads: int = 8, model: str = "ggml-large-v3-turbo-q5_0.bin"):
+        self.model = model
         self.port = free_port(18700)
         self.url = f"http://127.0.0.1:{self.port}"
         self.threads = threads
@@ -106,7 +107,7 @@ class WhisperServer:
     def __enter__(self):
         env = {"LD_LIBRARY_PATH": str(RT / "toolchain" / "lib"), "PATH": "/usr/bin:/bin"}
         log = open(RT / "logs" / f"whisper-{self.port}.log", "w")
-        self.proc = subprocess.Popen([str(RT / "whisper.cpp/build/bin/whisper-server"), "-m", str(MODELS / "whisper/ggml-large-v3-turbo-q5_0.bin"),
+        self.proc = subprocess.Popen([str(RT / "whisper.cpp/build/bin/whisper-server"), "-m", str(MODELS / "whisper" / self.model),
                                       "--port", str(self.port), "--host", "127.0.0.1", "-l", "en", "-t", str(self.threads), "-nt"],
                                      stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         t0 = time.perf_counter()

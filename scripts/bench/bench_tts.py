@@ -7,6 +7,7 @@ bench_tts.py --score, which loads Parakeet on Vulkan and scores every saved WAV.
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
 import re
 import statistics as st
@@ -117,6 +118,7 @@ class Lfm:
     def __init__(self, voice="female"):
         self.server = LlamaServer(["-m", str(LFM_Q4), "-mm", str(LFM_Q4_MM), "--temp", "0", "-c", "8192", "-np", "1", "-ngl", "999"], name="tts-lfm")
         self.server.__enter__()
+        atexit.register(self.server.__exit__, None, None, None)
         self.voice = voice
 
     def warm(self):

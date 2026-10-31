@@ -140,6 +140,8 @@ Tool calls from speech, on the same telephone clips, 12 sessions each. This is t
 
 | Model | Runtime | Thinking | t/s | Prompt t/s | Wall s | Valid JSON | Verdicts right |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| qwen3.8-27b-ud-q4 | llama.cpp b12017 Vulkan | off | 13.0 | 271 | 37.5 | 2/2 | 10/10 |
+| qwen3.8-27b-ud-q4 | llama.cpp b12017 Vulkan | on | 13.0 | 301 | 98.4 | 2/2 | 10/10 |
 
 ### STT
 
@@ -158,7 +160,7 @@ Tool calls from speech, on the same telephone clips, 12 sessions each. This is t
 | lfm3-audio vulkan-q8 | 24.9 | 272 | 29.2 | 0.042 | 0.065 | 0.052 | 0.052 | 28/32 | 28/32 | 3.2 |
 
 - Parakeet was perfect on human speech and is the fastest by a wide margin, but it loops on repeated digits: "4 4 1 9" became "four four four four four four four one nine", on both Vulkan and CPU. Spoken IDs are the core of this product, so this matters.
-- Qwen3-ASR had the best hard-content accuracy. It has no word timestamps through `/v1/audio/transcriptions`.
+- Qwen3-ASR had the best hard-content accuracy. It has no word timestamps through `/v1/audio/transcriptions`, and its text starts with `language English<asr_text>`, which the client must strip.
 - Whisper's small-clip time is flat near 250 ms because it always encodes 30 s of mel. Its RTF on long clips is much higher.
 - 8 kHz mu-law cost little for any engine on this set. Packet loss and real line noise were not tested here.
 - Nothing recovered "IMAP" and "Reyes" reliably without domain hints.
@@ -221,7 +223,18 @@ Recommendation: ship no audio-model listener for delivery. Use signal checks for
 
 ### Memory
 
-PENDING
+| Loaded so far | GPU total GB | Process RSS GB | System used, change GB |
+| --- | --- | --- | --- |
+| parakeet vulkan | 0.8 | 0.12 | 0.9 |
+| qwen3.5-4b q4_k_m -np 2 | 5.4 | 0.20 | 5.4 |
+| lfm3-audio q4_k_m | 7.6 | 0.18 | 7.7 |
+| phonon in this process | 7.6 | n/a | 7.9 |
+| pocket 7m in this process | 7.6 | n/a | 8.0 |
+| whisper large-v3 turbo q5 | 8.5 | 0.10 | 8.9 |
+| judge llm | 27.1 | 0.22 | 27.7 |
+| after one request each | 27.2 | n/a | 28.1 |
+
+Free system memory with everything loaded: 58 GB.
 
 ## End to end
 
@@ -383,7 +396,7 @@ The support bot and caller for normal use. Live is viable.
 | Caller TTS | Phonon catalog first, Pocket 18M presets from the safe list for more voices | Pocket: 29 ms, 12.4x, 13/15 | MIT | Apache-2.0, CC-BY-4.0, CC0 voices |
 | VAD | Silero, 300 ms hang measured | 0.1 ms per window, CPU | MIT | MIT |
 | Eval STT | Whisper large-v3 q5_0, whisper.cpp Vulkan | 16.9x on short clips, 22x on a 300 s clip, WER 0.006 on human speech, 28/32 critical | MIT | MIT |
-| Judge | Qwen3.8-27B UD-Q4_K_M, llama.cpp Vulkan | PENDING | MIT | Apache-2.0 |
+| Judge | Qwen3.8-27B UD-Q4_K_M, llama.cpp Vulkan | 13 t/s, 35 to 111 s per call, 4/4 valid JSON, 20/20 verdicts, 18.7 GB | MIT | Apache-2.0 |
 
 End to end: plain turn 833 ms median, 913 ms max. Tool turn 2.0 s median, so add the filler line.
 
