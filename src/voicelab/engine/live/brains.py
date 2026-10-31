@@ -284,9 +284,10 @@ class BotBrain(Brain):
         if heard and not self.call_over:
             await self.answer(heard)
 
-    def _log_caller_turn(self, heard: str) -> None:
+    def _log_caller_turn(self, heard: str, started_s: float | None = None) -> None:
         if heard and not self.far_side_listens:
-            start = self.caller_started_s if self.caller_started_s is not None else self.log.now()
+            start = started_s if started_s is not None else self.caller_started_s
+            start = start if start is not None else self.log.now()
             end = self.far_side_ended_s if self.far_side_ended_s is not None else self.log.now()
             self.log.utterance(
                 Utterance(

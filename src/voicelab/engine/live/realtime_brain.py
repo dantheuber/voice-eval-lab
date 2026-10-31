@@ -167,7 +167,9 @@ class RealtimeBrain(BotBrain):
     def on_transcript(self, text: str) -> None:
         self.session.record_user_text(text)
         self.note_heard(text)
-        self._log_caller_turn(text)
+        # One per stretch of speech, since this brain doesn't wait for the turn's transcript. From
+        # the start of the turn, each would overlap the one before it.
+        self._log_caller_turn(text, self.far_side_started_s)
 
     async def stop_model(self, played_ms: int) -> None:
         await self.stop_work()

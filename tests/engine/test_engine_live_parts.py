@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -6,7 +7,7 @@ import pytest
 from voicelab.core.audio import AudioClip
 from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
-from voicelab.engine.live.brains import Brain
+from voicelab.engine.live.brains import BotBrain, Brain
 from voicelab.engine.live.log import LiveLog
 from voicelab.engine.live.parts import LiveSettings, WrappedTTS, _smart_turn
 from voicelab.engine.speech_ledger import PlayoutLedger
@@ -455,3 +456,22 @@ async def test_a_turn_with_no_words_still_ends():
     brain = _RecordingBrain()
     await brain._finish_far_side_turn()
     assert brain.turns == [""]
+
+
+def test_each_stretch_of_a_mic_turn_keeps_its_own_start():
+    """Realtime logs one per stretch, and from the turn's start each overlapped the last."""
+    logged: list[Utterance] = []
+    log = SimpleNamespace(now=lambda: 9.0, utterance=lambda item, **_: logged.append(item))
+    brain = BotBrain(
+        far_side_listens=False,
+        on_turn_done=lambda _item: None,
+        on_call_ended=None,
+        log=log,
+        ledger=PlayoutLedger(),
+        settings=LiveSettings(),
+        fail=None,
+    )
+    brain.caller_started_s = 1.0
+    brain.far_side_ended_s = 8.0
+    brain._log_caller_turn("Second part.", 5.0)
+    assert logged[0].start_s == 5.0
