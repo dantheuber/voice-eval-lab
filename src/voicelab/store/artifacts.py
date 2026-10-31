@@ -23,8 +23,9 @@ from typing import Any, BinaryIO, Literal, Protocol
 
 import numpy as np
 import soundfile as sf
+import soxr
 
-from voicelab.core.audio import AudioClip, write_stereo_wav
+from voicelab.core.audio import AudioClip
 from voicelab.core.models import (
     CallArtifact,
     CallMode,
@@ -39,6 +40,12 @@ from voicelab.eval.vad import Region, speech_regions
 
 CALL_SAMPLE_RATE = 16000
 PEAKS_PER_SECOND = 50
+
+# Compressed audio can decode to thousands of times its size, so an upload is judged by what it
+# decodes to, from its header, before any of it is decoded.
+MAX_UPLOAD_S = 2 * 3600.0
+MAX_DECODED_SAMPLES = round(MAX_UPLOAD_S) * 48000 * 2
+BLOCK_SAMPLES = 1 << 18
 
 # A SystemEvent of this kind marks channels that were inferred from a mono mix, not recorded apart.
 SEPARATION_EVENT = "speaker_separation"
@@ -170,8 +177,11 @@ def _level_db(clip: AudioClip) -> float:
 
 
 class ArtifactStore:
-    def __init__(self, data_dir: str | Path = "data") -> None:
+    def __init__(
+        self, data_dir: str | Path = "data", *, max_upload_s: float = MAX_UPLOAD_S
+    ) -> None:
         self.data_dir = Path(data_dir)
+        self.max_upload_s = max_upload_s
 
     def paths(self, call_id: str) -> CallPaths:
         # Call ids arrive from URLs, and this is what keeps them inside the data directory.
@@ -184,9 +194,9 @@ class ArtifactStore:
         paths = self.paths(artifact.id)
         paths.dir.mkdir(parents=True, exist_ok=True)
         caller, bot = _matched_channels(caller, bot)
-        write_stereo_wav(paths.recording, caller, bot)
-        caller.write_wav(paths.caller)
-        bot.write_wav(paths.bot)
+        _write_stereo(paths.recording, caller, bot)
+        _write_mono(paths.caller, caller)
+        _write_mono(paths.bot, bot)
         _write_json(paths.peaks, _peaks(caller, bot))
         self.write_artifact(artifact)
         return paths
@@ -241,8 +251,10 @@ class ArtifactStore:
         file, or a stereo file with the same audio on both sides, goes through `separator`. The
         result is recorded as a "speaker_separation" SystemEvent so evaluators can tell inferred
         channels from recorded ones.
+
+        Raises ValueError for anything that isn't audio, or that decodes past the upload limits.
         """
-        data, rate = _read_audio(source)
+        left, right = _decode_upload(source, self.max_upload_s)
         artifact = CallArtifact(
             mode=CallMode.UPLOAD,
             has_tool_log=False,
@@ -251,18 +263,15 @@ class ArtifactStore:
             ended_at=utcnow(),
             timeline=[SystemEvent(at_s=0.0, kind="upload_imported", detail=filename)],
         )
-        if data.shape[1] >= 2 and not _is_dual_mono(data):
-            left = AudioClip.from_samples(data[:, 0], rate).resampled(CALL_SAMPLE_RATE)
-            right = AudioClip.from_samples(data[:, 1], rate).resampled(CALL_SAMPLE_RATE)
+        if right is not None:
             caller, bot = (right, left) if swap_channels else (left, right)
             events: list[TimelineEvent] = [
                 *_utterances(Speaker.CALLER, speech_regions(caller)),
                 *_utterances(Speaker.BOT, speech_regions(bot)),
             ]
         else:
-            mono = AudioClip.from_samples(data.mean(axis=1), rate).resampled(CALL_SAMPLE_RATE)
-            separation = (separator or EnergySeparator()).separate(mono)
-            caller, bot = _split_channels(mono, separation)
+            separation = (separator or EnergySeparator()).separate(left)
+            caller, bot = _split_channels(left, separation)
             artifact.providers["speaker_separation"] = separation.method
             events = [SystemEvent(at_s=0.0, kind=SEPARATION_EVENT, detail=separation.note)]
             for segment in separation.segments:
@@ -283,32 +292,102 @@ def _utterances(speaker: Speaker, regions: list[Region]) -> list[Utterance]:
     return [Utterance(speaker=speaker, start_s=r.start_s, end_s=r.end_s) for r in regions]
 
 
-def _read_audio(source: str | Path | bytes | BinaryIO) -> tuple[np.ndarray, int]:
+class _CallChannel:
+    """One channel, resampled to the call rate as blocks arrive."""
+
+    def __init__(self, rate: int) -> None:
+        self._resampler = (
+            None
+            if rate == CALL_SAMPLE_RATE
+            else soxr.ResampleStream(rate, CALL_SAMPLE_RATE, 1, dtype="float32", quality="HQ")
+        )
+        self._pcm = bytearray()
+
+    def add(self, block: np.ndarray, *, last: bool = False) -> None:
+        if self._resampler is not None:
+            block = self._resampler.resample_chunk(block, last=last)
+        self._pcm += AudioClip.from_samples(block, CALL_SAMPLE_RATE).pcm
+
+    def finish(self) -> AudioClip:
+        self.add(np.zeros(0, dtype=np.float32), last=True)
+        return AudioClip(bytes(self._pcm), CALL_SAMPLE_RATE)
+
+
+def _check_upload_size(frames: int, rate: int, channels: int, max_seconds: float) -> None:
+    if frames > max_seconds * rate:
+        raise ValueError(f"recording is longer than the {max_seconds:g} s limit")
+    if frames * channels > MAX_DECODED_SAMPLES:
+        raise ValueError(f"recording decodes to too many samples, over {MAX_DECODED_SAMPLES}")
+
+
+def _decode_upload(
+    source: str | Path | bytes | BinaryIO, max_seconds: float
+) -> tuple[AudioClip, AudioClip | None]:
+    """Decode to call-rate channels in fixed blocks. The second is None for one-channel audio."""
     target = io.BytesIO(source) if isinstance(source, bytes) else source
     try:
-        data, rate = sf.read(target, dtype="float32", always_2d=True)
+        with sf.SoundFile(target) as audio:
+            return _decode_blocks(audio, max_seconds)
     except sf.LibsndfileError as exc:
         raise ValueError(f"can't read audio: {exc}") from exc
-    if len(data) == 0:
+
+
+def _decode_blocks(audio: sf.SoundFile, max_seconds: float) -> tuple[AudioClip, AudioClip | None]:
+    rate, channels = audio.samplerate, audio.channels
+    _check_upload_size(audio.frames, rate, channels, max_seconds)
+    left = _CallChannel(rate)
+    right = _CallChannel(rate) if channels >= 2 else None
+    block_frames = max(1, BLOCK_SAMPLES // channels)
+    decoded = 0
+    same_on_both_sides = True
+    while True:
+        block = audio.read(block_frames, dtype="float32", always_2d=True)
+        if len(block) == 0:
+            break
+        decoded += len(block)
+        # Headers can understate the audio, so the limits hold while decoding as well.
+        _check_upload_size(decoded, rate, channels, max_seconds)
+        left.add(block[:, 0])
+        if right is not None:
+            right.add(block[:, 1])
+            same_on_both_sides = same_on_both_sides and _is_dual_mono(block)
+    if decoded == 0:
         raise ValueError("recording has no audio")
-    return data, rate
+    return left.finish(), None if right is None or same_on_both_sides else right.finish()
 
 
-def _is_dual_mono(data: np.ndarray) -> bool:
-    return bool(np.max(np.abs(data[:, 0] - data[:, 1])) < 1e-3)
+def _is_dual_mono(block: np.ndarray) -> bool:
+    return bool(np.max(np.abs(block[:, 0] - block[:, 1])) < 1e-3)
+
+
+def _pcm(clip: AudioClip) -> np.ndarray:
+    """The clip's samples without copying them. Long calls can't afford a float copy per step."""
+    return np.frombuffer(clip.pcm, dtype=np.int16)
 
 
 def _split_channels(mono: AudioClip, separation: Separation) -> tuple[AudioClip, AudioClip]:
-    samples = mono.samples()
+    samples = _pcm(mono)
     channels = {Speaker.CALLER: np.zeros_like(samples), Speaker.BOT: np.zeros_like(samples)}
     for segment in separation.segments:
         start = round(segment.start_s * mono.sample_rate)
         end = round(segment.end_s * mono.sample_rate)
         channels[segment.speaker][start:end] = samples[start:end]
     return (
-        AudioClip.from_samples(channels[Speaker.CALLER], mono.sample_rate),
-        AudioClip.from_samples(channels[Speaker.BOT], mono.sample_rate),
+        AudioClip(channels[Speaker.CALLER].tobytes(), mono.sample_rate),
+        AudioClip(channels[Speaker.BOT].tobytes(), mono.sample_rate),
     )
+
+
+def _write_mono(path: Path, clip: AudioClip) -> None:
+    sf.write(str(path), _pcm(clip), clip.sample_rate, format="WAV", subtype="PCM_16")
+
+
+def _write_stereo(path: Path, left: AudioClip, right: AudioClip) -> None:
+    a, b = _pcm(left), _pcm(right)
+    with sf.SoundFile(str(path), "w", left.sample_rate, 2, format="WAV", subtype="PCM_16") as wav:
+        for start in range(0, len(a), BLOCK_SAMPLES):
+            end = start + BLOCK_SAMPLES
+            wav.write(np.stack([a[start:end], b[start:end]], axis=1))
 
 
 def _matched_channels(caller: AudioClip, bot: AudioClip) -> tuple[AudioClip, AudioClip]:
@@ -332,13 +411,16 @@ def _peaks(caller: AudioClip, bot: AudioClip) -> dict[str, Any]:
 def _channel_peaks(clip: AudioClip) -> list[float]:
     """Peak absolute amplitude per bin, rounded because JSON size drives dashboard load time."""
     size = clip.sample_rate // PEAKS_PER_SECOND
-    samples = np.abs(clip.samples())
-    count = int(np.ceil(len(samples) / size))
-    if count == 0:
-        return []
-    padded = np.zeros(count * size, dtype=np.float32)
-    padded[: len(samples)] = samples
-    return [round(float(p), 3) for p in padded.reshape(count, size).max(axis=1)]
+    samples = _pcm(clip)
+    step = size * max(1, BLOCK_SAMPLES // size)  # whole bins, so none straddles two blocks
+    peaks: list[float] = []
+    for start in range(0, len(samples), step):
+        block = np.abs(samples[start : start + step].astype(np.int32))
+        count = int(np.ceil(len(block) / size))
+        bins = np.zeros(count * size, dtype=np.int32)
+        bins[: len(block)] = block
+        peaks.extend(round(float(p) / 32768.0, 3) for p in bins.reshape(count, size).max(axis=1))
+    return peaks
 
 
 def _write_json(path: Path, value: Any) -> None:

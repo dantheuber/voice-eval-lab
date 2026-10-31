@@ -1,4 +1,5 @@
 import io
+import tracemalloc
 
 import numpy as np
 import pytest
@@ -15,6 +16,7 @@ from voicelab.core.models import (
     Verdict,
 )
 from voicelab.eval.vad import speech_regions
+from voicelab.store import artifacts
 from voicelab.store.artifacts import (
     SEPARATION_EVENT,
     ArtifactStore,
@@ -252,3 +254,169 @@ def test_speech_regions_merge_short_gaps_and_drop_blips():
     regions = speech_regions(AudioClip.from_samples(samples, RATE))
     assert len(regions) == 1
     assert regions[0].end_s == pytest.approx(1.1, abs=0.03)
+
+
+# Uploads are checked before decoding and read in bounded blocks ----------------------------------
+
+
+def flac_file(tmp_path, seconds: float, *, rate: int = RATE, channels: int = 1) -> str:
+    """Compressed silence: tiny on disk, large once decoded."""
+    path = tmp_path / "upload.flac"
+    data = np.zeros((round(seconds * rate), channels), dtype=np.float32)
+    sf.write(str(path), data, rate, format="FLAC")
+    return str(path)
+
+
+def test_a_recording_over_the_length_limit_is_refused_before_decoding(tmp_path, monkeypatch):
+    path = flac_file(tmp_path, 3.0)
+    store = ArtifactStore(tmp_path, max_upload_s=2.0)
+
+    def must_not_decode(*args, **kwargs):
+        raise AssertionError("decoded audio before checking its size")
+
+    monkeypatch.setattr(sf, "read", must_not_decode)
+    monkeypatch.setattr(sf.SoundFile, "read", must_not_decode)
+    with pytest.raises(ValueError, match="longer than the 2 s limit"):
+        store.import_recording(path)
+    assert not (tmp_path / "calls").exists()
+
+
+def test_a_recording_with_too_many_decoded_samples_is_refused(tmp_path, monkeypatch):
+    # Within the length limit, but eight channels at 96 kHz decode to far more than a phone call.
+    path = flac_file(tmp_path, 1.0, rate=96000, channels=8)
+    monkeypatch.setattr(artifacts, "MAX_DECODED_SAMPLES", 100_000)
+    with pytest.raises(ValueError, match="decodes to too many samples"):
+        ArtifactStore(tmp_path).import_recording(path)
+
+
+def test_decoding_stops_if_a_file_runs_past_its_header(tmp_path, monkeypatch):
+    path = flac_file(tmp_path, 1.0)
+
+    class Lying:
+        def __init__(self, inner):
+            self._inner = inner
+            self.samplerate, self.channels = inner.samplerate, inner.channels
+            self.frames = 10  # claims to be tiny, and then keeps producing audio
+
+        def read(self, *args, **kwargs):
+            return self._inner.read(*args, **kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._inner.close()
+
+    real = sf.SoundFile
+    monkeypatch.setattr(artifacts.sf, "SoundFile", lambda target: Lying(real(target)))
+    with pytest.raises(ValueError, match="longer than the"):
+        ArtifactStore(tmp_path, max_upload_s=0.5).import_recording(path)
+
+
+def test_accepted_recordings_are_read_in_bounded_blocks(tmp_path, monkeypatch):
+    path = flac_file(tmp_path, 30.0, rate=44100, channels=2)
+    largest: list[int] = []
+    real_read = sf.SoundFile.read
+
+    def spying_read(self, frames=-1, *args, **kwargs):
+        assert frames > 0, "unbounded read"
+        largest.append(frames)
+        return real_read(self, frames, *args, **kwargs)
+
+    def must_not_decode(*args, **kwargs):
+        raise AssertionError("whole-file decode")
+
+    monkeypatch.setattr(sf, "read", must_not_decode)
+    monkeypatch.setattr(sf.SoundFile, "read", spying_read)
+    artifact = ArtifactStore(tmp_path).import_recording(path)
+    assert artifact.duration_s == pytest.approx(30.0, abs=0.01)
+    assert len(largest) > 1
+    assert max(largest) * 2 <= artifacts.BLOCK_SAMPLES
+
+
+def test_block_decoding_keeps_the_audio_intact(tmp_path):
+    rate = 44100
+    samples = np.concatenate([tone(9.0, 300, rate=rate), tone(9.0, 700, rate=rate)])
+    stereo = np.stack([samples, samples[::-1]], axis=1)
+    path = tmp_path / "long.flac"
+    sf.write(str(path), stereo, rate, format="FLAC")
+    store = ArtifactStore(tmp_path)
+    artifact = store.import_recording(str(path))
+    caller = AudioClip.from_file(store.paths(artifact.id).caller)
+    expected = AudioClip.from_samples(samples, rate).resampled(RATE).samples()
+    assert caller.sample_rate == RATE
+    assert caller.n_samples == pytest.approx(len(expected), abs=2)
+    n = min(caller.n_samples, len(expected))
+    assert np.max(np.abs(caller.samples()[:n] - expected[:n])) < 0.02
+
+
+def test_dual_mono_is_noticed_across_blocks(tmp_path):
+    # Same audio on both sides until a difference far past the first block.
+    rate = 16000
+    base = tone(20.0, 300, rate=rate)
+    other = base.copy()
+    other[rate * 18 :] = 0
+    path = tmp_path / "almost.flac"
+    sf.write(str(path), np.stack([base, other], axis=1), rate, format="FLAC")
+    artifact = ArtifactStore(tmp_path).import_recording(str(path))
+    assert "speaker_separation" not in artifact.providers
+
+
+@pytest.mark.parametrize("channels", [1, 2])
+def test_import_memory_stays_near_the_size_of_the_output(tmp_path, channels):
+    # Five minutes at 48 kHz decodes to 115 MB per channel as floats. The result is 9.6 MB of PCM
+    # per channel at 16 kHz, so the peak has to reflect that, not the decoded size.
+    seconds, rate = 300, 48000
+    path = tmp_path / "long.flac"
+    with sf.SoundFile(str(path), "w", rate, channels, format="FLAC") as flac:
+        block = np.zeros((rate, channels), dtype=np.float32)
+        block[::7] = 0.001
+        for _ in range(seconds):
+            flac.write(block)
+    store = ArtifactStore(tmp_path)
+    tracemalloc.start()
+    artifact = store.import_recording(str(path))
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert artifact.duration_s == pytest.approx(seconds, abs=0.01)
+    assert peak < 60_000_000
+
+
+def test_a_long_call_writes_without_whole_file_float_copies(tmp_path):
+    seconds = 300
+    clip = AudioClip.from_samples(np.full(RATE * seconds, 0.1, dtype=np.float32), RATE)
+    store = ArtifactStore(tmp_path)
+    tracemalloc.start()
+    store.write_call(CallArtifact(mode=CallMode.HUMAN), clip, clip)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < len(clip.pcm)
+
+
+def test_block_writing_keeps_stereo_and_peaks_exact(tmp_path):
+    rate_samples = artifacts.BLOCK_SAMPLES + 12345
+    left = np.linspace(-0.5, 0.5, rate_samples, dtype=np.float32)
+    caller = AudioClip.from_samples(left, RATE)
+    bot = AudioClip.from_samples(-left, RATE)
+    store = ArtifactStore(tmp_path)
+    paths = store.write_call(CallArtifact(mode=CallMode.HUMAN), caller, bot)
+    stereo, rate = sf.read(str(paths.recording), dtype="int16")
+    assert rate == RATE
+    assert stereo[:, 0].tobytes() == caller.pcm
+    assert stereo[:, 1].tobytes() == bot.pcm
+    assert sf.read(str(paths.caller), dtype="int16")[0].tobytes() == caller.pcm
+    peaks = store.read_peaks(paths.dir.name)["channels"]["caller"]
+    size = RATE // artifacts.PEAKS_PER_SECOND
+    samples = np.abs(caller.samples())
+    expected = [round(float(samples[i : i + size].max()), 3) for i in range(0, len(samples), size)]
+    assert peaks == pytest.approx(expected, abs=0.001)
+
+
+def test_speech_regions_are_unchanged_across_a_block_boundary():
+    # Speech straddling the internal block size has to read as one region.
+    boundary_s = (1 << 18) / RATE
+    samples = np.concatenate([silence(boundary_s - 1.0), tone(2.0), silence(1.0)])
+    regions = speech_regions(AudioClip.from_samples(samples, RATE))
+    assert len(regions) == 1
+    assert regions[0].start_s == pytest.approx(boundary_s - 1.0, abs=0.03)
+    assert regions[0].end_s == pytest.approx(boundary_s + 1.0, abs=0.03)

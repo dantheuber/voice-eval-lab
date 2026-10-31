@@ -12,6 +12,7 @@ FRAME_S = 0.01
 _ABSOLUTE_FLOOR_DB = -50.0
 _ABOVE_NOISE_DB = 10.0
 _BELOW_PEAK_DB = 30.0
+_BLOCK_SAMPLES = 1 << 18  # long calls are measured in pieces, not as one whole-channel float array
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,14 @@ def frame_levels_db(samples: np.ndarray, frame: int) -> np.ndarray:
     return 10 * np.log10(np.mean(np.square(frames), axis=1) + 1e-12)
 
 
+def _channel_levels_db(clip: AudioClip, frame: int) -> np.ndarray:
+    pcm = np.frombuffer(clip.pcm, dtype=np.int16)
+    step = frame * max(1, _BLOCK_SAMPLES // frame)
+    blocks = (pcm[i : i + step].astype(np.float32) / 32768.0 for i in range(0, len(pcm), step))
+    levels = [frame_levels_db(block, frame) for block in blocks]
+    return np.concatenate(levels) if levels else np.zeros(0)
+
+
 def speech_regions(
     clip: AudioClip, *, min_speech_s: float = 0.1, min_gap_s: float = 0.2
 ) -> list[Region]:
@@ -43,7 +52,7 @@ def speech_regions(
     with no speech on it, has its threshold above its peak and returns nothing.
     """
     frame = round(FRAME_S * clip.sample_rate)
-    levels = frame_levels_db(clip.samples(), frame)
+    levels = _channel_levels_db(clip, frame)
     if len(levels) == 0:
         return []
     floor = float(np.percentile(levels, 10))
