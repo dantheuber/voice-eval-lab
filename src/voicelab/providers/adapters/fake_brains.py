@@ -501,7 +501,6 @@ def support_reply(messages: list[ChatMessage]) -> LLMResponse:
 _TRANSCRIPT_LINE = re.compile(r"^\[[\d.]+s\] (CALLER|BOT): (.+)$", re.MULTILINE)
 _ASKED_ITEMS = re.compile(r"^(Criteria|Steps of the script):\n((?:- .+\n)+)", re.MULTILINE)
 _ITEM_LINE = re.compile(r"^- (\S+): (.*)$", re.MULTILINE)
-_QUOTE_WORDS = 10
 
 
 def judge_reply(prompt: str) -> dict[str, Any]:
@@ -542,11 +541,10 @@ def _judged(asked: str, lines: list[tuple[str, str]], about_caller: bool) -> dic
         }
     wanted = set(re.findall(r"\w+", asked.lower()))
     best = max(candidates, key=lambda line: len(wanted & set(re.findall(r"\w+", line.lower()))))
-    quote = " ".join(best.split()[:_QUOTE_WORDS])
     return {
         "status": "pass",
         "reason": "The transcript supports this.",
-        "quotes": [quote],
+        "quotes": [best],  # a whole line, since a quote can't stop in the middle of a number
         "tools": [],
     }
 
