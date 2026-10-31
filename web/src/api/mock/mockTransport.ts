@@ -238,7 +238,7 @@ export function createMockTransport(): Transport {
     { method: "GET", re: /^\/api\/system$/, fn: () => FX.system },
     { method: "GET", re: /^\/api\/thresholds$/, fn: () => thresholds },
     { method: "PUT", re: /^\/api\/thresholds$/, fn: (_m, body) => { thresholds = { ...(body as T.Thresholds), audioListeningMode: "advisory" }; persist(); return thresholds; } },
-    { method: "GET", re: /^\/api\/aws$/, fn: () => ({ region: "us-west-2", credentials: "not_found", testedAgainstLive: false }) },
+    { method: "GET", re: /^\/api\/aws$/, fn: () => ({ region: "us-west-2", credentials: "not_found", problem: "no AWS credentials were found. Set AWS_PROFILE or AWS keys in the environment before starting.", testedAgainstLive: false }) },
     { method: "POST", re: /^\/api\/aws\/test$/, fn: () => ({ ok: false, message: "No AWS credentials found. Set AWS_PROFILE or keys in .env." }) },
 
     { method: "GET", re: /^\/api\/compare$/, fn: (_m, _b, url) => {

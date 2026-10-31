@@ -182,7 +182,7 @@ export interface SystemInfo {
   urls: { local: string; lan: string }; cert: string;
 }
 export interface Thresholds { deadAirS: number; bargeStopTargetS: number; replyLatencyWarnS: number; mosBaseline: number; audioListeningMode: "advisory" }
-export interface AwsStatus { region: string | null; credentials: "found" | "not_found"; testedAgainstLive: boolean }
+export interface AwsStatus { region: string | null; credentials: "found" | "not_found"; problem: string | null; testedAgainstLive: boolean }
 
 // Compare
 export interface Frac { pass: number; n: number }

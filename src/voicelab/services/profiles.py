@@ -26,7 +26,7 @@ from voicelab.core.profiles import (
 from voicelab.services.errors import Conflict, Invalid, ModelNotReady, NotFound
 from voicelab.services.settings import Settings
 from voicelab.services.supervisor import ServiceStatus, ServiceSupervisor
-from voicelab.services.system import aws_status
+from voicelab.services.system import aws_credentials_problem
 from voicelab.store.catalog import Catalog
 from voicelab.store.sqlite import timestamp
 
@@ -314,13 +314,11 @@ class ProfileManager:
     # Changes -------------------------------------------------------------------------------------
 
     def require_usable(self, profile: Profile) -> None:
-        """Refuse a cloud profile with no credentials. It has no local server to report down, so
+        """Refuse a cloud profile boto3 couldn't use. It has no local server to report down, so
         it would look ready, and activating it would stop every model server for nothing."""
-        if profile.untested and aws_status()["credentials"] != "found":
-            raise Invalid(
-                f"{profile.label} needs AWS credentials, and none were found. Set AWS_PROFILE or "
-                "AWS keys in the environment before starting."
-            )
+        problem = aws_credentials_problem() if profile.untested else None
+        if problem:
+            raise Invalid(f"{profile.label} can't start: {problem}")
 
     async def activate(self, profile_id: str) -> Profile:
         profile = self.require(profile_id)

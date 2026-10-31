@@ -191,7 +191,7 @@ Steps:
    ./run.sh --profile bedrock-example
    ```
 
-   Open `/settings`. **Test connection** calls STS `GetCallerIdentity`, which proves the credentials and nothing about Bedrock.
+   Open `/settings`. Before an AWS profile can start, the app walks boto3's credential chain and refuses a profile that doesn't exist, a key with no secret, or an empty `[default]`, with the reason beside **Credentials**. That check reads local config and sends nothing. So a role or SSO profile passes on its config alone, and instance or container roles aren't seen at all. **Test connection** calls STS `GetCallerIdentity`, which proves the credentials and nothing about Bedrock.
 
 6. Run one call, turn-based. The profile has `live_capable: false`, so `auto` chooses turn-based. Use one scenario, one persona, and one repetition, and read `data/logs/serve.log` afterward.
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import socket
 import sqlite3
+import sys
 
 import pytest
 import yaml
@@ -16,6 +18,7 @@ from voicelab.core.models import (
     Verdict,
 )
 from voicelab.core.profiles import LocalService
+from voicelab.services import system
 from voicelab.services.compare import ComparedCall, compare_runs
 from voicelab.store.sqlite import Database
 
@@ -246,28 +249,51 @@ def test_bad_thresholds_are_rejected(client):
     assert client.put("/api/thresholds", json={**current, "deadAirS": 0}).status_code == 400
 
 
-def test_aws_reports_status_without_values(client, monkeypatch, tmp_path):
-    monkeypatch.setenv("AWS_REGION", "us-west-2")
+def _no_aws(monkeypatch, tmp_path):
+    """Nothing set, and no files, so a real ~/.aws can't change a test."""
+    for name in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+        "AWS_DEFAULT_PROFILE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "no-credentials"))
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "no-config"))
+
+
+def _aws_keys(monkeypatch, tmp_path):
+    _no_aws(monkeypatch, tmp_path)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "shh")
+
+
+def test_aws_reports_status_without_values(client, monkeypatch, tmp_path):
+    _aws_keys(monkeypatch, tmp_path)
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
     body = client.get("/api/aws").json()
-    assert body == {"region": "us-west-2", "credentials": "found", "testedAgainstLive": False}
-
-
-def test_aws_without_credentials(client, monkeypatch, tmp_path):
-    for name in ("AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "none"))
-    assert client.get("/api/aws").json() == {
-        "region": None,
-        "credentials": "not_found",
+    assert body == {
+        "region": "us-west-2",
+        "credentials": "found",
+        "problem": None,
         "testedAgainstLive": False,
     }
 
 
+def test_aws_without_credentials(client, monkeypatch, tmp_path):
+    _no_aws(monkeypatch, tmp_path)
+    body = client.get("/api/aws").json()
+    assert body.pop("problem").startswith("no AWS credentials were found")
+    assert body == {"region": None, "credentials": "not_found", "testedAgainstLive": False}
+
+
 def test_aws_named_profile_nobody_selected_is_not_credentials(client, monkeypatch, tmp_path):
-    for name in ("AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
-        monkeypatch.delenv(name, raising=False)
+    _no_aws(monkeypatch, tmp_path)
     credentials = tmp_path / "credentials"
     credentials.write_text("[spike]\naws_access_key_id = x\naws_secret_access_key = y\n")
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(credentials))
@@ -287,8 +313,10 @@ def _untested_profile(rig):
     return rig.services.profiles.require("live").model_copy(update={"untested": True})
 
 
-def test_run_and_calls_say_when_adapters_were_untested(client, rig, start_run, waiter, monkeypatch):
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+def test_run_and_calls_say_when_adapters_were_untested(
+    client, rig, start_run, waiter, monkeypatch, tmp_path
+):
+    _aws_keys(monkeypatch, tmp_path)
     rig.services.profiles.items["live"] = _untested_profile(rig)
     run = start_run(profile="live")["run"]
     assert run["untested"] is True
@@ -306,8 +334,10 @@ def test_tested_runs_say_so(client, start_run):
     assert client.get("/api/calls").json()["items"][0]["untested"] is False
 
 
-def test_untested_survives_a_later_edit_of_the_profile(client, rig, start_run, waiter, monkeypatch):
-    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+def test_untested_survives_a_later_edit_of_the_profile(
+    client, rig, start_run, waiter, monkeypatch, tmp_path
+):
+    _aws_keys(monkeypatch, tmp_path)
     rig.services.profiles.items["live"] = _untested_profile(rig)
     run = start_run(profile="live")["run"]
     waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
@@ -567,12 +597,6 @@ def test_malformed_json_is_invalid(client):
     assert response.json()["error"]["code"] == "invalid"
 
 
-def _no_aws(monkeypatch, tmp_path):
-    for name in ("AWS_ACCESS_KEY_ID", "AWS_PROFILE"):
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "none"))
-
-
 def test_a_cloud_profile_with_no_credentials_is_refused(client, rig, monkeypatch, tmp_path):
     _no_aws(monkeypatch, tmp_path)
     rig.services.profiles.items["live"] = _untested_profile(rig)
@@ -591,3 +615,141 @@ def test_a_run_on_a_cloud_profile_with_no_credentials_is_refused(
     response = client.post("/api/runs", json={**body, "line": "persona", "label": None})
     assert response.status_code == 400
     assert "AWS credentials" in response.json()["error"]["message"]
+
+
+def _unknown_profile(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWS_PROFILE", "does-not-exist")
+
+
+def _unknown_profile_beside_good_keys(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "shh")
+    monkeypatch.setenv("AWS_PROFILE", "does-not-exist")
+
+
+def _key_without_secret(monkeypatch, tmp_path):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+
+
+def _credentials_file(text):
+    def write(monkeypatch, tmp_path):
+        path = tmp_path / "credentials"
+        path.write_text(text)
+        monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(path))
+
+    return write
+
+
+def _config_file(text):
+    def write(monkeypatch, tmp_path):
+        path = tmp_path / "config"
+        path.write_text(text)
+        monkeypatch.setenv("AWS_CONFIG_FILE", str(path))
+        monkeypatch.setenv("AWS_PROFILE", "here")
+
+    return write
+
+
+UNUSABLE = {
+    "unknown profile": (_unknown_profile, "does-not-exist"),
+    "unknown profile, good keys": (_unknown_profile_beside_good_keys, "does-not-exist"),
+    "key without secret": (_key_without_secret, "AWS_SECRET_ACCESS_KEY"),
+    "empty default": (_credentials_file("[default]\n"), "no AWS credentials"),
+    "key in file, no secret": (
+        _credentials_file("[default]\naws_access_key_id = x\n"),
+        "aws_secret_access_key",
+    ),
+    "blank secret": (
+        _credentials_file("[default]\naws_access_key_id = x\naws_secret_access_key =\n"),
+        "incomplete",
+    ),
+    "unreadable file": (_credentials_file("[default\nnot ini"), "Unable to parse"),
+    "role with a missing source": (
+        _config_file("[profile here]\nrole_arn = arn:aws:iam::1:role/x\nsource_profile = gone\n"),
+        "gone",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", UNUSABLE)
+def test_credentials_boto3_could_not_use_are_refused_and_no_server_stops(
+    client, rig, monkeypatch, tmp_path, name
+):
+    arrange, says = UNUSABLE[name]
+    _no_aws(monkeypatch, tmp_path)
+    arrange(monkeypatch, tmp_path)
+    running = LocalService(name="stt", command=["sleep", "1"], port=18993)
+    supervisor = rig.services.supervisor
+    rig.run_on_loop(lambda: supervisor.apply([running], start=False))
+    rig.services.profiles.items["live"] = _untested_profile(rig)
+    entry = supervisor._entries["stt"]
+
+    response = client.put("/api/profiles/active", json={"id": "live"})
+
+    assert response.status_code == 400
+    assert says in response.json()["error"]["message"]
+    assert supervisor._entries["stt"] is entry
+    assert rig.services.catalog.setting("active_profile") is None
+    status = client.get("/api/aws").json()
+    assert status["credentials"] == "not_found"
+    assert says in status["problem"]
+
+
+def _role(monkeypatch, tmp_path):
+    credentials = tmp_path / "credentials"
+    credentials.write_text("[base]\naws_access_key_id = x\naws_secret_access_key = y\n")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(credentials))
+    _config_file("[profile here]\nrole_arn = arn:aws:iam::1:role/x\nsource_profile = base\n")(
+        monkeypatch, tmp_path
+    )
+
+
+def _sso(monkeypatch, tmp_path):
+    _config_file(
+        "[profile here]\nsso_start_url = https://x\nsso_region = us-east-1\n"
+        "sso_account_id = 1\nsso_role_name = r\n"
+    )(monkeypatch, tmp_path)
+
+
+def _credential_process(monkeypatch, tmp_path):
+    marker = tmp_path / "ran"
+    _config_file(f"[profile here]\ncredential_process = /usr/bin/touch {marker}\n")(
+        monkeypatch, tmp_path
+    )
+
+
+@pytest.mark.parametrize("arrange", [_role, _sso, _credential_process])
+def test_credentials_that_need_a_request_count_without_making_it(
+    client, monkeypatch, tmp_path, arrange
+):
+    """The first use of these reaches AWS or runs a program, so the file is all that's checked."""
+    _no_aws(monkeypatch, tmp_path)
+    arrange(monkeypatch, tmp_path)
+
+    def no_network(*_args, **_kwargs):
+        raise AssertionError("the check reached the network")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    monkeypatch.setattr(socket.socket, "connect_ex", no_network)
+    assert system.aws_status()["credentials"] == "found"
+    assert not (tmp_path / "ran").exists()
+
+
+def test_the_check_does_not_ask_the_instance_metadata_service(monkeypatch, tmp_path):
+    _no_aws(monkeypatch, tmp_path)
+
+    def no_network(*_args, **_kwargs):
+        raise AssertionError("the check reached the network")
+
+    monkeypatch.setattr(socket.socket, "connect", no_network)
+    assert system.aws_status()["credentials"] == "not_found"
+
+
+def test_a_cloud_profile_without_boto3_says_how_to_get_it(client, rig, monkeypatch, tmp_path):
+    _aws_keys(monkeypatch, tmp_path)
+    monkeypatch.setitem(sys.modules, "boto3", None)
+    rig.services.profiles.items["live"] = _untested_profile(rig)
+    response = client.put("/api/profiles/active", json={"id": "live"})
+    assert response.status_code == 400
+    assert "uv sync --extra aws" in response.json()["error"]["message"]
+    assert client.get("/api/aws").json()["credentials"] == "not_found"

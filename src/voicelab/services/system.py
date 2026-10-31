@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import configparser
 import os
 import socket
 from pathlib import Path
@@ -48,31 +47,56 @@ def gpu_info(drm_root: Path = Path("/sys/class/drm")) -> dict[str, Any]:
     return best
 
 
-def _credentials_file() -> Path:
-    default = Path.home() / ".aws" / "credentials"
-    return Path(os.environ.get("AWS_SHARED_CREDENTIALS_FILE", default))
+# These go to the network or run a program, so they wait for the first real use.
+_FIRST_USE_PROVIDERS = ("iam-role", "container-role", "custom-process")
+_NO_BOTO3 = "boto3 isn't installed: uv sync --extra aws"
+_NO_CREDENTIALS = (
+    "no AWS credentials were found. Set AWS_PROFILE or AWS keys in the environment before "
+    "starting. Instance and container roles aren't looked at, since that takes a network request."
+)
 
 
-def _has_credentials() -> bool:
-    """Whether boto3 would find any. A named profile in the file is not used unless AWS_PROFILE
-    selects it, so it doesn't count. boto3's own chain would also ask the instance metadata
-    service, which costs a timeout on every settings page."""
-    if os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_PROFILE"):
-        return True
-    parser = configparser.ConfigParser()
+def aws_credentials_problem() -> str | None:
+    """Why boto3 couldn't use the credentials selected here, or None if it could.
+
+    This walks boto3's own provider chain, so it agrees with boto3 about AWS_PROFILE and about what
+    counts as complete. It only reads local config. A role or SSO profile is taken on trust, since
+    only a request to AWS could prove one works.
+    """
     try:
-        parser.read(_credentials_file())
-    except configparser.Error:
-        return False
-    return parser.has_section("default")
+        import boto3  # noqa: F401  (the adapters need it, not just botocore)
+        from botocore.credentials import (
+            DeferredRefreshableCredentials,
+            create_credential_resolver,
+        )
+        from botocore.exceptions import BotoCoreError
+        from botocore.session import Session
+    except ImportError:
+        return _NO_BOTO3
+    session = Session()
+    try:
+        selected = session.get_scoped_config()
+        resolver = create_credential_resolver(session)
+        for provider in _FIRST_USE_PROVIDERS:
+            resolver.remove(provider)
+        found = resolver.load_credentials()
+    except BotoCoreError as exc:  # names a profile or a variable, never a value
+        return str(exc)
+    if found is None:
+        return None if selected.get("credential_process") else _NO_CREDENTIALS
+    if isinstance(found, DeferredRefreshableCredentials) or (found.access_key and found.secret_key):
+        return None
+    return f"AWS credentials in {found.method} are incomplete: a key or secret is empty"
 
 
 def aws_status() -> dict[str, Any]:
-    """Only whether credentials exist. Their values never leave this function's checks."""
+    """Only whether credentials are usable. Their values never leave this module's checks."""
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    problem = aws_credentials_problem()
     return {
         "region": region,
-        "credentials": "found" if _has_credentials() else "not_found",
+        "credentials": "not_found" if problem else "found",
+        "problem": problem,
         "testedAgainstLive": False,
     }
 
@@ -81,7 +105,7 @@ def aws_test() -> dict[str, Any]:
     try:
         import boto3
     except ImportError:
-        return {"ok": False, "message": "boto3 isn't installed: uv sync --extra aws"}
+        return {"ok": False, "message": _NO_BOTO3}
     try:
         identity = boto3.client("sts").get_caller_identity()
     except Exception as exc:

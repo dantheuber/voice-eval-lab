@@ -287,7 +287,7 @@ Uploaded calls have `mode: "upload"`, `hasToolLog` and `hasIntendedText` from wh
 - `POST /api/servers/:role/restart` → `{ "accepted": true }`; `POST /api/servers/restart-all`; `POST /api/benchmark` → `{ "accepted": true }`, result lands in `Profile.benchmark`.
 - `GET /api/system` → `{ "gpu": { "device": string, "memoryUsedGb": number, "memoryTotalGb": number }, "servers": [ { "role", "kind", "port", "pid" } ], "urls": { "local": string, "lan": string }, "cert": "self-signed" }`
 - `GET /api/thresholds` → `{ "deadAirS": 2.0, "bargeStopTargetS": 0.5, "replyLatencyWarnS": 2.5, "mosBaseline": 4.0, "audioListeningMode": "advisory" }`; `PUT /api/thresholds` with the same body. `audioListeningMode` is read-only and always `advisory`.
-- `GET /api/aws` → `{ "region": string | null, "credentials": "found" | "not_found", "testedAgainstLive": false }`. `POST /api/aws/test` → `{ "ok": boolean, "message": string }`.
+- `GET /api/aws` → `{ "region": string | null, "credentials": "found" | "not_found", "problem": string | null, "testedAgainstLive": false }`. `problem` says why boto3 couldn't use what it found, and this makes no request. `POST /api/aws/test` → `{ "ok": boolean, "message": string }`.
 
 ## Compare
 
