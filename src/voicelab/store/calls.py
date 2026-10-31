@@ -137,6 +137,30 @@ def finding_anchor(finding: Finding) -> float | None:
     return min(starts) if starts else finding.clip_start_s
 
 
+def finding_times(finding: Finding) -> list[float]:
+    """Every moment a finding covers. A rolled-up finding covers several."""
+    return sorted(e.start_s for e in finding.evidence if e.start_s is not None)
+
+
+def _covers_the_same(row: dict[str, Any], finding: Finding) -> bool:
+    """Whether a decision on this row was a decision on this finding.
+
+    Someone who dismissed two slow turns hasn't seen a third, or a different second one, and they
+    didn't weigh a minor finding that's since become major. A decision from before moments were
+    stored only vouches for one, so it can't reach a rollup.
+    """
+    if row.get("severity") != finding.severity:
+        return False
+    new = finding_times(finding)
+    stored = row.get("times")
+    if stored is None:
+        return len(new) <= 1
+    old = sorted(json.loads(stored))
+    return len(old) == len(new) and all(
+        abs(a - b) <= _SAME_MOMENT_S for a, b in zip(old, new, strict=True)
+    )
+
+
 def occurrences(findings: list[Finding]) -> dict[str, int]:
     """Each untimed finding's place among those saying the same thing."""
     seen: Counter[tuple] = Counter()
@@ -156,8 +180,9 @@ def carry_decisions(
 
     Identical titles are common, such as two "3.0 s of dead air". Timed findings match on the
     closest position within `_SAME_MOMENT_S`, nearest pairs first so one decision can't take
-    another's finding. Untimed ones match by their place in order. A decision with no match stays
-    in the history and carries nowhere: guessing would decide a finding nobody looked at.
+    another's finding, and only if they cover the same moments at the same severity. Untimed ones
+    match by their place in order. A decision with no match stays in the history and carries
+    nowhere: guessing would decide a finding nobody looked at.
     """
     places = occurrences(findings)
     pairs = []
@@ -172,7 +197,7 @@ def carry_decisions(
                         pairs.append((0.0, row["finding_id"], finding.id, row))
                 continue
             distance = abs(row["anchor_s"] - anchor)
-            if distance <= _SAME_MOMENT_S:
+            if distance <= _SAME_MOMENT_S and _covers_the_same(row, finding):
                 pairs.append((distance, row["finding_id"], finding.id, row))
     carried: dict[str, dict[str, Any]] = {}
     used: set[str] = set()
@@ -400,8 +425,8 @@ class CallIndex:
                 self.db.run(
                     "INSERT INTO call_findings (call_id, finding_id, evaluator, category, "
                     "severity, advisory, title, criterion_id, human_verdict, human_note, "
-                    "human_by, human_at, anchor_s, occurrence) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "human_by, human_at, anchor_s, occurrence, times) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         artifact.id,
                         finding.id,
@@ -417,6 +442,7 @@ class CallIndex:
                         decision["human_at"] if decision else None,
                         finding_anchor(finding),
                         places.get(finding.id, 0),
+                        json.dumps(finding_times(finding)),
                     ),
                 )
             self.update(artifact.id, **eval_columns(artifact, result))

@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS call_findings (
     human_at TEXT,
     anchor_s REAL,  -- where in the call this finding is, for telling identical titles apart
     occurrence INTEGER NOT NULL DEFAULT 0,  -- its place among same-titled findings with no time
+    times TEXT,  -- JSON list of every moment it covers, so a decision only follows those moments
     PRIMARY KEY (call_id, finding_id)
 );
 CREATE INDEX IF NOT EXISTS findings_open ON call_findings (advisory, human_verdict);
@@ -153,6 +154,7 @@ _ADDED_COLUMNS = (
     ("runs", "untested", "INTEGER NOT NULL DEFAULT 0"),
     ("call_findings", "anchor_s", "REAL"),
     ("call_findings", "occurrence", "INTEGER NOT NULL DEFAULT 0"),
+    ("call_findings", "times", "TEXT"),
 )
 
 
