@@ -299,7 +299,7 @@ async def test_a_bot_that_never_answers_fails_on_timing(store):
     unanswered = next(f for f in out.findings if f.category == "unanswered_turn")
     assert unanswered.severity == "major"
     assert unanswered.advisory is False
-    assert "dead_air" in categories(out)
+    assert "dead_air" not in categories(out)  # the same 30 s, already reported
 
 
 async def test_a_short_wait_after_a_goodbye_is_not_a_finding(store):
