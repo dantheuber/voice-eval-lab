@@ -103,6 +103,7 @@ A tool turn needs a second LLM round, and Qwen3.5-4B takes up to 2.4 s end to en
 | --- | --- | --- |
 | VAD hang 300 ms | `parts.py` | Measured. Longer adds latency |
 | Resume window 0.5 s | `parts.py` | Gaps inside a turn measured 0.32 s median and 0.5 to 0.76 s p90. Smart Turn alone ended turns at sentence gaps, since a finished sentence looks finished. Costs about 0.4 s on every turn |
+| Smart Turn unsure wait 1 s | `parts.py` | Smart Turn called a finished sentence unfinished on 2 of 7 turns of a real mic call. Pipecat's default of 3 s turned each into a 5 to 6 s reply. Barge-in covers the opposite mistake |
 | `filler_after_s` 0.6 | `LiveSettings` | A tool turn needs a second LLM round, so a slow first round predicts a long silence |
 | `settle_s` 0.06 | `LiveSettings` | One output chunk is 40 ms |
 | `stop_timeout_s` 5 | `LiveSettings` | Ends a turn that never produced a transcript |

@@ -7,7 +7,7 @@ from voicelab.core.audio import AudioClip
 from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
 from voicelab.engine.live.log import LiveLog
-from voicelab.engine.live.parts import WrappedTTS
+from voicelab.engine.live.parts import WrappedTTS, _smart_turn
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.tool_checks import tool_call_problem
 from voicelab.providers.base import ToolCall, ToolDef
@@ -421,3 +421,8 @@ async def test_a_mic_callers_turn_goes_out_without_waiting_for_anyone(tmp_path):
     await log.close()
 
     assert [message["type"] for message in sent] == ["turn"]
+
+
+def test_an_unsure_turn_does_not_sit_through_pipecats_three_seconds():
+    analyzer = _smart_turn()[0]._turn_analyzer
+    assert analyzer.params.stop_secs == 1.0

@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 
 import numpy as np
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
@@ -48,6 +49,7 @@ Fail = Callable[[str], Awaitable[None]]
 _VAD_HANG_S = 0.3  # measured: longer adds latency, and Smart Turn covers pauses inside a turn
 _VAD_START_S = 0.2
 _RESUME_WINDOW_S = 0.5  # on top of the VAD hang, so about p90 of the gaps inside a turn
+_UNSURE_TURN_WAIT_S = 1.0  # past p90 of those gaps. Pipecat's default is 3 s, see `_smart_turn`
 _STT_P99_S = 0.4  # Parakeet runs at about 150x real time, so even a long turn is quick
 
 
@@ -61,10 +63,15 @@ def _smart_turn(*, wait_for_transcript: bool = True) -> list[BaseUserTurnStopStr
     A sentence that ended looks finished to Smart Turn even with more to come. Gaps inside one
     turn measured 0.32 s at the median and 0.5 to 0.76 s at p90 across Pocket and Phonon voices.
     Without the window, turns ended at those gaps and the bot talked over its caller.
+
+    It can also call a finished sentence unfinished. On a real mic call it did that on 2 of 7
+    turns, and each one sat through Pipecat's full 3 s before the bot could reply. If it's wrong
+    the other way here, the person keeps talking and barge-in covers it.
     """
+    analyzer = LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=_UNSURE_TURN_WAIT_S))
     return [
         TurnAnalyzerUserTurnStopStrategy(
-            turn_analyzer=LocalSmartTurnAnalyzerV3(), wait_for_transcript=wait_for_transcript
+            turn_analyzer=analyzer, wait_for_transcript=wait_for_transcript
         ),
         SpeechTimeoutUserTurnStopStrategy(
             user_speech_timeout=_RESUME_WINDOW_S, wait_for_transcript=wait_for_transcript
