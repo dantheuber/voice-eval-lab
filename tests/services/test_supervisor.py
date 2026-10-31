@@ -703,6 +703,65 @@ async def test_a_role_swap_that_cannot_start_keeps_the_yaml_and_the_server(super
     assert "parakeet" not in supervisor.statuses()
 
 
+def _role_swap(tmp_path, supervisor) -> ProfileManager:
+    """A role that moves to a slow new server, and an old one that stops when the swap finishes."""
+    good = _with_adapters("default", service(free_port(), name="asr"), "qwen")
+    slow = service(free_port(), "--ready-after", "0.4", name="parakeet")
+    return _manager(tmp_path, supervisor, [good, _with_adapters("fast", slow, "parakeet")])
+
+
+async def test_a_role_swap_lets_no_new_call_onto_a_server_about_to_stop(supervisor, tmp_path):
+    """The profile keeps its id, so a check on ids alone let this call in, and then lost its STT."""
+    manager = _role_swap(tmp_path, supervisor)
+    await manager.activate("default")
+    swap = asyncio.create_task(manager.set_role("stt_live", "fake:parakeet"))
+    await asyncio.sleep(0.05)
+
+    with pytest.raises(ModelNotReady, match="in use"):
+        await manager.require_ready(manager.require("default"), ["stt_live"], hold=True)
+
+    await swap
+    assert "asr" not in supervisor.statuses()
+    assert not manager.in_use
+
+
+async def test_work_that_waited_out_a_role_swap_gets_the_new_servers(supervisor, tmp_path):
+    manager = _role_swap(tmp_path, supervisor)
+    await manager.activate("default")
+    before = manager.require("default")
+    swap = asyncio.create_task(manager.set_role("stt_live", "fake:parakeet"))
+    await asyncio.sleep(0.05)
+
+    waiting = asyncio.create_task(manager.ready(before, 10.0))
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    await swap
+    stack = await asyncio.wait_for(waiting, 10.0)
+
+    assert stack.roles["stt_live"]["model"] == "parakeet"
+    assert "asr" not in supervisor.statuses()
+    assert supervisor.statuses()["parakeet"].state == "ok"
+    manager.release(before)
+    assert not manager.in_use
+
+
+async def test_an_eval_that_waited_out_a_role_swap_holds_the_new_servers(supervisor, tmp_path):
+    manager = _role_swap(tmp_path, supervisor)
+    await manager.activate("default")
+    before = manager.require("default")
+    swap = asyncio.create_task(manager.set_role("stt_live", "fake:parakeet"))
+    await asyncio.sleep(0.05)
+
+    waiting = asyncio.create_task(manager.hold(before, 10.0))
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    await swap
+    await asyncio.wait_for(waiting, 10.0)
+
+    assert "asr" not in supervisor.statuses()
+    manager.release(before)
+
+
 # Process groups ----------------------------------------------------------------------------------
 
 

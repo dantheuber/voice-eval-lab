@@ -186,13 +186,21 @@ class ProfileManager:
         return bool(self._held) or self._swapping is not None
 
     def _clashing(self, profile: Profile) -> Profile | None:
-        """A profile in use whose servers this one would have to replace."""
-        if self._swapping is not None and self._swapping.id != profile.id:
+        """A profile in use whose servers this one would have to replace.
+
+        A swap counts whoever is asking. Changing a role keeps the profile's id, and the old
+        servers stop when it finishes, so work let in by id would lose them mid-call.
+        """
+        if self._swapping is not None:
             return self._swapping
         return next(
             (held for held in self._held if held.id != profile.id and _share_a_slot(held, profile)),
             None,
         )
+
+    def _current(self, profile: Profile) -> Profile:
+        """This profile as it stands now. A role swap rewrites it under work that was waiting."""
+        return self.items.get(profile.id, profile)
 
     async def require_ready(
         self, profile: Profile, roles: Iterable[str], *, hold: bool = False
@@ -232,18 +240,20 @@ class ProfileManager:
     async def ready(self, profile: Profile, timeout_s: float) -> ProviderStack:
         """Hold the profile's servers for one piece of queued work and wait for them. The caller
         must call `release`."""
-        await self.hold(profile, timeout_s)
+        profile = await self.hold(profile, timeout_s)
         try:
             return self.stack(profile)
         except BaseException:
             self.release(profile)
             raise
 
-    async def hold(self, profile: Profile, timeout_s: float) -> None:
+    async def hold(self, profile: Profile, timeout_s: float) -> Profile:
         """Wait for any profile sharing a server slot to finish, then claim the slots. Replacing a
-        server under a running call would break it, so the swap waits for its turn."""
+        server under a running call would break it, so the swap waits for its turn. Returns the
+        profile as it stood when the wait ended, since starting the one queued would bring back
+        servers a role swap just stopped."""
         deadline = time.monotonic() + timeout_s
-        while (other := self._clashing(profile)) is not None:
+        while (other := self._clashing(profile := self._current(profile))) is not None:
             left = deadline - time.monotonic()
             if left <= 0:
                 reason = f"model servers are in use by profile {other.id}"
@@ -257,6 +267,7 @@ class ProfileManager:
         except BaseException:
             self.release(profile)
             raise
+        return profile
 
     def release(self, profile: Profile) -> None:
         position = next(i for i, held in enumerate(self._held) if held.id == profile.id)
