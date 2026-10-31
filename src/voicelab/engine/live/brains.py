@@ -423,12 +423,35 @@ class CallerBrain(Brain):
         self.intended = ""
         self.audio_this_turn: list[AudioClip] = []
         self.hearing = False
+        self.patience: asyncio.Task | None = None
 
     def on_audio_in(self, frame: InputAudioRawFrame) -> None:
         if self.hearing:
             self.audio_this_turn.append(AudioClip(frame.audio, frame.sample_rate))
 
+    async def _lose_patience(self) -> None:
+        await asyncio.sleep(self.settings.caller_patience_s)
+        self.patience = None
+        await self.on_idle()
+
+    async def _start_patience(self) -> None:
+        """The silence timer for when the caller owes a reply and hasn't given one.
+
+        Pipecat's idle timer only runs from the end of this side's own speech. So if the bot had
+        spoken last and the caller stayed quiet, such as after a line the model left empty, nothing
+        ever spoke again. A real call sat that way for 15 minutes, holding its run's slot.
+        """
+        await self._stop_patience()
+        if not self.call_over:
+            self.patience = self.create_task(self._lose_patience())
+
+    async def _stop_patience(self) -> None:
+        if self.patience is not None and not self.patience.done():
+            await self.cancel_task(self.patience)
+        self.patience = None
+
     async def on_far_side_started(self) -> None:
+        await self._stop_patience()
         self.bot_turn += 1
         self.cut_in_this_turn = False
         self.hearing = True
@@ -457,6 +480,7 @@ class CallerBrain(Brain):
         if self.cut_timer is not None and not self.cut_timer.done():
             await self.cancel_task(self.cut_timer)
         self.cut_timer = None
+        await self._start_patience()
         if self.turn_open or self.working:
             return  # one line at a time, and what was heard stays for the next reply
         if _HOLD_ON.search(" ".join(self.heard_parts)):
@@ -476,6 +500,7 @@ class CallerBrain(Brain):
             if line.hang_up:
                 await self._hang_up(line)
             return
+        await self._stop_patience()
         self.begin_turn()
         segment = normalize(line.text, self.lexicon)
         self.intended = segment.spoken
@@ -519,3 +544,5 @@ class CallerBrain(Brain):
         """Nobody has said anything for a while, so the caller speaks up rather than wait."""
         if not self.working and not self.turn_open and not self.call_over:
             self.run(self._say_next(self.take_heard()))
+        if self.working and not self.call_over:
+            await self._start_patience()  # this line may come out empty too

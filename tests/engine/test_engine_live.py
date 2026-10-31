@@ -276,6 +276,32 @@ async def test_nothing_is_asked_of_the_bot_when_stt_hears_nothing(store):
     assert artifact.status == CallStatus.EVALUATING
 
 
+async def test_a_caller_that_said_nothing_after_the_bot_speaks_up_later(store):
+    """Pipecat's idle timer only runs from this side's own speech. On a real call an empty line
+    after the bot's turn left both sides silent for 15 minutes."""
+    settings = simple_settings()
+    caller = Scripted(says(""), says("Hello?"), says("Bye.", hang_up=True, reason="finished"))
+    artifact = await asyncio.wait_for(
+        run_live_bot_call(
+            request(mode=CallMode.LIVE_BOTS, persona=persona(line=LIVE)),
+            stack=stack(llm_caller=caller, llm_support=Scripted(default="Okay.")),
+            store=store,
+            emit=Messages(),
+            settings=type(settings)(
+                vad=settings.vad,
+                turn_stop=settings.turn_stop,
+                stop_timeout_s=settings.stop_timeout_s,
+                caller_patience_s=0.5,
+            ),
+        ),
+        30,
+    )
+
+    assert artifact.status == CallStatus.EVALUATING
+    said = [u.intended_text for u in utterances(artifact, Speaker.CALLER)]
+    assert "Hello?" in said
+
+
 # Failure paths -----------------------------------------------------------------------------------
 
 
