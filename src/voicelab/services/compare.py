@@ -145,8 +145,9 @@ def _measures(
         {
             "key": "criticalMispronunciations",
             "label": "Critical token mispronunciations",
-            "a": _sum_metric(a, "pronunciation", "critical_mismatches"),
-            "b": _sum_metric(b, "pronunciation", "critical_mismatches"),
+            # Corroborated only: a token just the eval ASR disputes may be the ASR's own mistake.
+            "a": _sum_metric(a, "pronunciation", "critical_corroborated"),
+            "b": _sum_metric(b, "pronunciation", "critical_corroborated"),
             "comparable": True,
             "lowerIsBetter": True,
         },

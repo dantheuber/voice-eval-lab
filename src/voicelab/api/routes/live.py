@@ -194,21 +194,10 @@ async def call_stream(websocket: WebSocket, call_id: str, svc: Svc) -> None:
             await websocket.close()
             return
         await websocket.send_json({"type": "status", "status": row["status"]})
-        if row["status"] == "done":
-            await websocket.send_json(_finished_eval(svc, call_id))
-        elif row["status"] == "failed":
-            await websocket.send_json({"type": "error", "message": row["error"] or "call failed"})
-        else:
+        # A finished call has nothing to stream. The review payload already holds its results.
+        if row["status"] not in ("done", "failed"):
             await _pump(websocket, subscription, final=lambda m: m.get("type") in ("eval", "error"))
     await _close(websocket)
-
-
-def _finished_eval(svc: Svc, call_id: str) -> dict[str, Any]:
-    result = svc.store.read_eval(call_id)
-    if result is None:
-        return {"type": "error", "message": "this call has no evaluation"}
-    decided = mapping.apply_decisions(result, svc.calls.finding_decisions(call_id))
-    return {"type": "eval", "eval": mapping.to_api(decided)}
 
 
 class _CallWatch:

@@ -1,0 +1,507 @@
+from __future__ import annotations
+
+import pytest
+from conftest import PAIR
+from fakes import build_rig
+
+from voicelab.core.models import CallStatus, LineConditions, Verdict
+
+
+def released(rig):
+    async def release():
+        rig.runner.hold = False
+        rig.runner.release.set()
+
+    return release
+
+
+def release_evals(rig):
+    async def release():
+        rig.evals.hold = False
+        rig.evals.release.set()
+
+    return release
+
+
+def run_of(client, run_id):
+    return client.get(f"/api/runs/{run_id}").json()
+
+
+def statuses(client, run_id):
+    return sorted(c["status"] for c in run_of(client, run_id)["calls"])
+
+
+def test_pairs_times_reps_expand_into_calls(client, start_run, rig, waiter):
+    second = {"scenarioId": "scn_expired_ssl", "personaId": "per_sysadmin"}
+    created = start_run(pairs=[PAIR, second], reps=3)
+    run = created["run"]
+    assert created["effectiveMode"] == "turn_based"
+    assert created["estimateS"] > 0
+    assert run["calls"] == 6
+    assert run["scenarioIds"] == ["scn_dns_mx_fix", "scn_expired_ssl"]
+    assert run["personaIds"] == ["per_sysadmin"]
+    assert run["reps"] == 3
+    assert run["label"] == "2 scenarios x 1 personas x 3"
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    calls = run_of(client, run["id"])["calls"]
+    assert sorted(c["rep"] for c in calls if c["scenarioId"] == "scn_dns_mx_fix") == [1, 2, 3]
+    assert {request.seed for request in rig.runner.requests} == {1, 2, 3}
+
+
+def test_auto_mode_follows_the_profile(start_run):
+    assert start_run(profile="live")["effectiveMode"] == "live_bots"
+    assert start_run(profile="local-default")["effectiveMode"] == "turn_based"
+
+
+def test_explicit_mode_wins(start_run):
+    assert start_run(mode="live_bots")["effectiveMode"] == "live_bots"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"pairs": []},
+        {"reps": 0},
+        {"concurrency": 0},
+        {"profile": "no-such-profile"},
+        {"mode": "human"},
+        {"pairs": [{"scenarioId": "scn_missing", "personaId": "per_sysadmin"}]},
+        {"pairs": [{"scenarioId": "scn_dns_mx_fix", "personaId": "per_missing"}]},
+        {"line": "whatever"},
+    ],
+)
+def test_bad_runs_are_rejected(client, overrides):
+    body = {"pairs": [PAIR], "reps": 1, "profile": "local-default", **overrides}
+    response = client.post("/api/runs", json=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error"]["code"] == "invalid"
+
+
+def test_line_override_reaches_the_runner(client, start_run, rig, waiter):
+    line = LineConditions(noise="cafe", snr_db=10)
+    body = {
+        "codec": "mulaw_8k",
+        "noise": "cafe",
+        "snrDb": 10,
+        "packetLossPct": 0,
+        "oneWayLatencyMs": 80,
+    }
+    start_run(line=body)
+    waiter(lambda: rig.runner.requests)
+    assert rig.runner.requests[0].line == line
+
+
+def test_persona_line_means_no_override(start_run, rig, waiter):
+    start_run()
+    waiter(lambda: rig.runner.requests)
+    assert rig.runner.requests[0].line is None
+
+
+def test_run_lifecycle_reports_counts_with_invalid_apart(client, start_run, rig, waiter):
+    rig.evals.verdicts = [Verdict.PASS, Verdict.INVALID, Verdict.FAIL]
+    run = start_run(reps=3)["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    body = run_of(client, run["id"])
+    assert body["run"]["counts"] == {"pass": 1, "fail": 1, "needsReview": 0, "invalid": 1}
+    assert body["run"]["done"] == 3
+    assert body["run"]["running"] == 0
+    assert body["run"]["etaS"] is None
+    assert body["run"]["endedAt"]
+    invalid = next(c for c in body["calls"] if c["verdict"] == "invalid")
+    assert invalid["invalidReason"] == "never gave the zip"
+
+
+def test_concurrency_one_runs_each_call_through_its_eval_first(client, start_run, rig, waiter):
+    rig.evals.hold = True
+    run = start_run(reps=2)["run"]
+    waiter(lambda: "evaluating" in statuses(client, run["id"]))
+    assert statuses(client, run["id"]) == ["evaluating", "queued"]
+    assert len(rig.runner.requests) == 1
+    rig.run_on_loop(release_evals(rig))
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert len(rig.runner.requests) == 2
+
+
+def test_concurrency_two_runs_two_at_once(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    run = start_run(reps=3, concurrency=2)["run"]
+    waiter(lambda: statuses(client, run["id"]).count("running") == 2)
+    assert statuses(client, run["id"]).count("queued") == 1
+    rig.run_on_loop(released(rig))
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+
+
+def test_later_run_waits_for_the_earlier_one(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    first = start_run()["run"]
+    second = start_run()["run"]
+    waiter(lambda: "running" in statuses(client, first["id"]))
+    assert run_of(client, second["id"])["run"]["status"] == "queued"
+    rig.run_on_loop(released(rig))
+    waiter(lambda: run_of(client, second["id"])["run"]["status"] == "done")
+
+
+def test_pause_finishes_in_flight_and_resume_carries_on(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    run = start_run(reps=2)["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    assert client.post(f"/api/runs/{run['id']}/pause").json()["status"] == "paused"
+    rig.run_on_loop(released(rig))
+    waiter(lambda: "done" in statuses(client, run["id"]))
+    assert statuses(client, run["id"]) == ["done", "queued"]
+    assert run_of(client, run["id"])["run"]["status"] == "paused"
+    assert len(rig.runner.requests) == 1
+    assert client.post(f"/api/runs/{run['id']}/resume").json()["status"] == "running"
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+
+
+def test_stop_cuts_running_calls_and_drops_queued_ones(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    run = start_run(reps=2)["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    stopped = client.post(f"/api/runs/{run['id']}/stop").json()
+    assert stopped["status"] == "stopped"
+    assert stopped["endedAt"]
+    waiter(lambda: statuses(client, run["id"]) == ["failed", "failed"])
+    for call in run_of(client, run["id"])["calls"]:
+        assert rig.services.store.read_artifact(call["id"]).error == "stopped"
+        assert rig.services.calls.get(call["id"])["error"] == "stopped"
+    assert len(rig.runner.requests) == 1
+    assert rig.evals.jobs == []
+
+
+def test_stop_lets_a_recorded_call_finish_evaluating(client, start_run, rig, waiter):
+    rig.evals.hold = True
+    run = start_run()["run"]
+    waiter(lambda: "evaluating" in statuses(client, run["id"]))
+    client.post(f"/api/runs/{run['id']}/stop")
+    rig.run_on_loop(release_evals(rig))
+    waiter(lambda: statuses(client, run["id"]) == ["done"])
+    assert run_of(client, run["id"])["run"]["status"] == "stopped"
+
+
+@pytest.mark.parametrize("action", ["pause", "stop"])
+def test_actions_on_a_finished_run_conflict(client, start_run, waiter, action):
+    run = start_run()["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    response = client.post(f"/api/runs/{run['id']}/{action}")
+    assert response.status_code == 409
+
+
+def test_resume_of_a_running_run_conflicts(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    run = start_run()["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    assert client.post(f"/api/runs/{run['id']}/resume").status_code == 409
+
+
+def test_missing_run_is_404(client):
+    assert client.get("/api/runs/batch_missing").status_code == 404
+    assert client.post("/api/runs/batch_missing/pause").status_code == 404
+
+
+def test_runner_exception_fails_only_that_call(client, start_run, rig, waiter):
+    rig.runner.fail_with = RuntimeError("line dropped")
+    run = start_run(reps=2)["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    calls = run_of(client, run["id"])["calls"]
+    assert [c["status"] for c in calls] == ["failed", "failed"]
+    assert rig.services.store.read_artifact(calls[0]["id"]).error == "RuntimeError: line dropped"
+    assert rig.evals.jobs == []
+
+
+def test_failed_artifact_is_not_evaluated(client, start_run, rig, waiter):
+    rig.runner.status = CallStatus.FAILED
+    rig.runner.error = "stt timed out"
+    run = start_run()["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert statuses(client, run["id"]) == ["failed"]
+    assert rig.evals.jobs == []
+    call = run_of(client, run["id"])["calls"][0]
+    assert client.get(f"/api/calls/{call['id']}").json()["call"]["error"] == "stt timed out"
+
+
+def test_failed_calls_stay_out_of_the_counts(client, start_run, rig, waiter):
+    rig.runner.fail_with = RuntimeError("no")
+    run = start_run()["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    body = run_of(client, run["id"])["run"]
+    assert body["counts"] == {"pass": 0, "fail": 0, "needsReview": 0, "invalid": 0}
+    assert body["done"] == 1
+
+
+def test_eval_failure_marks_the_call_and_the_run_moves_on(client, start_run, rig, waiter):
+    rig.evals.fail_with = RuntimeError("worker died")
+    run = start_run(reps=2)["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert statuses(client, run["id"]) == ["failed", "failed"]
+    call = run_of(client, run["id"])["calls"][0]
+    assert "worker died" in rig.services.calls.get(call["id"])["error"]
+
+
+def test_runs_list_pages(client, start_run, waiter):
+    ids = {start_run()["run"]["id"] for _ in range(3)}
+    first = client.get("/api/runs", params={"limit": 2}).json()
+    assert len(first["items"]) == 2
+    second = client.get("/api/runs", params={"cursor": first["nextCursor"], "limit": 2}).json()
+    assert second["nextCursor"] is None
+    assert {r["id"] for r in first["items"] + second["items"]} == ids
+
+
+def test_matrix_groups_by_pair(client, rig, finished_call):
+    rig.evals.verdicts = [Verdict.PASS, Verdict.INVALID]
+    finished_call()
+    finished_call()
+    cells = client.get("/api/matrix", params={"profile": "local-default"}).json()["cells"]
+    assert cells == [
+        {
+            "scenarioId": PAIR["scenarioId"],
+            "personaId": PAIR["personaId"],
+            "counts": {"pass": 1, "fail": 0, "needsReview": 0, "invalid": 1},
+        }
+    ]
+
+
+def test_presets(client, start_run):
+    body = {
+        "name": "nightly",
+        "pairs": [PAIR],
+        "reps": 3,
+        "profile": "local-default",
+        "mode": "auto",
+        "line": "persona",
+        "concurrency": 2,
+    }
+    created = client.post("/api/presets", json=body)
+    assert created.status_code == 201
+    assert created.json()["pairs"] == [PAIR]
+    assert client.get("/api/presets").json()["items"][0]["name"] == "nightly"
+    run = start_run(reps=2)["run"]
+    derived = client.get(f"/api/runs/{run['id']}/presets").json()["items"][0]
+    assert derived["reps"] == 2
+    assert derived["pairs"] == [PAIR]
+    assert derived["line"] == "persona"
+
+
+# Streams -----------------------------------------------------------------------------------------
+
+
+def collect(socket, until: str) -> list[dict]:
+    messages = []
+    while True:
+        message = socket.receive_json()
+        messages.append(message)
+        if message["type"] == until:
+            return messages
+
+
+def test_run_stream_follows_a_call_from_start_to_verdict(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    run = start_run()["run"]
+    with client.websocket_connect(f"/ws/runs/{run['id']}") as socket:
+        assert socket.receive_json()["type"] == "run"
+        waiter(lambda: "running" in statuses(client, run["id"]))
+        rig.run_on_loop(released(rig))
+        messages = collect(socket, "runDone")
+    kinds = [m["type"] for m in messages]
+    assert kinds.count("callDone") == 1
+    assert "callEvaluated" in kinds
+    assert kinds[-1] == "runDone"
+    done = next(m for m in messages if m["type"] == "callDone")
+    evaluated = next(m for m in messages if m["type"] == "callEvaluated")
+    assert done["call"]["status"] == "evaluating"
+    assert evaluated["call"]["verdict"] == "pass"
+    assert messages[-1]["run"]["status"] == "done"
+
+
+def test_run_stream_of_a_finished_run_says_so_and_closes(client, start_run, waiter):
+    run = start_run()["run"]
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    with client.websocket_connect(f"/ws/runs/{run['id']}") as socket:
+        assert socket.receive_json()["type"] == "run"
+        assert socket.receive_json()["type"] == "runDone"
+
+
+def test_run_stream_of_a_missing_run(client):
+    with client.websocket_connect("/ws/runs/batch_missing") as socket:
+        assert socket.receive_json()["type"] == "error"
+
+
+def test_call_summaries_on_the_stream_are_the_full_ones(client, start_run, rig):
+    """The engine's own callStarted has no rep or verdict, so the worker's must be what arrives."""
+
+    async def hold():
+        rig.services.gate.hold("test")
+
+    async def release():
+        rig.services.gate.release("test")
+
+    rig.run_on_loop(hold)  # keeps the call from starting before the socket is listening
+    run = start_run()["run"]
+    with client.websocket_connect(f"/ws/runs/{run['id']}") as socket:
+        socket.receive_json()
+        rig.run_on_loop(release)
+        messages = collect(socket, "runDone")
+    started = [m for m in messages if m["type"] == "callStarted"]
+    assert len(started) == 1
+    assert started[0]["call"]["rep"] == 1
+    assert started[0]["call"]["status"] == "running"
+
+
+def test_partials_stream_only_for_the_watched_call(client, rig):
+    from voicelab.api.routes.live import _CallWatch
+
+    watch = _CallWatch(["call_a", "call_b"])
+    partial = {"type": "partial", "callId": "call_a"}
+    other = {"type": "partial", "callId": "call_b"}
+    assert watch.wanted(partial)  # defaults to the earliest running call
+    assert not watch.wanted(other)
+    watch.on_client({"type": "watch", "callId": "call_b"})
+    assert watch.wanted(other)
+    assert not watch.wanted(partial)
+    assert watch.wanted({"type": "run"})
+
+
+def test_watch_default_moves_on_when_the_call_ends():
+    from voicelab.api.routes.live import _CallWatch
+
+    watch = _CallWatch(["call_a"])
+    watch.wanted({"type": "callStarted", "call": {"id": "call_b"}})
+    watch.wanted({"type": "callDone", "call": {"id": "call_a"}})
+    assert watch.wanted({"type": "turn", "callId": "call_b"})
+
+
+def test_call_stream_sends_eval_progress_and_closes(client, rig, finished_call, waiter):
+    from voicelab.core.models import Finding
+
+    rig.evals.findings = [Finding(evaluator="timing", category="c", title="Dead air")]
+    call = finished_call()
+    rig.evals.hold = True
+    client.post(f"/api/calls/{call['id']}/reevaluate", json={})
+    with client.websocket_connect(f"/ws/calls/{call['id']}") as socket:
+        assert socket.receive_json() == {"type": "status", "status": "evaluating"}
+        rig.run_on_loop(release_evals(rig))
+        messages = collect(socket, "eval")
+    kinds = [m["type"] for m in messages]
+    assert "evaluator" in kinds
+    assert "finding" in kinds
+    assert kinds[-1] == "eval"
+    assert messages[-1]["eval"]["callId"] == call["id"]
+    evaluator = next(m for m in messages if m["type"] == "evaluator")["evaluator"]
+    assert evaluator["durationS"] == 0.0
+    assert "metrics" in evaluator
+
+
+def test_call_stream_of_a_finished_call_sends_status_and_closes(client, finished_call):
+    from starlette.websockets import WebSocketDisconnect
+
+    call = finished_call()
+    with client.websocket_connect(f"/ws/calls/{call['id']}") as socket:
+        assert socket.receive_json() == {"type": "status", "status": "done"}
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_json()
+
+
+def test_call_stream_of_a_failed_call_sends_status_and_closes(client, rig, finished_call):
+    from starlette.websockets import WebSocketDisconnect
+
+    rig.runner.fail_with = RuntimeError("no")
+    call = finished_call()
+    with client.websocket_connect(f"/ws/calls/{call['id']}") as socket:
+        assert socket.receive_json() == {"type": "status", "status": "failed"}
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_json()
+
+
+def test_call_stream_reports_a_failed_evaluation(client, rig, finished_call):
+    call = finished_call()
+    rig.evals.hold = True
+    rig.evals.fail_with = RuntimeError("worker died")
+    client.post(f"/api/calls/{call['id']}/reevaluate", json={})
+    with client.websocket_connect(f"/ws/calls/{call['id']}") as socket:
+        assert socket.receive_json()["status"] == "evaluating"
+        rig.run_on_loop(release_evals(rig))
+        messages = collect(socket, "error")
+    assert "worker died" in messages[-1]["message"]
+
+
+def test_call_stream_of_a_missing_call(client):
+    with client.websocket_connect("/ws/calls/call_missing") as socket:
+        assert socket.receive_json()["type"] == "error"
+
+
+# Restart -----------------------------------------------------------------------------------------
+
+
+def test_restart_fails_calls_cut_off_and_finishes_the_rest(tmp_path, waiter):
+    rig = build_rig(tmp_path)
+    with rig.client:
+        rig.runner.hold = True
+        run_id = rig.client.post("/api/runs", json={"pairs": [PAIR], "reps": 3}).json()["run"]["id"]
+        waiter(lambda: "running" in statuses(rig.client, run_id))
+    # Shutdown cancelled the call on the line and left it marked running, as a crash would.
+    after = build_rig(tmp_path)
+    with after.client:
+        waiter(lambda: run_of(after.client, run_id)["run"]["status"] == "done")
+        calls = run_of(after.client, run_id)["calls"]
+        assert sorted(c["status"] for c in calls) == ["done", "done", "failed"]
+        failed = next(c for c in calls if c["status"] == "failed")
+        assert after.services.calls.get(failed["id"])["error"] == "interrupted by restart"
+        assert len(after.runner.requests) == 2
+
+
+def test_restart_requeues_evaluations(tmp_path, waiter):
+    rig = build_rig(tmp_path)
+    with rig.client:
+        rig.evals.hold = True
+        run_id = rig.client.post("/api/runs", json={"pairs": [PAIR]}).json()["run"]["id"]
+        waiter(lambda: "evaluating" in statuses(rig.client, run_id))
+    after = build_rig(tmp_path)
+    with after.client:
+        waiter(lambda: run_of(after.client, run_id)["run"]["status"] == "done")
+        assert statuses(after.client, run_id) == ["done"]
+        assert len(after.evals.jobs) == 1
+        assert after.runner.requests == []
+
+
+def test_restart_keeps_paused_runs_paused(tmp_path, waiter):
+    rig = build_rig(tmp_path)
+    with rig.client:
+        rig.runner.hold = True
+        run_id = rig.client.post("/api/runs", json={"pairs": [PAIR], "reps": 2}).json()["run"]["id"]
+        waiter(lambda: "running" in statuses(rig.client, run_id))
+        rig.client.post(f"/api/runs/{run_id}/pause")
+    after = build_rig(tmp_path)
+    with after.client:
+        assert run_of(after.client, run_id)["run"]["status"] == "paused"
+        assert after.runner.requests == []
+        after.client.post(f"/api/runs/{run_id}/resume")
+        waiter(lambda: run_of(after.client, run_id)["run"]["status"] == "done")
+        assert len(after.runner.requests) == 1
+
+
+def test_restart_survives_a_call_whose_files_vanished(tmp_path, waiter):
+    import shutil
+
+    rig = build_rig(tmp_path)
+    with rig.client:
+        rig.runner.hold = True
+        run_id = rig.client.post("/api/runs", json={"pairs": [PAIR]}).json()["run"]["id"]
+        waiter(lambda: "running" in statuses(rig.client, run_id))
+        call_id = rig.services.calls.in_batch(run_id)[0]["id"]
+    shutil.rmtree(rig.services.store.paths(call_id).dir)
+    after = build_rig(tmp_path)
+    with after.client:
+        assert after.client.get("/api/health").status_code == 200
+        assert after.services.calls.get(call_id)["error"] == "call files are missing"
+
+
+def test_snapshots_are_taken_at_queue_time(client, start_run, rig, waiter):
+    rig.runner.hold = True
+    run = start_run(reps=2)["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    persona = client.get("/api/personas/per_sysadmin").json()
+    client.put("/api/personas/per_sysadmin", json={**persona, "name": "Renamed"})
+    rig.run_on_loop(released(rig))
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert {r.persona.name for r in rig.runner.requests} == {persona["name"]}

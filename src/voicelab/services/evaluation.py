@@ -42,8 +42,9 @@ from voicelab.store.sqlite import timestamp
 
 logger = logging.getLogger(__name__)
 
-# Evaluators that read the transcript the first one writes.
-_NEEDS_TRANSCRIPT = {"transcript_judge", "caller_validity", "pronunciation", "audio_listening"}
+# A partial re-run gets a fresh transcript unless it's listed here as not reading one, so an
+# evaluator added later works without anyone remembering this list.
+_NO_TRANSCRIPT_NEEDED = {"transcribe", "timing", "state", "audio_quality", "audio_listening"}
 _CRITERION_OWNER = {
     "must": "transcript_judge",
     "must_not": "transcript_judge",
@@ -152,7 +153,7 @@ async def evaluate_call(
     partial = job.evaluators is not None and previous is not None
     if partial:
         wanted = set(job.evaluators)
-        if wanted & _NEEDS_TRANSCRIPT:
+        if wanted - _NO_TRANSCRIPT_NEEDED:
             wanted.add("transcribe")
         chosen = [evaluator for evaluator in chosen if evaluator.name in wanted]
 

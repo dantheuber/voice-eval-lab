@@ -1,0 +1,457 @@
+from __future__ import annotations
+
+import pytest
+import yaml
+from fakes import PROFILE_YAML, build_rig
+
+from voicelab.core.models import (
+    CallArtifact,
+    CallMode,
+    CriterionResult,
+    EvalResult,
+    EvaluatorRun,
+    Finding,
+    Verdict,
+)
+from voicelab.core.profiles import LocalService
+from voicelab.services.compare import ComparedCall, compare_runs
+
+
+def test_profiles_list(client):
+    body = client.get("/api/profiles").json()
+    assert body["activeId"] == "local-default"
+    local = next(p for p in body["items"] if p["id"] == "local-default")
+    assert local["label"] == "Local"
+    assert local["configPath"].endswith("local-default.yaml")
+    assert local["liveCapable"] is False
+    assert local["benchmark"] is None
+    assert local["health"] == "ok"
+
+
+def test_untested_profile_is_not_the_default_fallback(tmp_path):
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    untested = PROFILE_YAML.format(id="aaa-cloud", label="Cloud", live="false", llm="x")
+    (profiles / "a.yaml").write_text(f"{untested}untested: true\n")
+    (profiles / "b.yaml").write_text(
+        PROFILE_YAML.format(id="zzz-fake", label="Fake", live="false", llm="x")
+    )
+    rig = build_rig(tmp_path)
+    with rig.client as client:
+        assert client.get("/api/profiles").json()["activeId"] == "zzz-fake"
+
+
+def test_a_profile_that_cannot_build_is_model_not_ready(tmp_path):
+    rig = build_rig(tmp_path)
+
+    def broken(profile):
+        raise ImportError("boto3 is not installed")
+
+    rig.services.profiles.stack_factory = broken
+    with rig.client as client:
+        response = client.post("/api/scenarios/draft", json={"description": "x"})
+        assert response.status_code == 503
+        assert "boto3" in response.json()["error"]["message"]
+
+
+def test_active_profile_change_persists(client, rig):
+    assert client.put("/api/profiles/active", json={"id": "live"}).json()["id"] == "live"
+    assert client.get("/api/profiles").json()["activeId"] == "live"
+    assert rig.services.catalog.setting("active_profile") == "live"
+
+
+def test_unknown_profile_is_invalid(client):
+    assert client.put("/api/profiles/active", json={"id": "nope"}).status_code == 400
+
+
+def test_profile_change_conflicts_during_a_run(client, rig, start_run):
+    rig.runner.hold = True
+    start_run()
+    assert client.put("/api/profiles/active", json={"id": "live"}).status_code == 409
+
+
+def test_profile_change_keeps_servers_that_did_not_change(client, rig):
+    kept = LocalService(name="stt", command=["sleep", "1"], port=18991)
+    dropped = LocalService(name="old", command=["sleep", "1"], port=18992)
+    rig.services.profiles.require("local-default").services.extend([kept, dropped])
+    rig.services.profiles.require("live").services.append(kept)
+    supervisor = rig.services.supervisor
+    rig.run_on_loop(lambda: supervisor.apply([kept, dropped], start=False))
+    entry = supervisor._entries["stt"]
+    client.put("/api/profiles/active", json={"id": "live"})
+    assert supervisor._entries["stt"] is entry
+    assert "old" not in supervisor._entries
+
+
+def test_health_covers_every_role(client):
+    body = client.get("/api/health").json()
+    roles = {item["role"]: item for item in body["items"]}
+    assert roles["llm_support"]["state"] == "ok"
+    assert roles["audio_analyst"]["state"] == "off"
+    assert body["ready"] is True
+    assert set(roles["llm_support"]) == {
+        "role",
+        "name",
+        "model",
+        "state",
+        "detail",
+        "elapsedS",
+        "usualS",
+    }
+
+
+def test_health_without_a_profile_is_not_ready(tmp_path):
+    (tmp_path / "profiles").mkdir()
+    rig = build_rig(tmp_path)
+    with rig.client as client:
+        body = client.get("/api/health").json()
+        assert body["ready"] is False
+        assert body["items"][0]["state"] == "down"
+        assert client.get("/api/profiles").json() == {"items": [], "activeId": None}
+        assert client.get("/api/roles").json() == {"items": []}
+        assert client.get("/api/voices").json() == {"items": []}
+        assert client.post("/api/runs", json={"pairs": []}).status_code == 400
+        response = client.post("/api/scenarios/draft", json={"description": "x"})
+        assert response.status_code == 503
+
+
+def test_health_socket_pushes_changes(client, rig):
+    with client.websocket_connect("/ws/health") as socket:
+        first = socket.receive_json()
+        assert first["type"] == "health"
+        assert first["items"][0]["role"]
+        rig.run_on_loop(lambda: rig.services.supervisor.apply([], start=False))
+        assert socket.receive_json()["type"] == "health"
+
+
+def test_roles_list_options_from_every_profile(client):
+    items = client.get("/api/roles").json()["items"]
+    llm = next(item for item in items if item["role"] == "llm_support")
+    assert llm["interface"] == "LLM"
+    assert llm["label"] == "support bot LLM"
+    assert llm["adapter"] == "fake:llm"
+    assert {o["id"] for o in llm["options"]} == {"fake:llm", "fake:big-llm"}
+    assert llm["health"]["role"] == "llm_support"
+    analyst = next(item for item in items if item["role"] == "audio_analyst")
+    assert analyst["adapter"] == "none"
+    assert analyst["interface"] == "AudioAnalyst"
+
+
+def test_setting_a_role_writes_the_active_profiles_yaml(client, rig):
+    response = client.put("/api/roles/llm_support", json={"adapter": "fake:big-llm"})
+    assert response.json()["adapter"] == "fake:big-llm"
+    saved = yaml.safe_load((rig.settings.profiles_dir / "local-default.yaml").read_text())
+    assert saved["roles"]["llm_support"]["model"] == "big-llm"
+    assert saved["roles"]["llm_caller"]["model"] == "llm"
+
+
+def test_a_required_role_cannot_be_emptied(client):
+    assert client.put("/api/roles/llm_support", json={"adapter": "none"}).status_code == 409
+
+
+def test_unknown_adapter_and_role(client):
+    assert client.put("/api/roles/llm_support", json={"adapter": "x"}).status_code == 400
+    assert client.put("/api/roles/no_role", json={"adapter": "x"}).status_code == 404
+
+
+def test_role_change_conflicts_during_a_run(client, rig, start_run):
+    rig.runner.hold = True
+    start_run()
+    response = client.put("/api/roles/llm_support", json={"adapter": "fake:big-llm"})
+    assert response.status_code == 409
+
+
+def test_restart_needs_a_server_behind_the_role(client):
+    assert client.post("/api/servers/llm_support/restart").status_code == 404
+
+
+def test_restart_all_is_accepted(client):
+    assert client.post("/api/servers/restart-all").json() == {"accepted": True}
+
+
+def test_benchmark_lands_on_the_profile(client, waiter):
+    assert client.post("/api/benchmark").json() == {"accepted": True}
+
+    def measured():
+        items = client.get("/api/profiles").json()["items"]
+        return next(p for p in items if p["id"] == "local-default")["benchmark"]
+
+    result = waiter(measured)
+    assert result["botReplyP50S"] >= 0
+    assert result["at"]
+
+
+def test_system(client):
+    body = client.get("/api/system").json()
+    assert set(body["gpu"]) == {"device", "memoryUsedGb", "memoryTotalGb"}
+    assert body["urls"]["local"] == "http://127.0.0.1:18080"
+    assert body["urls"]["lan"].startswith("https://")
+    assert body["urls"]["lan"].endswith(":18443")
+    assert body["cert"] == "self-signed"
+    assert body["servers"] == []
+
+
+def test_thresholds_default_to_what_eval_really_uses(client):
+    assert client.get("/api/thresholds").json() == {
+        "deadAirS": 6.0,
+        "bargeStopTargetS": 1.0,
+        "replyLatencyWarnS": 3.0,
+        "mosBaseline": 3.0,
+        "audioListeningMode": "advisory",
+    }
+
+
+def test_thresholds_save_and_reach_evaluation(client, rig, finished_call):
+    body = {
+        "deadAirS": 2.0,
+        "bargeStopTargetS": 0.5,
+        "replyLatencyWarnS": 2.5,
+        "mosBaseline": 4.0,
+        "audioListeningMode": "strict",
+    }
+    saved = client.put("/api/thresholds", json=body).json()
+    assert saved == {**body, "audioListeningMode": "advisory"}  # read-only
+    assert client.get("/api/thresholds").json() == saved
+    finished_call()
+    config = rig.evals.jobs[-1].config
+    assert config.timing.dead_air_s == 2.0
+    assert config.timing.barge_in_reaction_s == 0.5
+    assert config.timing.slow_response_s == 2.5
+    assert config.audio_quality.low_mos == 4.0
+
+
+def test_bad_thresholds_are_rejected(client):
+    current = client.get("/api/thresholds").json()
+    assert client.put("/api/thresholds", json={**current, "deadAirS": 0}).status_code == 400
+
+
+def test_aws_reports_status_without_values(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("AWS_REGION", "us-west-2")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "shh")
+    body = client.get("/api/aws").json()
+    assert body == {"region": "us-west-2", "credentials": "found", "testedAgainstLive": False}
+
+
+def test_aws_without_credentials(client, monkeypatch, tmp_path):
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "none"))
+    assert client.get("/api/aws").json() == {
+        "region": None,
+        "credentials": "not_found",
+        "testedAgainstLive": False,
+    }
+
+
+def test_aws_test_answers(client):
+    body = client.post("/api/aws/test").json()
+    assert body["ok"] is False
+    assert body["message"]
+
+
+# Compare -----------------------------------------------------------------------------------------
+
+
+def _compared(
+    call_id, *, verdict=Verdict.PASS, criteria=(), findings=(), metrics=None, mode="turn_based"
+):
+    runs = [EvaluatorRun(name=name, status="ok", metrics=m) for name, m in (metrics or {}).items()]
+    artifact = CallArtifact(id=call_id, mode=CallMode(mode), timing_is_real=mode == "live_bots")
+    result = EvalResult(
+        call_id=call_id,
+        verdict=verdict,
+        criteria=list(criteria),
+        findings=list(findings),
+        evaluators=runs,
+    )
+    row = {"id": call_id, "scenario_id": "scn_a", "persona_id": "per_a"}
+    return ComparedCall(row, artifact, result)
+
+
+def _criterion(criterion_id="verify", status="pass", kind="must"):
+    return CriterionResult(criterion_id=criterion_id, kind=kind, text="Verify", status=status)
+
+
+def _run(mode="turn_based", scenarios=("scn_a",)):
+    return {"id": "batch", "mode": mode, "scenarioIds": list(scenarios)}
+
+
+def measure(body, key):
+    return next(m for m in body["measures"] if m["key"] == key)
+
+
+def test_invalid_calls_leave_every_denominator():
+    good = _compared("call_1", criteria=[_criterion()])
+    invalid = _compared("call_2", verdict=Verdict.INVALID, criteria=[_criterion(status="fail")])
+    body = compare_runs(_run(), _run(), [good, invalid], [good])
+    assert body["criteria"][0]["a"] == {"pass": 1, "n": 1}
+    assert body["cells"][0]["a"] == {"pass": 1, "n": 1}
+    assert measure(body, "invalid") == {
+        "key": "invalid",
+        "label": "Invalid runs",
+        "a": 1,
+        "b": 0,
+        "comparable": False,
+        "reason": "test, not bot",
+    }
+
+
+def test_unknown_criteria_are_not_counted_as_failures():
+    body = compare_runs(
+        _run(),
+        _run(),
+        [_compared("call_1", criteria=[_criterion(status="unknown")])],
+        [_compared("call_2", criteria=[_criterion()])],
+    )
+    assert body["criteria"][0]["a"] == {"pass": 0, "n": 0}
+
+
+def test_beats_are_left_out_because_they_measure_the_caller():
+    calls = [_compared("call_1", criteria=[_criterion(kind="beat")])]
+    assert compare_runs(_run(), _run(), calls, calls)["criteria"] == []
+
+
+def test_a_criterion_in_one_run_shows_zero_on_the_other():
+    body = compare_runs(_run(), _run(), [_compared("call_1", criteria=[_criterion()])], [])
+    assert body["criteria"][0]["b"] == {"pass": 0, "n": 0}
+
+
+def test_scenarios_only_in_one_run_are_dropped():
+    only_a = _compared("call_1", criteria=[_criterion("gone")])
+    only_a.row["scenario_id"] = "scn_b"
+    shared = _compared("call_2", criteria=[_criterion("kept")])
+    body = compare_runs(_run(scenarios=("scn_a", "scn_b")), _run(), [only_a, shared], [shared])
+    assert body["scenarioIds"] == ["scn_a"]
+    assert body["droppedScenarioIds"] == ["scn_b"]
+    assert [c["criterionId"] for c in body["criteria"]] == ["kept"]
+
+
+def test_worst_names_the_biggest_drop_and_who_failed():
+    before = [_compared(f"call_a{i}", criteria=[_criterion()]) for i in range(2)]
+    after = [
+        _compared("call_b0", criteria=[_criterion()]),
+        _compared("call_b1", criteria=[_criterion(status="fail")]),
+    ]
+    assert compare_runs(_run(), _run(), before, after)["worst"] == {
+        "criterionId": "verify",
+        "deltaPts": -50,
+        "callIds": ["call_b1"],
+    }
+
+
+def test_no_drop_means_no_worst():
+    calls = [_compared("call_1", criteria=[_criterion()])]
+    assert compare_runs(_run(), _run(), calls, calls)["worst"] is None
+
+
+def test_latency_is_not_comparable_on_turn_based_runs():
+    timing = {"timing": {"response_latency": {"median_s": 1.0}}}
+    live = [_compared("call_1", metrics=timing, mode="live_bots")]
+    body = compare_runs(_run("live_bots"), _run(), live, [_compared("call_2")])
+    reply = measure(body, "replyP50S")
+    assert reply["a"] == 1.0
+    assert reply["b"] is None
+    assert reply["comparable"] is False
+    assert reply["reason"] == "turn-based"
+
+
+def test_unmeasured_values_are_null_not_zero():
+    calls = [_compared("call_1", mode="live_bots")]
+    body = compare_runs(_run("live_bots"), _run("live_bots"), calls, calls)
+    assert measure(body, "replyP50S")["a"] is None
+    assert measure(body, "replyP50S")["reason"] == "not measured"
+    assert measure(body, "mos")["a"] is None
+    assert measure(body, "mos")["comparable"] is False
+
+
+def test_mispronunciations_count_only_corroborated_tokens():
+    metrics = {"pronunciation": {"critical_mismatches": 5, "critical_corroborated": 2}}
+    calls = [_compared("call_1", metrics=metrics)]
+    assert (
+        measure(compare_runs(_run(), _run(), calls, calls), "criticalMispronunciations")["a"] == 2
+    )
+
+
+def test_advisory_notes_are_counted_but_never_comparable():
+    advisory = Finding(evaluator="audio_listening", category="c", title="t", advisory=True)
+    plain = Finding(evaluator="timing", category="c", title="t")
+    calls = [_compared("call_1", findings=[advisory, plain])]
+    note = measure(compare_runs(_run(), _run(), calls, calls), "advisoryNotes")
+    assert (note["a"], note["comparable"], note["reason"]) == (1, False, "advisory")
+
+
+def test_compare_route(client, rig, finished_call):
+    rig.evals.verdicts = [Verdict.PASS, Verdict.FAIL]
+    a = finished_call()["batchId"]
+    b = finished_call()["batchId"]
+    body = client.get("/api/compare", params={"a": a, "b": b}).json()
+    assert body["a"]["id"] == a
+    assert body["b"]["id"] == b
+    assert body["cells"][0]["a"] == {"pass": 1, "n": 1}
+    assert body["cells"][0]["b"] == {"pass": 0, "n": 1}
+
+
+def test_compare_of_a_missing_run(client):
+    assert client.get("/api/compare", params={"a": "x", "b": "y"}).status_code == 404
+
+
+# Serving -----------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def served(tmp_path):
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text("<html>app</html>")
+    (dist / "assets" / "app.js").write_text("console.log(1)")
+    (tmp_path / "secret.txt").write_text("private")
+    rig = build_rig(tmp_path, dist=dist)
+    with rig.client:
+        yield rig.client
+
+
+def test_static_files_are_served(served):
+    assert served.get("/assets/app.js").text == "console.log(1)"
+    assert served.get("/").text == "<html>app</html>"
+
+
+def test_client_routes_fall_back_to_the_app(served):
+    assert served.get("/calls/call_123").text == "<html>app</html>"
+    assert served.get("/settings").text == "<html>app</html>"
+
+
+def test_unknown_api_paths_stay_json_404s(served):
+    response = served.get("/api/no/such/route")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "not_found"
+    assert served.get("/ws/no").status_code == 404
+
+
+@pytest.mark.parametrize(
+    "path", ["/..%2Fsecret.txt", "/assets/..%2F..%2Fsecret.txt", "/%2e%2e/secret.txt"]
+)
+def test_dashboard_cannot_be_walked_out_of(served, path):
+    response = served.get(path)
+    assert "private" not in response.text
+    assert response.status_code == 404
+
+
+def test_no_build_says_how_to_make_one(client):
+    response = client.get("/")
+    assert response.status_code == 404
+    assert "pnpm build" in response.json()["error"]["message"]
+
+
+def test_method_not_allowed_uses_the_error_shape(client):
+    response = client.put("/api/health")
+    assert response.status_code == 405
+    assert response.json()["error"]["code"] == "invalid"
+
+
+def test_malformed_json_is_invalid(client):
+    response = client.post(
+        "/api/calls/x/verdict", content="{", headers={"content-type": "application/json"}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid"

@@ -118,7 +118,9 @@ class ProfileManager:
             return stored
         if self.settings.default_profile in self.items:
             return self.settings.default_profile
-        return next(iter(self.items), None)
+        # Sorted by file name, an example cloud stack would otherwise win by alphabet.
+        tested = [profile.id for profile in self.items.values() if not profile.untested]
+        return next(iter(tested or self.items), None)
 
     def require(self, profile_id: str | None) -> Profile:
         profile = self.items.get(profile_id or "")
@@ -135,10 +137,12 @@ class ProfileManager:
 
     def stack(self, profile: Profile) -> ProviderStack:
         if profile.id not in self._stacks:
+            # An adapter can fail any way it likes, such as a missing optional package.
             try:
                 self._stacks[profile.id] = self.stack_factory(profile)
-            except ValueError as exc:
-                raise ModelNotReady("profile", profile.id, reason=str(exc)) from exc
+            except Exception as exc:
+                reason = f"can't build profile {profile.id}: {exc}"
+                raise ModelNotReady("profile", profile.id, reason=reason) from exc
         return self._stacks[profile.id]
 
     def benchmark(self, profile: Profile) -> dict[str, Any] | None:
