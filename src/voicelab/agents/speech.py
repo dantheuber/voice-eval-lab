@@ -161,6 +161,7 @@ def _token_pattern(terms: list[str], units: list[str], tlds: list[str]) -> re.Pa
         r"(?P<always>(?<![\w/])24/7(?![\w/]))",
         r"(?P<percent>(?<![\w.])\d[\d,]*(?:\.\d+)?%)",
         r"(?P<ordinal>(?<![\w.])\d+(?:st|nd|rd|th)\b)",
+        r"(?P<range>(?<![\w.,-])\d{1,3}-\d{1,3}(?![\w-]))",
         r"(?P<number>(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\w]))",
         rf"(?P<term>(?<![\w-])(?i:{term_alternatives})(?![\w-]))",
         r"(?P<amp>(?<=\s)&(?=\s))",
@@ -356,6 +357,11 @@ def _speak_ordinal(match: re.Match[str], lexicon: Lexicon) -> str:
     return ordinal_to_words(int(re.sub(r"\D", "", match.group("ordinal"))))
 
 
+def _speak_range(match: re.Match[str], lexicon: Lexicon) -> str:
+    low, high = match.group("range").split("-")
+    return f"{number_to_words(int(low))} to {number_to_words(int(high))}"
+
+
 def _speak_number(match: re.Match[str], lexicon: Lexicon) -> str:
     token = match.group("number")
     before = match.string[: match.start()]
@@ -396,6 +402,7 @@ _SPEAK = {
     "always": _speak_always,
     "percent": _speak_percent,
     "ordinal": _speak_ordinal,
+    "range": _speak_range,
     "number": _speak_number,
     "term": _speak_term,
     "amp": _speak_amp,

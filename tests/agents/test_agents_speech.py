@@ -30,6 +30,18 @@ def test_examples_from_the_brief(text, expected):
     assert spoken(text) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Within 3-5 business days.", "Within three to five business days."),
+        ("About 10-14 days.", "About ten to fourteen days."),
+        ("Call 555-0101 today.", "Call five, five, five, zero, one, zero, one today."),
+    ],
+)
+def test_a_range_of_numbers_is_read_as_a_range(text, expected):
+    assert normalize(text).spoken == expected
+
+
 def test_returns_display_and_spoken():
     result = normalize("Invoice FH-4419 is $49.99.")
     assert result.display == "Invoice FH-4419 is $49.99."
