@@ -112,6 +112,19 @@ async def test_segments_carry_spoken_forms(db):
     assert second.spoken == "Thanks."
 
 
+@pytest.mark.parametrize(
+    ("reply", "spoken"),
+    [
+        ("It expires on Nov. 6, 2027.", "It expires on November sixth, twenty twenty seven."),
+        ("Due Sept. 3. Thanks.", "Due September third."),
+        ("Call ext. 123 now.", "Call ext. 1 2 3 now."),
+    ],
+)
+async def test_tokens_across_an_abbreviation_normalize_whole(db, reply, spoken):
+    bot, _, _ = make_bot(db, reply)
+    assert (await turn(bot))[0].spoken == spoken
+
+
 async def test_history_keeps_the_reply(db):
     bot, _, _ = make_bot(db, "All set. Anything else?")
     await turn(bot, "Thanks")

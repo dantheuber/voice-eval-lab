@@ -421,7 +421,50 @@ def normalize(text: str, lexicon: Lexicon | None = None) -> SpeechText:
 # Sentence splitting for streaming --------------------------------------------------------------
 
 _BOUNDARY = re.compile(r"[.!?]+[\"')\]]*(?=\s)|\n+")
-_ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "st.", "vs.", "etc.", "e.g.", "i.e.", "no."}
+_ABBREVIATIONS = {
+    "approx.",
+    "apt.",
+    "ave.",
+    "blvd.",
+    "co.",
+    "corp.",
+    "dept.",
+    "dr.",
+    "est.",
+    "etc.",
+    "ext.",
+    "inc.",
+    "jr.",
+    "llc.",
+    "ltd.",
+    "mr.",
+    "mrs.",
+    "ms.",
+    "mt.",
+    "no.",
+    "prof.",
+    "sec.",
+    "sr.",
+    "st.",
+    "ste.",
+    "tel.",
+    "vs.",
+}
+# Only capitalized, so "the sun." and "he sat." still end their sentences.
+_CALENDAR_ABBREVIATIONS = {
+    f"{name}."
+    for name in (
+        "Jan Feb Mar Apr Jun Jul Aug Sep Sept Oct Nov Dec "
+        "Mon Tue Tues Wed Thu Thur Thurs Fri Sat Sun"
+    ).split()
+}
+
+
+def _is_abbreviation(word: str) -> bool:
+    word = word.lstrip("(\"'[")
+    if word in _CALENDAR_ABBREVIATIONS or word.lower() in _ABBREVIATIONS:
+        return True
+    return re.fullmatch(r"(?:[A-Za-z]\.)+", word) is not None  # J. Smith, a.m., U.S., e.g.
 
 
 def split_sentences(text: str) -> tuple[list[str], str]:
@@ -429,15 +472,16 @@ def split_sentences(text: str) -> tuple[list[str], str]:
 
     A period only ends a sentence once whitespace has arrived after it. While streaming, that keeps
     "$49." from being cut before ".99" comes in, and leaves "mail.fernhill.example" whole.
+    Abbreviations never end one, since "Nov. 6" has to reach `normalize` as a single date. The cost
+    is that a sentence really ending in one waits to join the next, which only delays it.
     """
     sentences: list[str] = []
     start = 0
     for boundary in _BOUNDARY.finditer(text):
         candidate = text[start : boundary.end()].strip()
-        last_word = candidate.rsplit(None, 1)[-1].lower() if candidate else ""
+        last_word = candidate.rsplit(None, 1)[-1] if candidate else ""
         is_list_number = re.fullmatch(r"\d+\.", candidate) is not None
-        is_initial = re.fullmatch(r"[a-z]\.", last_word) is not None
-        if last_word in _ABBREVIATIONS or is_list_number or is_initial:
+        if _is_abbreviation(last_word) or is_list_number:
             continue
         if candidate:
             sentences.append(candidate)

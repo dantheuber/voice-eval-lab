@@ -420,6 +420,32 @@ def test_split_sentences(text, sentences, tail):
     assert split_sentences(text) == (sentences, tail)
 
 
+@pytest.mark.parametrize(
+    ("text", "first"),
+    [
+        ("It expires on Nov. 6, 2027. Thanks. ", "It expires on Nov. 6, 2027."),
+        ("We open Sept. 3 now. Thanks. ", "We open Sept. 3 now."),
+        ("Pay by Dec. 1. Thanks. ", "Pay by Dec. 1."),
+        ("Call Mon. through Fri. please. Thanks. ", "Call Mon. through Fri. please."),
+        ("Call ext. 123 now. Thanks. ", "Call ext. 123 now."),
+        ("We open at 8 a.m. Pacific today. Thanks. ", "We open at 8 a.m. Pacific today."),
+        ("It costs approx. $5 a month. Thanks. ", "It costs approx. $5 a month."),
+        ("Jensen Plumbing Inc. is on file. Thanks. ", "Jensen Plumbing Inc. is on file."),
+        ("See the U.S. office. Thanks. ", "See the U.S. office."),
+        ("Ask for Sec. 2 now. Thanks. ", "Ask for Sec. 2 now."),
+    ],
+)
+def test_abbreviations_do_not_end_a_sentence(text, first):
+    assert split_sentences(text)[0] == [first, "Thanks."]
+
+
+@pytest.mark.parametrize(
+    "ending", ["The sun. ", "He sat. ", "We were in the mar. ", "Tell the fan. "]
+)
+def test_lowercase_words_that_look_like_abbreviations_still_end_a_sentence(ending):
+    assert split_sentences(f"{ending}Thanks. ")[0] == [ending.strip(), "Thanks."]
+
+
 def test_splitting_is_stable_as_text_streams_in():
     text = "Your total is $49.99. It renews on Nov. 6. Anything else?"
     seen = []
