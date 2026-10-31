@@ -631,8 +631,15 @@ def test_a_nearly_right_email_is_found_and_flagged(db):
     assert found["customer_id"] == "cus_1003" and "close_match" in found
 
 
+def test_a_name_is_matched_on_how_it_sounds(db):
+    found = ToolDispatcher(db).dispatch("find_customer", {"domain": "winauto.example"})
+
+    assert found["customer_id"] == "cus_1007"
+    assert found["close_match"] == "nguyenauto.example"
+
+
 def test_a_different_business_is_not_a_close_match(db):
-    found = ToolDispatcher(db).dispatch("find_customer", {"domain": "win auto.example"})
+    found = ToolDispatcher(db).dispatch("find_customer", {"domain": "acme-widgets.example"})
 
     assert found == {"found": False}
 

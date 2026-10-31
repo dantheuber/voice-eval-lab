@@ -271,13 +271,23 @@ def _letters_digits(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+def _said_aloud(address: str) -> str:
+    """How an address sounds, which is all a recognizer has: nguyenauto.example is "win auto"."""
+    # Imported here because the agents package imports this module.
+    from voicelab.agents.speech import load_lexicon, normalize
+
+    return _spoken_address(normalize(address, load_lexicon()).spoken)
+
+
 def _closest_customer(db: CompanyDb, heard: str, sql: str) -> tuple[dict[str, Any], str] | None:
     """The one customer whose address nearly matches. Identity is still checked by zip and PIN.
 
     Near matches on two customers mean the guess can't pick between them, so neither wins.
     """
-    rows = db.rows(sql)
-    keyed: dict[str, dict[str, Any]] = {_letters_digits(row["value"]): row for row in rows}
+    keyed: dict[str, dict[str, Any]] = {}
+    for row in db.rows(sql):
+        keyed[_letters_digits(row["value"])] = row
+        keyed[_letters_digits(_said_aloud(row["value"]))] = row
     close = difflib.get_close_matches(_letters_digits(heard), keyed, n=3, cutoff=_CLOSE_MATCH)
     if len({keyed[match]["customer_id"] for match in close}) != 1:
         return None
