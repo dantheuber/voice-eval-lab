@@ -119,7 +119,7 @@ async def list_voices(svc: Svc) -> dict[str, Any]:
 
 @router.post("/tts/preview")
 async def tts_preview(body: TtsPreview, svc: Svc) -> Response:
-    stack = svc.profiles.require_ready(svc.profiles.resolve(None), ("tts_caller",))
+    stack = await svc.profiles.require_ready(svc.profiles.resolve(None), ("tts_caller",))
     voice = mapping.from_api(VoiceRef, body.voice)
     line = mapping.from_api(LineConditions, body.line) if body.line else None
     wav = await authoring.preview_voice(stack, body.text, voice, line)
@@ -155,7 +155,7 @@ def create_scenario(svc: Svc, body: JsonBody) -> dict[str, Any]:
 
 @router.post("/scenarios/draft")
 async def draft_scenario(body: DraftBody, svc: Svc) -> dict[str, Any]:
-    stack = svc.profiles.require_ready(svc.profiles.resolve(None), ("llm_judge",))
+    stack = await svc.profiles.require_ready(svc.profiles.resolve(None), ("llm_judge",))
     base = _scenario(svc, body.base_scenario_id)[0] if body.base_scenario_id else None
     scenario, guessed, notes = await authoring.draft(
         stack.llm_judge, body.description, body.customer_id, base
@@ -204,7 +204,7 @@ async def dry_run(scenario_id: str, body: DryRunBody, svc: Svc) -> dict[str, Any
     scenario, _ = _scenario(svc, scenario_id)
     persona = _persona(svc, body.persona_id) if body.persona_id else authoring.neutral_persona()
     profile = svc.profiles.resolve(None)
-    stack = svc.profiles.require_ready(profile, ("llm_support", "llm_caller"))
+    stack = await svc.profiles.require_ready(profile, ("llm_support", "llm_caller"))
     result = await authoring.dry_run(stack.llm_support, stack.llm_caller, scenario, persona)
     return {
         "turns": authoring.dry_run_turns(result),

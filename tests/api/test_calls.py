@@ -4,7 +4,14 @@ import base64
 
 import pytest
 
-from voicelab.core.models import CallMode, CallStatus, Finding, Verdict
+from voicelab.core.models import (
+    CallMode,
+    CallStatus,
+    EvaluatorRun,
+    Evidence,
+    Finding,
+    Verdict,
+)
 from voicelab.store.calls import CallFilters
 from voicelab.store.sqlite import timestamp
 
@@ -336,6 +343,119 @@ def test_decisions_survive_reevaluation(client, rig, finished_call, waiter):
     assert new["id"] != old["id"]
     assert new["humanVerdict"] == "confirmed"
     assert client.get(f"/api/calls/{call['id']}").json()["summary"]["openFindings"] == 0
+
+
+def _dead_air(at_s, title="3.0 s of dead air"):
+    return Finding(
+        evaluator="timing",
+        category="dead_air",
+        title=title,
+        evidence=[Evidence(start_s=at_s, end_s=at_s + 3)],
+    )
+
+
+def _reevaluate(client, rig, call_id, waiter, findings):
+    rig.evals.findings = findings
+    jobs = len(rig.evals.jobs)
+    client.post(f"/api/calls/{call_id}/reevaluate", json={})
+    waiter(lambda: len(rig.evals.jobs) == jobs + 1)
+    waiter(lambda: client.get(f"/api/calls/{call_id}").json()["summary"]["status"] == "done")
+    return client.get(f"/api/calls/{call_id}").json()["eval"]["findings"]
+
+
+def _decide(client, call_id, finding, verdict):
+    client.post(
+        f"/api/calls/{call_id}/findings/{finding['id']}",
+        json={"humanVerdict": verdict, "humanNote": verdict},
+    )
+
+
+def _at(findings, start_s):
+    return next(f for f in findings if f["evidence"][0]["startS"] == start_s)
+
+
+def test_dismissing_one_occurrence_leaves_its_twin_open(client, rig, finished_call, waiter):
+    rig.evals.findings = [_dead_air(10.0), _dead_air(50.0)]
+    call = finished_call()
+    first = client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"]
+    _decide(client, call["id"], _at(first, 10.0), "dismissed")
+    again = _reevaluate(client, rig, call["id"], waiter, [_dead_air(10.0), _dead_air(50.0)])
+    assert _at(again, 10.0)["humanVerdict"] == "dismissed"
+    assert _at(again, 50.0)["humanVerdict"] is None
+    assert client.get(f"/api/calls/{call['id']}").json()["summary"]["openFindings"] == 1
+
+
+def test_conflicting_decisions_keep_to_their_own_occurrence(client, rig, finished_call, waiter):
+    rig.evals.findings = [_dead_air(10.0), _dead_air(50.0)]
+    call = finished_call()
+    first = client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"]
+    _decide(client, call["id"], _at(first, 10.0), "dismissed")
+    _decide(client, call["id"], _at(first, 50.0), "confirmed")
+    again = _reevaluate(client, rig, call["id"], waiter, [_dead_air(50.0), _dead_air(10.0)])
+    assert _at(again, 10.0)["humanVerdict"] == "dismissed"
+    assert _at(again, 50.0)["humanVerdict"] == "confirmed"
+
+
+def test_a_decision_does_not_jump_to_a_different_moment(client, rig, finished_call, waiter):
+    rig.evals.findings = [_dead_air(10.0)]
+    call = finished_call()
+    first = client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"]
+    _decide(client, call["id"], first[0], "dismissed")
+    again = _reevaluate(client, rig, call["id"], waiter, [_dead_air(50.0)])
+    assert again[0]["humanVerdict"] is None
+
+
+def test_a_slightly_moved_occurrence_keeps_its_decision(client, rig, finished_call, waiter):
+    rig.evals.findings = [_dead_air(10.0)]
+    call = finished_call()
+    first = client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"]
+    _decide(client, call["id"], first[0], "dismissed")
+    again = _reevaluate(client, rig, call["id"], waiter, [_dead_air(10.2)])
+    assert again[0]["humanVerdict"] == "dismissed"
+
+
+def test_findings_without_times_match_one_to_one_in_order(client, rig, finished_call, waiter):
+    plain = [Finding(evaluator="transcript_judge", category="c", title="Rude") for _ in range(2)]
+    rig.evals.findings = plain
+    call = finished_call()
+    first = client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"]
+    _decide(client, call["id"], first[0], "dismissed")
+    again = _reevaluate(client, rig, call["id"], waiter, plain)
+    assert [f["humanVerdict"] for f in again] == ["dismissed", None]
+
+
+DELIVERY_METRICS = {
+    "bot": [{"utterance_id": "utt_1", "words_per_minute": 142.5, "pitch_range_st": 7.1}],
+    "medians": {"words_per_minute": 141.0},
+    "flag_counts": {"too_fast": 1},
+    "limitation": "Pitch is rough on a phone line.",
+    "wpm_note": "Measured on the bot channel.",
+}
+
+
+def test_evaluator_metrics_reach_the_client_exactly_as_written(client, rig, finished_call):
+    rig.evals.more_evaluators = [
+        EvaluatorRun(name="delivery", status="ok", metrics=DELIVERY_METRICS)
+    ]
+    call = finished_call()
+    evaluators = client.get(f"/api/calls/{call['id']}").json()["eval"]["evaluators"]
+    assert next(e for e in evaluators if e["name"] == "delivery")["metrics"] == DELIVERY_METRICS
+
+
+def test_skipped_and_errored_evaluators_are_listed_in_server_order(client, rig, finished_call):
+    rig.evals.more_evaluators = [
+        EvaluatorRun(name="audio_listening", status="skipped", reason="no analyst"),
+        EvaluatorRun(name="delivery", status="error", reason="ValueError: bad clip"),
+    ]
+    call = finished_call()
+    evaluators = client.get(f"/api/calls/{call['id']}").json()["eval"]["evaluators"]
+    assert [(e["name"], e["status"]) for e in evaluators] == [
+        ("timing", "ok"),
+        ("caller_validity", "ok"),
+        ("audio_listening", "skipped"),
+        ("delivery", "error"),
+    ]
+    assert evaluators[3]["reason"] == "ValueError: bad clip"
 
 
 def test_reevaluate_passes_chosen_evaluators(client, rig, finished_call, waiter):

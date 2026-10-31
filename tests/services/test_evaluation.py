@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 from pathlib import Path
 
 import numpy as np
@@ -162,6 +164,14 @@ def test_merge_keeps_what_was_not_rerun_and_decides_again():
     assert merged.verdict == Verdict.FAIL
 
 
+def test_merge_keeps_evaluators_in_their_order():
+    """The dashboard lists them as this array has them, so a re-run must not move one."""
+    previous = result_with(["transcribe", "timing", "state", "delivery"])
+    artifact = CallArtifact(id="call_1", mode=CallMode.LIVE_BOTS)
+    merged = merge_partial(previous, result_with(["timing"]), artifact, EvalConfig())
+    assert [r.name for r in merged.evaluators] == ["transcribe", "timing", "state", "delivery"]
+
+
 async def test_partial_run_only_runs_what_was_asked(store):
     artifact = stored_call(store)
     all_of_them = [Named("transcribe"), Named("timing"), Named("state")]
@@ -261,6 +271,18 @@ async def test_subprocess_worker_runs_the_real_pipeline(store, tmp_path):
     assert len([m for m in messages if "evaluator" in m]) == len(result.evaluators)
 
 
+async def test_a_large_eval_log_is_rotated_before_the_next_job(store, tmp_path):
+    settings = Settings(data_dir=tmp_path, profiles_dir=tmp_path / "profiles")
+    settings.log_dir.mkdir()
+    log = settings.log_dir / "eval.log"
+    log.touch()
+    os.truncate(log, 512 * 1024 * 1024)  # sparse, so this costs nothing on disk
+    with pytest.raises(RuntimeError):
+        await SubprocessEvalRunner(settings, store)(EvalJob("call_missing"), lambda _: None)
+    assert log.stat().st_size < 1024 * 1024
+    assert (settings.log_dir / "eval.log.1").exists()
+
+
 def test_worker_finds_a_profile_past_a_broken_file(tmp_path):
     (tmp_path / "a.yaml").write_text("label: Local: not valid yaml\n")
     (tmp_path / "b.yaml").write_text("id: wanted\nlabel: Wanted\nroles: {}\n")
@@ -278,8 +300,9 @@ async def test_subprocess_failure_is_reported_with_where_to_look(store, tmp_path
     assert (tmp_path / "logs" / "eval.log").exists()
 
 
-async def _nothing_to_prepare(_: str | None) -> None:
-    return None
+@contextlib.asynccontextmanager
+async def _no_models(_: str | None):
+    yield
 
 
 def service_rig(tmp_path: Path, runner):
@@ -296,7 +319,7 @@ def service_rig(tmp_path: Path, runner):
         runner=runner(store),
         config=EvalConfig,
         default_profile=lambda: None,
-        prepare=_nothing_to_prepare,
+        models=_no_models,
     )
     return service, store, calls, hub, gate
 

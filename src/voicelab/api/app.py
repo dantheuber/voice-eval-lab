@@ -3,31 +3,33 @@
 from __future__ import annotations
 
 import logging
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.exceptions import HTTPException
 
+from voicelab.api.guards import (
+    MAX_JSON_BYTES,
+    BodyLimit,
+    SameSiteOnly,
+    error_response,
+    trusted_sites,
+)
 from voicelab.api.routes import calls, library, live, models, runs
 from voicelab.services.container import Services, build_services
 from voicelab.services.errors import NotFound, ServiceError
+from voicelab.services.system import lan_ip
 from voicelab.store.calls import BadCursor
 
 logger = logging.getLogger(__name__)
 
-_HTTP_CODES = {404: "not_found", 405: "invalid", 409: "conflict"}
-
-
-def _error(
-    status: int, code: str, message: str, detail: dict[str, Any] | None = None
-) -> JSONResponse:
-    body = {"error": {"code": code, "message": message, "detail": detail or {}}}
-    return JSONResponse(body, status_code=status)
+_HTTP_CODES = {404: "not_found", 405: "invalid", 409: "conflict", 413: "invalid"}
+_error = error_response
 
 
 def _install_error_handlers(app: FastAPI) -> None:
@@ -90,6 +92,14 @@ def create_app(services: Services | None = None, *, seed: bool = True) -> FastAP
         title="voicelab", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json"
     )
     app.state.services = services
+    settings = services.settings
+
+    def body_limit(path: str) -> int:
+        return settings.max_upload_bytes if path == "/api/uploads" else MAX_JSON_BYTES
+
+    # The last one added runs first, so a refused site never gets as far as being read.
+    app.add_middleware(BodyLimit, limit_for=body_limit)
+    app.add_middleware(SameSiteOnly, sites=trusted_sites(settings, lan_ip(), socket.gethostname()))
     _install_error_handlers(app)
     for module in (calls, library, runs, live, models):
         app.include_router(module.router)

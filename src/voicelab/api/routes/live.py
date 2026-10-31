@@ -12,13 +12,12 @@ from fastapi import APIRouter, File, Form, Response, UploadFile, WebSocket, WebS
 from voicelab.api import mapping
 from voicelab.api.schemas import ChannelMapBody, IceBody, OfferBody, Svc, TalkBody
 from voicelab.core.models import LineConditions
-from voicelab.services.errors import Conflict, Invalid
+from voicelab.services.errors import Conflict
 from voicelab.services.events import Subscription
 
 router = APIRouter()
 
 _ICE_SERVERS = [{"urls": "stun:stun.l.google.com:19302"}]
-_READ_CHUNK = 1024 * 1024
 _RUN_DETAIL_MESSAGES = ("partial", "turn", "event")
 
 
@@ -76,17 +75,6 @@ def talk_state(session_id: str, svc: Svc) -> dict[str, Any]:
 # Uploads -----------------------------------------------------------------------------------------
 
 
-async def _read_limited(file: UploadFile, limit: int) -> bytes:
-    chunks = []
-    size = 0
-    while chunk := await file.read(_READ_CHUNK):
-        size += len(chunk)
-        if size > limit:
-            raise Invalid(f"file is larger than {limit // (1024 * 1024)} MB")
-        chunks.append(chunk)
-    return b"".join(chunks)
-
-
 @router.post("/api/uploads", status_code=201)
 async def create_upload(
     svc: Svc,
@@ -96,7 +84,7 @@ async def create_upload(
     intendedTranscript: Annotated[str, Form()] = "",  # noqa: N803
     toolLog: Annotated[str, Form()] = "",  # noqa: N803
 ) -> dict[str, Any]:
-    data = await _read_limited(file, svc.settings.max_upload_bytes)
+    data = await file.read()  # `BodyLimit` already held the whole request to the upload cap
     # Decoding, resampling, and VAD are CPU work, and a mic call may be sharing this loop.
     artifact, probe = await asyncio.to_thread(
         svc.uploads.create,

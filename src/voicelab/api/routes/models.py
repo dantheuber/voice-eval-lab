@@ -42,7 +42,7 @@ def _profile_json(svc: Svc, profile: Profile) -> dict[str, Any]:
 
 
 def _refuse_while_busy(svc: Svc, doing: str) -> None:
-    if svc.worker.is_busy() or svc.talks.live:
+    if svc.worker.is_busy() or svc.talks.live or svc.profiles.in_use or svc.evals.queued:
         raise Conflict(f"can't {doing} while a run or mic call is in progress")
 
 

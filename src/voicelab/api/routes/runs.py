@@ -153,7 +153,7 @@ def _evaluated_calls(svc: Svc, run_id: str) -> list[ComparedCall]:
     calls = []
     for row in svc.calls.in_batch(run_id):
         result = svc.store.read_eval(row["id"])
-        if result is not None:
+        if result is not None and row["error"] is None:
             calls.append(ComparedCall(row, svc.store.read_artifact(row["id"]), result))
     return calls
 

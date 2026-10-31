@@ -9,6 +9,7 @@ watched and reported, never touched, because the machine runs other people's mod
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -23,15 +24,19 @@ from pathlib import Path
 import httpx
 
 from voicelab.core.profiles import LocalService
+from voicelab.services.logs import LOG_BACKUPS, LOG_MAX_BYTES, rotate_log
 from voicelab.services.settings import REPO_ROOT
 
 logger = logging.getLogger(__name__)
 
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]")
+_GROUP_POLL_S = 0.05
+_DEAD_STATES = ("Z", "X")
 
 
 @dataclass
 class ServiceStatus:
+    service: LocalService  # the definition actually running under this name
     name: str
     port: int
     state: str  # ok, loading, down, off
@@ -68,6 +73,8 @@ class ServiceSupervisor:
         failed_polls: int = 5,
         stop_grace_s: float = 10.0,
         cwd: Path = REPO_ROOT,
+        log_max_bytes: int = LOG_MAX_BYTES,
+        log_backups: int = LOG_BACKUPS,
     ) -> None:
         self.log_dir = Path(log_dir)
         self.on_change = on_change
@@ -78,6 +85,9 @@ class ServiceSupervisor:
         self.failed_polls = failed_polls
         self.stop_grace_s = stop_grace_s
         self.cwd = cwd
+        self.log_max_bytes = log_max_bytes
+        self.log_backups = log_backups
+        self._lock = asyncio.Lock()  # one change at a time: a stop awaits, and ports must be free
         self._entries: dict[str, _Entry] = {}
         # Load times survive restarts so "usually 40 s" is there on the first load of a session.
         self._times_path = self.log_dir / "service_times.json"
@@ -93,23 +103,32 @@ class ServiceSupervisor:
         """Make `services` the supervised set. A server whose definition didn't change keeps
         running, so swapping one role doesn't reload every model."""
         wanted = {service.name: service for service in services}
-        for name, entry in list(self._entries.items()):
-            if wanted.get(name) != entry.service:
-                await self._stop(entry)
-                del self._entries[name]
-        for name, service in wanted.items():
-            self._entries.setdefault(name, _Entry(service))
+        async with self._lock:
+            for name, entry in list(self._entries.items()):
+                if wanted.get(name) != entry.service:
+                    await self._stop(entry)
+                    del self._entries[name]
+            for name, service in wanted.items():
+                self._entries.setdefault(name, _Entry(service))
         if start:
             self.ensure_started(wanted)
         self._changed()
 
-    def add(self, services: Iterable[LocalService]) -> None:
-        """Supervise these too, and start them."""
-        names = []
-        for service in services:
-            self._entries.setdefault(service.name, _Entry(service))
-            names.append(service.name)
-        self.ensure_started(names)
+    async def reconcile(self, services: Iterable[LocalService]) -> None:
+        """Make these definitions the ones running, and start them. Whatever holds one of their
+        names or ports under another definition stops first, or it would answer for the wrong
+        model. Servers outside that set keep running."""
+        wanted = list(services)
+        async with self._lock:
+            for name, entry in list(self._entries.items()):
+                if entry.service in wanted:
+                    continue
+                if any(s.name == name or s.port == entry.service.port for s in wanted):
+                    await self._stop(entry)
+                    del self._entries[name]
+            for service in wanted:
+                self._entries.setdefault(service.name, _Entry(service))
+        self.ensure_started(service.name for service in wanted)
 
     def ensure_started(self, names: Iterable[str] | None = None) -> None:
         for name in self._entries if names is None else names:
@@ -118,8 +137,8 @@ class ServiceSupervisor:
                 entry.task = asyncio.create_task(self._supervise(entry), name=f"service-{name}")
 
     async def restart(self, name: str) -> None:
-        entry = self._entries[name]
-        await self._stop(entry)
+        async with self._lock:
+            await self._stop(self._entries[name])
         self.ensure_started([name])
 
     async def stop_all(self) -> None:
@@ -128,14 +147,18 @@ class ServiceSupervisor:
             await self._http.aclose()
             self._http = None
 
-    async def wait_ready(self, names: Iterable[str], timeout_s: float) -> bool:
-        names = list(names)
+    async def wait_ready(self, services: Iterable[LocalService], timeout_s: float) -> bool:
+        wanted = list(services)
         deadline = time.monotonic() + timeout_s
-        while not all(self._entries[name].state == "ok" for name in names):
+        while not all(self._is_ready(service) for service in wanted):
             if time.monotonic() >= deadline:
                 return False
             await asyncio.sleep(min(0.25, self.poll_s))
         return True
+
+    def _is_ready(self, service: LocalService) -> bool:
+        entry = self._entries.get(service.name)
+        return entry is not None and entry.service == service and entry.state == "ok"
 
     # Supervision -------------------------------------------------------------------------------
 
@@ -180,6 +203,7 @@ class ServiceSupervisor:
                     await asyncio.wait_for(process.wait(), self.poll_s)
                 except TimeoutError:
                     pass
+                await asyncio.to_thread(self._rotate, entry)
                 healthy_s = time.monotonic() - ready_at if ready_at else 0.0
                 if process.returncode is not None:
                     return f"exited with code {process.returncode}", healthy_s
@@ -205,8 +229,8 @@ class ServiceSupervisor:
     async def _spawn(self, entry: _Entry) -> asyncio.subprocess.Process:
         service = entry.service
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = self.log_dir / f"{_UNSAFE_NAME.sub('_', service.name)}.log"
-        with log_path.open("ab") as log:
+        self._rotate(entry)
+        with self._log_path(service).open("ab") as log:
             log.write(f"\n=== starting {service.command} at {time.ctime()}\n".encode())
             log.flush()
             # A new session makes the server a group leader, so stopping it reaches its children.
@@ -221,15 +245,29 @@ class ServiceSupervisor:
             )
         return entry.process
 
+    def _log_path(self, service: LocalService) -> Path:
+        return self.log_dir / f"{_UNSAFE_NAME.sub('_', service.name)}.log"
+
+    def _rotate(self, entry: _Entry) -> None:
+        rotate_log(
+            self._log_path(entry.service), max_bytes=self.log_max_bytes, backups=self.log_backups
+        )
+
     async def _terminate(self, entry: _Entry) -> None:
+        """Stop everything left in the server's process group, including when the server itself
+        already died and left workers behind."""
         process, entry.process = entry.process, None
-        if process is None or process.returncode is not None:
+        if process is None:
             return
-        _signal_group(process, signal.SIGTERM)
-        try:
-            await asyncio.wait_for(process.wait(), self.stop_grace_s)
-        except TimeoutError:
-            _signal_group(process, signal.SIGKILL)
+        group = process.pid
+        _signal_group(group, signal.SIGTERM)
+        deadline = time.monotonic() + self.stop_grace_s
+        while time.monotonic() < deadline:
+            if not await asyncio.to_thread(group_members, group):
+                break
+            await asyncio.sleep(_GROUP_POLL_S)
+        _signal_group(group, signal.SIGKILL)
+        if process.returncode is None:
             await process.wait()
 
     async def _stop(self, entry: _Entry) -> None:
@@ -256,6 +294,7 @@ class ServiceSupervisor:
         process = entry.process
         loading = entry.state == "loading" and entry.loading_since is not None
         return ServiceStatus(
+            service=entry.service,
             name=entry.service.name,
             port=entry.service.port,
             state=entry.state,
@@ -294,8 +333,29 @@ def _port_taken(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) == 0
 
 
-def _signal_group(process: asyncio.subprocess.Process, signum: signal.Signals) -> None:
-    try:
-        os.killpg(process.pid, signum)
-    except ProcessLookupError:
-        pass
+def group_members(group: int) -> set[int]:
+    """Live processes in a server's group.
+
+    Servers start as the leader of a new session, so a member's group and session both equal the
+    server's pid. Asking for both is what makes signalling a group safe once its leader is gone:
+    that number could in principle go to an unrelated process, which wouldn't lead a matching
+    session and group. A process that called setsid has left the group, and we can't claim it.
+    """
+    members = set()
+    for stat in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            text = stat.read_text()
+        except OSError:  # it exited while we looked
+            continue
+        # Field 2 is the command name, which may itself hold spaces and parentheses.
+        fields = text.rpartition(")")[2].split()
+        state, process_group, session = fields[0], int(fields[2]), int(fields[3])
+        if process_group == group and session == group and state not in _DEAD_STATES:
+            members.add(int(stat.parent.name))
+    return members
+
+
+def _signal_group(group: int, signum: signal.Signals) -> None:
+    if group_members(group):
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(group, signum)

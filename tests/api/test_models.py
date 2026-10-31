@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 import yaml
 from fakes import PROFILE_YAML, build_rig, write_profiles
@@ -15,6 +17,7 @@ from voicelab.core.models import (
 )
 from voicelab.core.profiles import LocalService
 from voicelab.services.compare import ComparedCall, compare_runs
+from voicelab.store.sqlite import Database
 
 
 def test_profiles_list(client):
@@ -266,6 +269,81 @@ def test_aws_test_answers(client):
     body = client.post("/api/aws/test").json()
     assert body["ok"] is False
     assert body["message"]
+
+
+def _untested_profile(rig):
+    return rig.services.profiles.require("live").model_copy(update={"untested": True})
+
+
+def test_run_and_calls_say_when_adapters_were_untested(client, rig, start_run, waiter):
+    rig.services.profiles.items["live"] = _untested_profile(rig)
+    run = start_run(profile="live")["run"]
+    assert run["untested"] is True
+    waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
+    body = client.get(f"/api/runs/{run['id']}").json()
+    assert body["run"]["untested"] is True
+    assert body["calls"][0]["untested"] is True
+    assert client.get(f"/api/calls/{body['calls'][0]['id']}").json()["summary"]["untested"] is True
+    assert client.get("/api/calls").json()["items"][0]["untested"] is True
+
+
+def test_tested_runs_say_so(client, start_run):
+    run = start_run()["run"]
+    assert run["untested"] is False
+    assert client.get("/api/calls").json()["items"][0]["untested"] is False
+
+
+def test_untested_survives_a_later_edit_of_the_profile(client, rig, start_run, waiter):
+    rig.services.profiles.items["live"] = _untested_profile(rig)
+    run = start_run(profile="live")["run"]
+    waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
+    rig.services.profiles.reload()  # the YAML says tested, as if someone edited it afterwards
+    assert rig.services.profiles.require("live").untested is False
+    body = client.get(f"/api/runs/{run['id']}").json()
+    assert body["run"]["untested"] is True
+    assert body["calls"][0]["untested"] is True
+
+
+def test_a_provider_used_at_run_time_marks_the_call_untested(client, rig, finished_call, waiter):
+    """The profile can be tested while one adapter the engine actually used isn't."""
+    real = rig.runner.__call__
+
+    async def with_bedrock(request, *, stack, store, emit):
+        artifact = await real(request, stack=stack, store=store, emit=emit)
+        artifact.providers["llm_support"] = "bedrock/claude"
+        return artifact
+
+    rig.services.worker.runner = lambda: with_bedrock
+    assert finished_call()["untested"] is True
+
+
+def test_older_databases_gain_the_new_columns(tmp_path):
+    path = tmp_path / "old.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE calls (id TEXT PRIMARY KEY, status TEXT, error TEXT, batch_id TEXT, "
+        "created_at TEXT, scenario_id TEXT, persona_id TEXT, verdict TEXT)"
+    )
+    connection.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, started_at TEXT)")
+    connection.execute(
+        "CREATE TABLE call_findings (call_id TEXT, finding_id TEXT, advisory INT, "
+        "human_verdict TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO calls (id, status, error) VALUES "
+        "('call_1', 'failed', 'evaluation failed: boom'), ('call_2', 'failed', 'stopped')"
+    )
+    connection.commit()
+    connection.close()
+    database = Database(path)
+    rows = {row["id"]: row for row in database.rows("SELECT * FROM calls")}
+    assert rows["call_1"]["eval_error"] == "evaluation failed: boom"
+    assert rows["call_1"]["error"] is None
+    assert rows["call_2"]["error"] == "stopped"
+    assert rows["call_2"]["untested"] == 0
+    assert database.rows("SELECT untested FROM runs") == []
+    assert database.rows("SELECT anchor_s, occurrence FROM call_findings") == []
+    database.close()
 
 
 # Compare -----------------------------------------------------------------------------------------

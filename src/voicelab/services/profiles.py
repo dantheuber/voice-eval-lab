@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import re
+import time
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,6 +109,8 @@ class ProfileManager:
         self.items: dict[str, Profile] = {}
         self.paths: dict[str, Path] = {}
         self._stacks: dict[str, ProviderStack] = {}
+        self._held: list[Profile] = []  # one entry per piece of work using a profile's servers
+        self._released = asyncio.Event()
         self.reload()
 
     def reload(self) -> None:
@@ -164,36 +169,88 @@ class ProfileManager:
 
     # Readiness -----------------------------------------------------------------------------------
 
-    def require_ready(self, profile: Profile, roles: Iterable[str]) -> ProviderStack:
+    @property
+    def in_use(self) -> bool:
+        return bool(self._held)
+
+    def _clashing(self, profile: Profile) -> Profile | None:
+        """A profile in use whose servers this one would have to replace."""
+        return next(
+            (held for held in self._held if held.id != profile.id and _share_a_slot(held, profile)),
+            None,
+        )
+
+    async def require_ready(
+        self, profile: Profile, roles: Iterable[str], *, hold: bool = False
+    ) -> ProviderStack:
         """The stack, or `model_not_ready` naming the first role still loading. Doesn't wait, and
-        asks for a lazy server to start so that a retry can succeed."""
-        statuses = self.supervisor.statuses()
-        for role in roles:
-            service = service_for(profile, role)
-            if service is None:
-                continue
-            status = statuses.get(service.name)
-            if status is None or status.state != "ok":
-                self.supervisor.add([service])
-                status = self.supervisor.statuses()[service.name]
-                raise ModelNotReady(
-                    role,
-                    _model_name(profile.roles.get(role, {})),
-                    elapsed_s=status.elapsed_s,
-                    usual_s=status.usual_s,
-                    reason=f"{ROLE_LABELS.get(role, role)} is {status.state}: {status.detail}",
-                )
-        return self.stack(profile)
+        asks for a lazy server to start so that a retry can succeed. With `hold`, the caller keeps
+        these servers until it calls `release`."""
+        roles = list(roles)
+        other = self._clashing(profile)
+        if other is not None:
+            role = roles[0]
+            reason = f"model servers are in use by profile {other.id}"
+            raise ModelNotReady(role, _model_name(profile.roles.get(role, {})), reason=reason)
+        if hold:
+            self._held.append(profile)
+        try:
+            services = [service_for(profile, role) for role in roles]
+            await self.supervisor.reconcile(service for service in services if service)
+            statuses = self.supervisor.statuses()
+            for role, service in zip(roles, services, strict=True):
+                status = statuses[service.name] if service else None
+                if status is not None and status.state != "ok":
+                    raise ModelNotReady(
+                        role,
+                        _model_name(profile.roles.get(role, {})),
+                        elapsed_s=status.elapsed_s,
+                        usual_s=status.usual_s,
+                        reason=f"{ROLE_LABELS.get(role, role)} is {status.state}: {status.detail}",
+                    )
+            return self.stack(profile)
+        except BaseException:
+            if hold:
+                self.release(profile)
+            raise
 
     async def ready(self, profile: Profile, timeout_s: float) -> ProviderStack:
-        """Start the profile's servers if needed and wait for them, for queued work."""
-        await self.wait_for_servers(profile, timeout_s)
-        return self.stack(profile)
+        """Hold the profile's servers for one piece of queued work and wait for them. The caller
+        must call `release`."""
+        await self.hold(profile, timeout_s)
+        try:
+            return self.stack(profile)
+        except BaseException:
+            self.release(profile)
+            raise
+
+    async def hold(self, profile: Profile, timeout_s: float) -> None:
+        """Wait for any profile sharing a server slot to finish, then claim the slots. Replacing a
+        server under a running call would break it, so the swap waits for its turn."""
+        deadline = time.monotonic() + timeout_s
+        while (other := self._clashing(profile)) is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                reason = f"model servers are in use by profile {other.id}"
+                raise ModelNotReady("profile", profile.id, reason=reason)
+            self._released.clear()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._released.wait(), left)
+        self._held.append(profile)
+        try:
+            await self.wait_for_servers(profile, max(deadline - time.monotonic(), 0.0))
+        except BaseException:
+            self.release(profile)
+            raise
+
+    def release(self, profile: Profile) -> None:
+        position = next(i for i, held in enumerate(self._held) if held.id == profile.id)
+        del self._held[position]
+        self._released.set()
 
     async def wait_for_servers(self, profile: Profile, timeout_s: float) -> None:
-        names = [service.name for service in profile.services]
-        self.supervisor.add(profile.services)
-        if not await self.supervisor.wait_ready(names, timeout_s):
+        await self.supervisor.reconcile(profile.services)
+        if not await self.supervisor.wait_ready(profile.services, timeout_s):
             raise ModelNotReady(
                 "profile", profile.id, reason=f"model servers not ready after {timeout_s:.0f} s"
             )
@@ -222,6 +279,8 @@ class ProfileManager:
         status = statuses.get(service.name)
         if status is None:
             return Health(role, name, model, "off", "not started")
+        if status.service != service:
+            return Health(role, name, model, "off", "another profile's server is on this slot")
         return Health(
             role, name, model, status.state, status.detail, status.elapsed_s, status.usual_s
         )
@@ -314,6 +373,15 @@ def _leading_comments(text: str) -> str:
             break
         lines.append(line)
     return "".join(lines)
+
+
+def _share_a_slot(first: Profile, second: Profile) -> bool:
+    """Whether two profiles want different servers on one name or port."""
+    return any(
+        (a.name == b.name or a.port == b.port) and a != b
+        for a in first.services
+        for b in second.services
+    )
 
 
 def _model_name(config: dict[str, Any]) -> str:

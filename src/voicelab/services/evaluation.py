@@ -14,6 +14,7 @@ import logging
 import sys
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -33,8 +34,9 @@ from voicelab.eval.config import EvalConfig
 from voicelab.eval.context import EvalContext, EvalDeps, Evaluator, EvaluatorOutput
 from voicelab.eval.pipeline import EvalProgress, default_evaluators, run_evaluation
 from voicelab.eval.verdict import decide_verdict, write_summary
-from voicelab.services.errors import Invalid
+from voicelab.services.errors import Conflict, Invalid
 from voicelab.services.events import EventHub, LiveGate
+from voicelab.services.logs import rotate_log
 from voicelab.services.settings import Settings
 from voicelab.store.artifacts import ArtifactStore
 from voicelab.store.calls import CallIndex
@@ -109,7 +111,9 @@ def merge_partial(
 ) -> EvalResult:
     """Replace what the re-run evaluators produced, keep the rest, and decide again."""
     rerun = {run.name for run in partial.evaluators}
-    runs = [r for r in previous.evaluators if r.name not in rerun] + partial.evaluators
+    fresh = {run.name: run for run in partial.evaluators}
+    # In place: the dashboard lists evaluators in the order this array has them.
+    runs = [fresh.pop(run.name, run) for run in previous.evaluators] + list(fresh.values())
     findings: list[Finding] = [
         f for f in previous.findings if f.evaluator not in rerun
     ] + partial.findings
@@ -237,6 +241,8 @@ class SubprocessEvalRunner:
 
     async def __call__(self, job: EvalJob, sink: Sink) -> EvalResult:
         self.settings.log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = self.settings.log_dir / "eval.log"
+        rotate_log(log_path)
         command = [
             sys.executable,
             "-m",
@@ -246,7 +252,7 @@ class SubprocessEvalRunner:
             "--profiles-dir",
             str(self.settings.profiles_dir),
         ]
-        with (self.settings.log_dir / "eval.log").open("ab") as log:
+        with log_path.open("ab") as log:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdin=asyncio.subprocess.PIPE,
@@ -332,7 +338,7 @@ class EvalService:
         runner: EvalRunner,
         config: Callable[[], EvalConfig],
         default_profile: Callable[[], str | None],
-        prepare: Callable[[str | None], Awaitable[None]],
+        models: Callable[[str | None], AbstractAsyncContextManager[None]],
     ) -> None:
         self.store = store
         self.calls = calls
@@ -341,7 +347,7 @@ class EvalService:
         self.runner = runner
         self.config = config
         self.default_profile = default_profile
-        self.prepare = prepare  # brings up the models a job needs: uploads may be first to ask
+        self.models = models  # holds the models a job needs: an upload may be first to ask
         self.on_settled: Callable[[str], None] | None = None  # the run queue listens here
         self._queue: asyncio.Queue[_Queued] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
@@ -365,7 +371,14 @@ class EvalService:
         self, call_id: str, evaluators: list[str] | None = None
     ) -> asyncio.Future[EvalResult | None]:
         """Queue a call. Its status turns `evaluating` now, so a client that follows the accepted
-        response with a WebSocket can't see the old status."""
+        response with a WebSocket can't see the old status.
+
+        A call that didn't finish can't be evaluated: a verdict on a stopped call would count as a
+        result. A call whose evaluation failed has its `eval_error` instead, and can be retried.
+        """
+        row = self.calls.get(call_id)
+        if row is not None and row["error"]:
+            raise Conflict(f"this call didn't finish ({row['error']}), so it can't be evaluated")
         self._set_status(call_id, CallStatus.EVALUATING)
         self.hub.publish(f"call:{call_id}", {"type": "status", "status": "evaluating"})
         profile = self._profile_for(call_id)
@@ -399,8 +412,10 @@ class EvalService:
 
         result: EvalResult | None = None
         try:
-            await self.prepare(item.job.profile)
-            result = await self.runner(item.job, forward)
+            async with self.models(item.job.profile):
+                # A mic call may have started while the models loaded, and it goes first.
+                await self.gate.wait_clear()
+                result = await self.runner(item.job, forward)
             self._finish(result)
         except asyncio.CancelledError:
             item.done.cancel()
@@ -421,7 +436,7 @@ class EvalService:
     def _finish(self, result: EvalResult) -> None:
         artifact = self._write_status(result.call_id, CallStatus.DONE, error=None)
         self.calls.record_eval(artifact, result)
-        self.calls.update(result.call_id, status="done", error=None, finished_at=timestamp())
+        self.calls.update(result.call_id, status="done", eval_error=None, finished_at=timestamp())
         topic = f"call:{result.call_id}"
         self.hub.publish(topic, {"type": "status", "status": "done"})
         self.hub.publish(topic, {"type": "eval", "eval": to_api(self._decided(result))})
@@ -431,14 +446,14 @@ class EvalService:
 
     def _fail(self, call_id: str, message: str) -> None:
         self._write_status(call_id, CallStatus.FAILED, error=message)
-        self.calls.update(call_id, status="failed", error=message, finished_at=timestamp())
+        self.calls.update(call_id, status="failed", eval_error=message, finished_at=timestamp())
         topic = f"call:{call_id}"
         self.hub.publish(topic, {"type": "status", "status": "failed"})
         self.hub.publish(topic, {"type": "error", "message": message})
 
     def _set_status(self, call_id: str, status: CallStatus) -> None:
         self._write_status(call_id, status, error=None)
-        self.calls.update(call_id, status=status.value, error=None)
+        self.calls.update(call_id, status=status.value, eval_error=None)
 
     def _write_status(self, call_id: str, status: CallStatus, *, error: str | None) -> CallArtifact:
         artifact = self.store.read_artifact(call_id)

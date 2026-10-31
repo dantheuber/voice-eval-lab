@@ -121,6 +121,7 @@ class FakeEvalRunner:
         self.started = asyncio.Event()
         self.fail_with: Exception | None = None
         self.findings: list[Finding] = []
+        self.more_evaluators: list[EvaluatorRun] = []
         self.reply_p50_s: float | None = 1.4
         self.overlap_count: int = 1
 
@@ -150,8 +151,10 @@ class FakeEvalRunner:
             verdict=verdict,
             summary=f"Verdict: {verdict.value}.",
             findings=findings,
-            evaluators=[timing, validity],
+            evaluators=[timing, validity, *self.more_evaluators],
         )
+        for run in self.more_evaluators:
+            sink({"evaluator": run.model_dump(mode="json")})
         sink({"evaluator": timing.model_dump(mode="json")})
         for finding in findings:
             sink({"finding": finding.model_dump(mode="json")})
@@ -312,6 +315,7 @@ def build_rig(
         certs_dir=tmp_path / "certs",
         service_start="lazy",
         reviewer="tester",
+        extra_hosts=("testserver", "voicelab.lan", "voicebox", "192.0.2.7"),
     )
     runner = FakeRunner()
     talk = FakeTalkFactory()

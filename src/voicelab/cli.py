@@ -121,7 +121,7 @@ async def _evaluate(call_id: str, settings: Settings) -> int:
         result = await services.evals.submit(call_id)
         if result is None:
             row = services.calls.get(call_id)
-            print(f"evaluation failed: {row['error']}", file=sys.stderr)
+            print(row["eval_error"], file=sys.stderr)
             return 1
         print(result.summary)
         return 0

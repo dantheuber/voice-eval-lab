@@ -148,7 +148,9 @@ def test_recording_over_the_length_cap_fails(client, rig):
 
 def test_file_over_the_size_limit_fails(client, rig):
     rig.settings.max_upload_bytes = 16
-    assert upload(client).status_code == 400
+    response = upload(client)
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "invalid"
 
 
 def _left_and_right(rig, call_id):
@@ -238,7 +240,7 @@ def test_evaluation_starts_the_models_it_needs_or_says_why_not(client, rig, wait
     call_id = upload(client).json()["callId"]
     client.post(f"/api/uploads/{call_id}/evaluate")
     waiter(lambda: client.get(f"/api/calls/{call_id}").json()["summary"]["status"] == "failed")
-    assert "not ready" in rig.services.calls.get(call_id)["error"]
+    assert "not ready" in rig.services.calls.get(call_id)["eval_error"]
     assert "never" in rig.services.supervisor.statuses()
     assert rig.evals.jobs == []
 

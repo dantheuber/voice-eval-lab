@@ -139,6 +139,7 @@ def call_summary(row: dict[str, Any]) -> dict[str, Any]:
         "overlaps": row["overlaps"] if real else None,
         "startedAt": iso(row["started_at"]),
         "timingIsReal": real,
+        "untested": bool(row["untested"]),
     }
 
 
@@ -173,6 +174,7 @@ def run_summary(
         "scenarioIds": list(dict.fromkeys(p["scenario_id"] for p in pairs)),
         "personaIds": list(dict.fromkeys(p["persona_id"] for p in pairs)),
         "reps": run["reps"],
+        "untested": bool(run["untested"]),
     }
 
 

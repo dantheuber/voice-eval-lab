@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -23,13 +24,13 @@ from voicelab.core.models import (
     new_id,
     utcnow,
 )
-from voicelab.engine.contract import BotCallRequest, BotCallRunner
+from voicelab.engine.contract import BotCallRequest, BotCallRunner, Emit
 from voicelab.services.errors import Conflict, Invalid, NotFound
 from voicelab.services.evaluation import EvalService
 from voicelab.services.events import EventHub, LiveGate
 from voicelab.services.profiles import ProfileManager
 from voicelab.store.artifacts import ArtifactStore
-from voicelab.store.calls import CallIndex
+from voicelab.store.calls import CallIndex, used_untested_provider
 from voicelab.store.catalog import Catalog
 from voicelab.store.runs import RunStore
 from voicelab.store.sqlite import timestamp
@@ -141,45 +142,60 @@ class RunWorker:
         scenarios = {s: self._scenario(s) for s, _ in plan.pairs}
         personas = {p: self._persona(p) for _, p in plan.pairs}
         run_id = new_id("batch")
-        self.runs.add(
-            id=run_id,
-            label=plan.label or _default_label(plan),
-            profile=profile.id,
-            mode=mode.value,
-            status="queued",
-            started_at=timestamp(),
-            reps=plan.reps,
-            concurrency=plan.concurrency,
-            pairs=[{"scenario_id": s, "persona_id": p} for s, p in plan.pairs],
-            line=plan.line.model_dump() if plan.line else None,
-        )
-        for rep in range(1, plan.reps + 1):
-            for scenario_id, persona_id in plan.pairs:
-                artifact = CallArtifact(
-                    mode=mode,
-                    timing_is_real=mode == CallMode.LIVE_BOTS,
-                    batch_id=run_id,
-                    persona_id=persona_id,
-                    scenario_id=scenario_id,
-                    persona_snapshot=personas[persona_id],
-                    scenario_snapshot=scenarios[scenario_id],
+        calls: list[dict[str, Any]] = []
+        try:
+            for rep in range(1, plan.reps + 1):
+                for scenario_id, persona_id in plan.pairs:
+                    artifact = CallArtifact(
+                        mode=mode,
+                        timing_is_real=mode == CallMode.LIVE_BOTS,
+                        batch_id=run_id,
+                        persona_id=persona_id,
+                        scenario_id=scenario_id,
+                        persona_snapshot=personas[persona_id],
+                        scenario_snapshot=scenarios[scenario_id],
+                        profile=profile.id,
+                    )
+                    calls.append(
+                        {
+                            "id": artifact.id,
+                            "batch_id": run_id,
+                            "rep": rep,
+                            "seed": rep,
+                            "scenario_id": scenario_id,
+                            "scenario_title": scenarios[scenario_id].title,
+                            "persona_id": persona_id,
+                            "persona_name": personas[persona_id].name,
+                            "mode": mode.value,
+                            "status": "queued",
+                            "profile": profile.id,
+                            "timing_is_real": int(artifact.timing_is_real),
+                            "untested": int(profile.untested),
+                        }
+                    )
+                    self.store.write_artifact(artifact)
+            # All in one transaction, after the files exist. The scheduler sees the whole run or
+            # none of it, so a wake-up can't start a run that still looks short and close it.
+            with self.calls.db.transaction():
+                self.runs.add(
+                    id=run_id,
+                    label=plan.label or _default_label(plan),
                     profile=profile.id,
-                )
-                self.store.write_artifact(artifact)
-                self.calls.add(
-                    id=artifact.id,
-                    batch_id=run_id,
-                    rep=rep,
-                    seed=rep,
-                    scenario_id=scenario_id,
-                    scenario_title=scenarios[scenario_id].title,
-                    persona_id=persona_id,
-                    persona_name=personas[persona_id].name,
                     mode=mode.value,
                     status="queued",
-                    profile=profile.id,
-                    timing_is_real=int(artifact.timing_is_real),
+                    started_at=timestamp(),
+                    reps=plan.reps,
+                    concurrency=plan.concurrency,
+                    pairs=[{"scenario_id": s, "persona_id": p} for s, p in plan.pairs],
+                    line=plan.line.model_dump() if plan.line else None,
+                    untested=int(profile.untested),
                 )
+                for columns in calls:
+                    self.calls.add(**columns)
+        except BaseException:
+            for columns in calls:
+                shutil.rmtree(self.store.paths(columns["id"]).dir, ignore_errors=True)
+            raise
         return run_id, mode
 
     async def submit(self, plan: RunPlan) -> tuple[str, CallMode]:
@@ -294,19 +310,7 @@ class RunWorker:
                 self.hub.publish(topic, stream_message(message, call_id))
 
         try:
-            runner = self.runner()
-            profile = self.profiles.require(run["profile"])
-            stack = await self.profiles.ready(profile, self.model_wait_s)
-            request = BotCallRequest(
-                call_id=call_id,
-                mode=stub.mode,
-                persona=stub.persona_snapshot,
-                scenario=stub.scenario_snapshot,
-                batch_id=run["id"],
-                seed=row["seed"],
-                line=LineConditions.model_validate(run["line"]) if run["line"] else None,
-            )
-            artifact = await runner(request, stack=stack, store=self.store, emit=emit)
+            artifact = await self._run_on_models(run, row, stub, emit)
         except asyncio.CancelledError:
             if call_id not in self._stopping:
                 raise  # shutting down: recovery marks it after the restart
@@ -322,6 +326,8 @@ class RunWorker:
         finally:
             self._on_the_line.discard(call_id)
         artifact = fill_from_stub(artifact, stub)
+        untested = bool(row["untested"]) or used_untested_provider(artifact)
+        self.calls.update(call_id, untested=int(untested))
         if artifact.status == CallStatus.FAILED or artifact.error:
             self.store.write_artifact(artifact)
             self._fail(call_id, artifact.error or "call failed")
@@ -338,6 +344,29 @@ class RunWorker:
         self._publish_call("callDone", call_id)
         self._publish_run(run["id"])
         return True
+
+    async def _run_on_models(
+        self, run: dict[str, Any], row: dict[str, Any], stub: CallArtifact, emit: Emit
+    ) -> CallArtifact:
+        runner = self.runner()
+        profile = self.profiles.require(run["profile"])
+        stack = await self.profiles.ready(profile, self.model_wait_s)
+        try:
+            # A mic call may have started while the models loaded, and it goes first. Nothing
+            # awaits between this and the runner, so one can't slip in again.
+            await self.gate.wait_clear()
+            request = BotCallRequest(
+                call_id=row["id"],
+                mode=stub.mode,
+                persona=stub.persona_snapshot,
+                scenario=stub.scenario_snapshot,
+                batch_id=run["id"],
+                seed=row["seed"],
+                line=LineConditions.model_validate(run["line"]) if run["line"] else None,
+            )
+            return await runner(request, stack=stack, store=self.store, emit=emit)
+        finally:
+            self.profiles.release(profile)
 
     def _begin(self, run: dict[str, Any], row: dict[str, Any]) -> None:
         call_id = row["id"]

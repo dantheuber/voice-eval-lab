@@ -34,7 +34,8 @@ class Settings:
     model_wait_s: float = 900.0  # how long a queued call waits for its model servers
     talk_connect_timeout_s: float = 120.0  # a session the browser never connected
     talk_max_s: float = 7200.0  # a tab that vanished must not hold back the run queue forever
-    max_upload_bytes: int = 1024 * 1024 * 1024
+    max_upload_bytes: int = 2 * 1024 * 1024 * 1024  # 2 hours of 48 kHz stereo WAV is 1.3 GiB
+    extra_hosts: tuple[str, ...] = ()  # names this server is also reached by, such as a proxy's
 
     @property
     def db_path(self) -> Path:
@@ -51,6 +52,10 @@ class Settings:
         settings.profiles_dir = _path("VOICELAB_PROFILES_DIR", settings.profiles_dir)
         settings.web_dist = _path("VOICELAB_WEB_DIST", settings.web_dist)
         settings.certs_dir = _path("VOICELAB_CERTS_DIR", settings.certs_dir)
+        extra_hosts = os.environ.get("VOICELAB_EXTRA_HOSTS", "")
+        settings.extra_hosts = tuple(
+            name.strip() for name in extra_hosts.split(",") if name.strip()
+        )
         start = os.environ.get("VOICELAB_SERVICE_START")
         if start in ("startup", "lazy"):
             settings.service_start = start

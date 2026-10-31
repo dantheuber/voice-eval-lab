@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
+import time
 
 import pytest
 from conftest import PAIR
-from fakes import build_rig
+from fakes import build_rig, write_recording
 from starlette.websockets import WebSocketDisconnect
 
 from voicelab.api.routes import live
 from voicelab.core.models import CallStatus, LineConditions, Verdict
+from voicelab.services.errors import Conflict
 
 
 def released(rig):
@@ -240,7 +243,7 @@ def test_eval_failure_marks_the_call_and_the_run_moves_on(client, start_run, rig
     waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
     assert statuses(client, run["id"]) == ["failed", "failed"]
     call = run_of(client, run["id"])["calls"][0]
-    assert "worker died" in rig.services.calls.get(call["id"])["error"]
+    assert "worker died" in rig.services.calls.get(call["id"])["eval_error"]
 
 
 def test_runs_list_pages(client, start_run, waiter):
@@ -487,6 +490,173 @@ def test_a_bad_listener_does_not_end_the_eval_queue(client, rig, finished_call, 
 def test_call_stream_of_a_missing_call(client):
     with client.websocket_connect("/ws/calls/call_missing") as socket:
         assert socket.receive_json()["type"] == "error"
+
+
+# Execution outcome and evaluation ----------------------------------------------------------------
+
+
+def _stopped_with_a_recording(client, rig, start_run, waiter):
+    """A stopped call whose engine still wrote what it had recorded."""
+    rig.runner.hold = True
+    run = start_run()["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    call_id = run_of(client, run["id"])["calls"][0]["id"]
+    write_recording(rig.services.store, rig.services.store.read_artifact(call_id))
+    client.post(f"/api/runs/{run['id']}/stop")
+    waiter(lambda: statuses(client, run["id"]) == ["failed"])
+    return run["id"], call_id
+
+
+def test_a_stopped_call_cannot_be_evaluated_into_a_pass(client, rig, start_run, waiter):
+    run_id, call_id = _stopped_with_a_recording(client, rig, start_run, waiter)
+    response = client.post(f"/api/calls/{call_id}/reevaluate", json={})
+    assert response.status_code == 409
+    assert "stopped" in response.json()["error"]["message"]
+    row = rig.services.calls.get(call_id)
+    assert (row["status"], row["error"], row["verdict"]) == ("failed", "stopped", None)
+    assert run_of(client, run_id)["run"]["counts"]["pass"] == 0
+
+
+def test_the_service_itself_refuses_to_evaluate_an_aborted_call(client, rig, start_run, waiter):
+    """`voicelab eval` reaches the service without going through the route."""
+    _, call_id = _stopped_with_a_recording(client, rig, start_run, waiter)
+
+    async def submit():
+        rig.services.evals.submit(call_id)
+
+    with pytest.raises(Conflict):
+        rig.run_on_loop(submit)
+    assert rig.services.calls.get(call_id)["error"] == "stopped"
+    assert rig.services.store.read_artifact(call_id).error == "stopped"
+
+
+def test_aborted_calls_stay_out_of_every_aggregate(client, rig, finished_call, waiter):
+    """Even a verdict left on an aborted row by the old behavior must not count."""
+    call = finished_call()
+    rig.services.calls.update(call["id"], status="failed", error="stopped")
+    assert client.get("/api/overview").json()["counts"]["pass"] == 0
+    assert client.get("/api/calls").json()["facets"]["verdict"] == {}
+    assert client.get("/api/matrix").json()["cells"] == []
+    usage = client.get("/api/personas/per_sysadmin").json()["usage"]
+    assert usage["counts"]["pass"] == 0
+
+
+def test_an_evaluation_failure_can_be_retried(client, rig, finished_call, waiter):
+    rig.evals.fail_with = RuntimeError("worker died")
+    call = finished_call()
+    row = rig.services.calls.get(call["id"])
+    assert row["status"] == "failed"
+    assert row["error"] is None  # the call itself went fine
+    assert "worker died" in row["eval_error"]
+
+    rig.evals.fail_with = None
+    assert client.post(f"/api/calls/{call['id']}/reevaluate", json={}).status_code == 200
+    waiter(lambda: rig.services.calls.get(call["id"])["status"] == "done")
+    row = rig.services.calls.get(call["id"])
+    assert row["eval_error"] is None
+    assert row["verdict"] == "pass"
+    assert rig.services.store.read_artifact(call["id"]).error is None
+
+
+def test_a_failed_evaluation_keeps_its_reason_visible(client, rig, finished_call):
+    rig.evals.fail_with = RuntimeError("worker died")
+    call = finished_call()
+    body = client.get(f"/api/calls/{call['id']}").json()
+    assert "worker died" in body["call"]["error"]
+
+
+# Run creation ------------------------------------------------------------------------------------
+
+
+def test_a_run_is_not_schedulable_until_all_its_calls_exist(client, rig, waiter):
+    """Waking the scheduler halfway through expansion used to finish the run with a third of its
+    calls, and strand the rest."""
+    store = rig.services.store
+    real_write = store.write_artifact
+    loop = rig.client.portal.call(asyncio.get_running_loop)
+    writes = []
+
+    def slow_write(artifact):
+        real_write(artifact)
+        writes.append(artifact.id)
+        if len(writes) == 2:
+            loop.call_soon_threadsafe(rig.services.worker.wake)
+            time.sleep(0.2)
+
+    store.write_artifact = slow_write
+    body = {"pairs": [PAIR], "reps": 3, "profile": "local-default"}
+    run = client.post("/api/runs", json=body).json()["run"]
+    assert run["calls"] == 3
+    store.write_artifact = real_write
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert len(rig.runner.requests) == 3
+    assert statuses(client, run["id"]) == ["done", "done", "done"]
+
+
+def test_a_failed_expansion_leaves_nothing_behind(client, rig):
+    store = rig.services.store
+    real_write = store.write_artifact
+    calls_dir = rig.settings.data_dir / "calls"
+    writes = []
+
+    def failing_write(artifact):
+        writes.append(artifact.id)
+        if len(writes) == 2:
+            raise OSError("disk full")
+        real_write(artifact)
+
+    store.write_artifact = failing_write
+    with pytest.raises(OSError, match="disk full"):
+        client.post("/api/runs", json={"pairs": [PAIR], "reps": 3, "profile": "local-default"})
+    store.write_artifact = real_write
+    assert client.get("/api/runs").json()["items"] == []
+    assert client.get("/api/calls").json()["total"] == 0
+    assert not list(calls_dir.glob("*")) if calls_dir.exists() else True
+
+
+# The live gate during model preparation -----------------------------------------------------
+
+
+def _hold_the_gate_during_preparation(rig):
+    """A mic call that starts while models load, which is the gap the first gate check can't see."""
+    profiles = rig.services.profiles
+    real = profiles.wait_for_servers
+
+    async def preparing(profile, timeout_s):
+        profiles.wait_for_servers = real  # one mic call, not one per preparation
+        rig.services.gate.hold("mic")
+        await real(profile, timeout_s)
+
+    profiles.wait_for_servers = preparing
+
+
+def _let_go(rig):
+    async def release():
+        rig.services.gate.release("mic")
+
+    return release
+
+
+def test_a_bot_call_waits_if_a_mic_call_began_during_preparation(client, rig, start_run, waiter):
+    _hold_the_gate_during_preparation(rig)
+    run = start_run()["run"]
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    time.sleep(0.1)
+    assert rig.runner.requests == []
+    rig.run_on_loop(_let_go(rig))
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert len(rig.runner.requests) == 1
+
+
+def test_an_eval_waits_if_a_mic_call_began_during_preparation(client, rig, finished_call, waiter):
+    call = finished_call()
+    jobs = len(rig.evals.jobs)
+    _hold_the_gate_during_preparation(rig)
+    client.post(f"/api/calls/{call['id']}/reevaluate", json={})
+    time.sleep(0.1)
+    assert len(rig.evals.jobs) == jobs
+    rig.run_on_loop(_let_go(rig))
+    waiter(lambda: len(rig.evals.jobs) == jobs + 1)
 
 
 # Restart -----------------------------------------------------------------------------------------

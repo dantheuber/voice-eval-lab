@@ -49,6 +49,7 @@ def _row(**overrides):
         "overlaps": 2,
         "started_at": "2026-10-30T09:17:08.000000+00:00",
         "timing_is_real": 1,
+        "untested": 0,
     }
     return {**row, **overrides}
 

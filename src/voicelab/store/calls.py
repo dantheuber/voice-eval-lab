@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from statistics import median
@@ -25,7 +27,11 @@ _FILTER_COLUMNS = {
 _NEEDS_REVIEW = (
     "status = 'done' AND human_verdict IS NULL AND (open_findings > 0 OR verdict = 'needs_review')"
 )
+# An aborted call says nothing about the bot, whatever verdict its row may hold.
+_COUNTABLE = "verdict IS NOT NULL AND error IS NULL"
 _WHY_TITLES = 2
+_SAME_MOMENT_S = 1.0  # VAD edges move this little between runs on the same audio
+_UNTESTED_PROVIDER = re.compile(r"^bedrock", re.IGNORECASE)
 _PACE_DECISIONS = 50
 
 
@@ -92,6 +98,11 @@ def why_flagged(result: EvalResult) -> str:
     return ", ".join(open_titles[:_WHY_TITLES]) or result.summary
 
 
+def used_untested_provider(artifact: CallArtifact) -> bool:
+    """Bedrock adapters are the ones that have never met the live service."""
+    return any(_UNTESTED_PROVIDER.match(provider) for provider in artifact.providers.values())
+
+
 def is_open(finding: Finding) -> bool:
     return not finding.advisory and finding.human_verdict is None
 
@@ -110,6 +121,66 @@ def eval_columns(artifact: CallArtifact, result: EvalResult) -> dict[str, Any]:
 
 def _fingerprint(evaluator: str, category: str, criterion: str | None, title: str) -> tuple:
     return evaluator, category, criterion, title
+
+
+def _finding_key(finding: Finding) -> tuple:
+    return _fingerprint(finding.evaluator, finding.category, finding.criterion_id, finding.title)
+
+
+def _row_key(row: dict[str, Any]) -> tuple:
+    return _fingerprint(row["evaluator"], row["category"], row["criterion_id"], row["title"])
+
+
+def finding_anchor(finding: Finding) -> float | None:
+    """Where a finding sits in the call. Evidence comes first, because clip bounds are padded."""
+    starts = [e.start_s for e in finding.evidence if e.start_s is not None]
+    return min(starts) if starts else finding.clip_start_s
+
+
+def occurrences(findings: list[Finding]) -> dict[str, int]:
+    """Each untimed finding's place among those saying the same thing."""
+    seen: Counter[tuple] = Counter()
+    places = {}
+    for finding in findings:
+        if finding_anchor(finding) is None:
+            key = _finding_key(finding)
+            places[finding.id] = seen[key]
+            seen[key] += 1
+    return places
+
+
+def carry_decisions(
+    decided: list[dict[str, Any]], findings: list[Finding]
+) -> dict[str, dict[str, Any]]:
+    """Match old decisions to new findings one to one, keyed by the new finding's id.
+
+    Identical titles are common, such as two "3.0 s of dead air". Timed findings match on the
+    closest position within `_SAME_MOMENT_S`, nearest pairs first so one decision can't take
+    another's finding. Untimed ones match by their place in order. A decision with no match stays
+    in the history and carries nowhere: guessing would decide a finding nobody looked at.
+    """
+    places = occurrences(findings)
+    pairs = []
+    for row in decided:
+        for finding in findings:
+            if _row_key(row) != _finding_key(finding):
+                continue
+            anchor = finding_anchor(finding)
+            if row["anchor_s"] is None or anchor is None:
+                if row["anchor_s"] is None and anchor is None:
+                    if places[finding.id] == row["occurrence"]:
+                        pairs.append((0.0, row["finding_id"], finding.id, row))
+                continue
+            distance = abs(row["anchor_s"] - anchor)
+            if distance <= _SAME_MOMENT_S:
+                pairs.append((distance, row["finding_id"], finding.id, row))
+    carried: dict[str, dict[str, Any]] = {}
+    used: set[str] = set()
+    for _, old_id, new_id, row in sorted(pairs, key=lambda pair: pair[:3]):
+        if old_id not in used and new_id not in carried:
+            used.add(old_id)
+            carried[new_id] = row
+    return carried
 
 
 def _encode_cursor(row: dict[str, Any]) -> str:
@@ -184,7 +255,7 @@ class CallIndex:
             row["verdict"]: row["n"]
             for row in self.db.rows(
                 f"SELECT verdict, count(*) AS n FROM calls WHERE {facet_where} "
-                "AND verdict IS NOT NULL GROUP BY verdict",
+                f"AND {_COUNTABLE} GROUP BY verdict",
                 facet_params,
             )
         }
@@ -211,7 +282,7 @@ class CallIndex:
         where, params = _where(filters or CallFilters())
         rows = self.db.rows(
             f"SELECT verdict, count(*) AS n FROM calls WHERE {where} "
-            "AND verdict IS NOT NULL GROUP BY verdict",
+            f"AND {_COUNTABLE} GROUP BY verdict",
             params,
         )
         return {row["verdict"]: row["n"] for row in rows}
@@ -222,7 +293,7 @@ class CallIndex:
         names = ", ".join(columns)
         rows = self.db.rows(
             f"SELECT {names}, verdict, count(*) AS n FROM calls WHERE {where} "
-            f"AND verdict IS NOT NULL GROUP BY {names}, verdict",
+            f"AND {_COUNTABLE} GROUP BY {names}, verdict",
             params,
         )
         grouped: dict[tuple, dict[str, Any]] = {}
@@ -312,27 +383,24 @@ class CallIndex:
     def record_eval(self, artifact: CallArtifact, result: EvalResult) -> None:
         """Index a finished evaluation.
 
-        Re-evaluating gives every finding a new id. A decision moves to the new finding that says
-        the same thing, so a re-run doesn't throw away the reviewer's work.
+        Re-evaluating gives every finding a new id, so `carry_decisions` moves each decision to
+        the new finding for the same moment, and a re-run keeps the reviewer's work.
         """
         with self.db.transaction():
-            kept = {
-                _fingerprint(r["evaluator"], r["category"], r["criterion_id"], r["title"]): r
-                for r in self.db.rows(
-                    "SELECT * FROM call_findings WHERE call_id = ? AND human_verdict IS NOT NULL",
-                    (artifact.id,),
-                )
-            }
+            decided = self.db.rows(
+                "SELECT * FROM call_findings WHERE call_id = ? AND human_verdict IS NOT NULL",
+                (artifact.id,),
+            )
+            carried = carry_decisions(decided, result.findings)
+            places = occurrences(result.findings)
             self.db.run("DELETE FROM call_findings WHERE call_id = ?", (artifact.id,))
             for finding in result.findings:
-                key = _fingerprint(
-                    finding.evaluator, finding.category, finding.criterion_id, finding.title
-                )
-                decision = kept.get(key)
+                decision = carried.get(finding.id)
                 self.db.run(
                     "INSERT INTO call_findings (call_id, finding_id, evaluator, category, "
                     "severity, advisory, title, criterion_id, human_verdict, human_note, "
-                    "human_by, human_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "human_by, human_at, anchor_s, occurrence) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         artifact.id,
                         finding.id,
@@ -346,6 +414,8 @@ class CallIndex:
                         decision["human_note"] if decision else "",
                         decision["human_by"] if decision else None,
                         decision["human_at"] if decision else None,
+                        finding_anchor(finding),
+                        places.get(finding.id, 0),
                     ),
                 )
             self.update(artifact.id, **eval_columns(artifact, result))

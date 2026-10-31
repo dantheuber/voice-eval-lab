@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Any
 
 from voicelab.core.models import CallArtifact, CallMode, CallStatus, LineConditions, new_id, utcnow
+from voicelab.core.profiles import Profile
 from voicelab.engine.contract import TalkFactory, TalkRequest, TalkSession
 from voicelab.services.errors import Conflict, Invalid, NotFound
 from voicelab.services.evaluation import EvalService
@@ -25,7 +26,7 @@ from voicelab.services.profiles import ProfileManager
 from voicelab.services.runs import fill_from_stub
 from voicelab.services.settings import Settings
 from voicelab.store.artifacts import ArtifactStore
-from voicelab.store.calls import CallIndex
+from voicelab.store.calls import CallIndex, used_untested_provider
 from voicelab.store.catalog import Catalog
 from voicelab.store.sqlite import timestamp
 
@@ -44,6 +45,7 @@ class ActiveTalk:
     record: bool
     started_at: datetime
     opened: float
+    profile: Profile
     state: str = "connecting"  # connecting, live, ended
     duration_s: float | None = None
 
@@ -101,10 +103,11 @@ class TalkManager:
         if self.live or self.gate.active:
             raise Conflict("a mic call is already live")
         profile = self.profiles.resolve(profile_id)
-        stack = self.profiles.require_ready(profile, TALK_ROLES)
         factory = self.factory()
         scenario = self._scenario(scenario_id)
         persona = self._persona(persona_id)
+        # Held for the whole call: nothing may swap a server out from under a person talking.
+        stack = await self.profiles.require_ready(profile, TALK_ROLES, hold=True)
         artifact = CallArtifact(
             mode=CallMode.HUMAN,
             status=CallStatus.RUNNING,
@@ -127,6 +130,7 @@ class TalkManager:
             status="running",
             profile=profile.id,
             timing_is_real=1,
+            untested=int(profile.untested),
             started_at=timestamp(artifact.started_at),
         )
         self.gate.hold(session_id)
@@ -139,10 +143,11 @@ class TalkManager:
             session = await factory(request, stack=stack, store=self.store, emit=emit)
         except BaseException as exc:
             self.gate.release(session_id)
+            self.profiles.release(profile)
             self._mark_failed(artifact.id, f"{type(exc).__name__}: {exc}")
             raise
         talk = ActiveTalk(
-            session_id, artifact.id, session, record, artifact.started_at, time.monotonic()
+            session_id, artifact.id, session, record, artifact.started_at, time.monotonic(), profile
         )
         self._sessions[session_id] = talk
         self._forget_old()
@@ -194,6 +199,7 @@ class TalkManager:
             return
         finally:
             self.gate.release(talk.session_id)
+            self.profiles.release(talk.profile)
         stub = self.store.read_artifact(talk.call_id)
         artifact = fill_from_stub(artifact, stub)
         talk.duration_s = artifact.duration_s or talk.duration_s
@@ -209,6 +215,7 @@ class TalkManager:
             talk.call_id,
             duration_s=artifact.duration_s,
             timing_is_real=int(artifact.timing_is_real),
+            untested=int(talk.profile.untested or used_untested_provider(artifact)),
         )
         self.evals.submit(talk.call_id)
 

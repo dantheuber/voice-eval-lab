@@ -7,8 +7,9 @@ so tests can pass fakes.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncIterator, Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -172,10 +173,17 @@ def build_services(
     def thresholds() -> EvalConfig:
         return eval_config({**default_thresholds(), **(catalog.setting(THRESHOLDS_KEY) or {})})
 
-    async def prepare_eval(profile_id: str | None) -> None:
+    @contextlib.asynccontextmanager
+    async def eval_models(profile_id: str | None) -> AsyncIterator[None]:
         profile = profiles.items.get(profile_id or "")
-        if profile is not None:  # no profile still gets the checks that need no model
-            await profiles.wait_for_servers(profile, settings.model_wait_s)
+        if profile is None:  # no profile still gets the checks that need no model
+            yield
+            return
+        await profiles.hold(profile, settings.model_wait_s)
+        try:
+            yield
+        finally:
+            profiles.release(profile)
 
     evals = EvalService(
         store=store,
@@ -185,7 +193,7 @@ def build_services(
         runner=eval_runner or SubprocessEvalRunner(settings, store),
         config=thresholds,
         default_profile=lambda: profiles.active_id,
-        prepare=prepare_eval,
+        models=eval_models,
     )
     worker = RunWorker(
         store=store,

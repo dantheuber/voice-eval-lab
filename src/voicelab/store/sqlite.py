@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS runs (
     reps INTEGER NOT NULL,
     concurrency INTEGER NOT NULL,
     pairs TEXT NOT NULL,
-    line TEXT
+    line TEXT,
+    untested INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS runs_by_start ON runs (started_at, id);
 
@@ -93,7 +94,9 @@ CREATE TABLE IF NOT EXISTS calls (
     created_at TEXT NOT NULL,
     started_at TEXT,
     finished_at TEXT,
-    error TEXT
+    error TEXT,  -- how the call itself failed. Evaluation never writes or clears this.
+    eval_error TEXT,
+    untested INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS calls_by_time ON calls (created_at, id);
 CREATE INDEX IF NOT EXISTS calls_by_batch ON calls (batch_id, status);
@@ -115,6 +118,8 @@ CREATE TABLE IF NOT EXISTS call_findings (
     human_note TEXT NOT NULL DEFAULT '',
     human_by TEXT,
     human_at TEXT,
+    anchor_s REAL,  -- where in the call this finding is, for telling identical titles apart
+    occurrence INTEGER NOT NULL DEFAULT 0,  -- its place among same-titled findings with no time
     PRIMARY KEY (call_id, finding_id)
 );
 CREATE INDEX IF NOT EXISTS findings_open ON call_findings (advisory, human_verdict);
@@ -141,6 +146,16 @@ CREATE TABLE IF NOT EXISTS presets (
 """
 
 
+# Columns added since the first release. CREATE TABLE IF NOT EXISTS leaves an older file as it is.
+_ADDED_COLUMNS = (
+    ("calls", "eval_error", "TEXT"),
+    ("calls", "untested", "INTEGER NOT NULL DEFAULT 0"),
+    ("runs", "untested", "INTEGER NOT NULL DEFAULT 0"),
+    ("call_findings", "anchor_s", "REAL"),
+    ("call_findings", "occurrence", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
 def timestamp(moment: datetime | None = None) -> str:
     """A UTC instant with fixed precision, so text order in the database is time order."""
     moment = moment or datetime.now(UTC)
@@ -157,7 +172,24 @@ class Database:
         self._lock = threading.RLock()
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = NORMAL")
+        self._add_missing_columns()
         self._conn.executescript(SCHEMA)
+
+    def _add_missing_columns(self) -> None:
+        tables = {row[0] for row in self._conn.execute("SELECT name FROM sqlite_master")}
+        for table, column, definition in _ADDED_COLUMNS:
+            if table not in tables:
+                continue  # a new database gets the column from SCHEMA
+            present = {row[1] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if column in present:
+                continue
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            if column == "eval_error":
+                # These two failures used to share one column, and only this one can be retried.
+                self._conn.execute(
+                    "UPDATE calls SET eval_error = error, error = NULL "
+                    "WHERE status = 'failed' AND error LIKE 'evaluation failed:%'"
+                )
 
     def rows(self, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
         with self._lock:

@@ -213,6 +213,7 @@ class UploadService:
         self.calls.update(
             call_id,
             status="queued",
+            eval_error=None,
             verdict=None,
             invalid_reason=None,
             why="",
