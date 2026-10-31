@@ -164,6 +164,17 @@ def test_watch_lists_have_real_spoken_forms(scenario: Scenario):
         assert result and result != token, token
 
 
+def test_seeded_scenarios_are_all_reachable_by_the_caller():
+    for scenario in SCENARIOS.values():
+        assert scenario_problems(scenario) == []
+
+
+def test_validation_catches_a_seed_with_no_way_to_find_the_customer():
+    seed = SCENARIOS["scn_locked_mailbox"]
+    facts = {"name": "Evelyn Hart", "billing_zip": "97701", "pin": "1958"}
+    assert "finds cus_1003" in " ".join(scenario_problems(seed.model_copy(update={"facts": facts})))
+
+
 def test_required_coverage():
     assert {
         "scn_double_charge_refund",

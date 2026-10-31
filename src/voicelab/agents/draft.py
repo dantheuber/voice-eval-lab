@@ -24,7 +24,10 @@ Write the scenario as JSON:
 - goal: what the caller wants, in the caller's own words
 - customer_id: the seeded customer the caller is, or null for a stranger
 - facts: every fact the caller may state, such as name, phone, domain, billing_zip, and pin. \
-Copy real values from the customers below. To test failed verification, use wrong values.
+Copy real values from the customers below. To test failed verification, use wrong values. \
+The caller can't invent anything, so include a phone, email, or domain that finds the customer, \
+the mailbox, domain, or invoice id at issue, and the correct billing_zip and pin if anything on \
+the account should change.
 - beats: 3 to 6 ordered steps for the caller, each with an id, instruction, and checkpoint
 - must and must_not: what the bot must and must not do, according to the policy. \
 Each has an id, text, and severity of critical, major, or minor.
