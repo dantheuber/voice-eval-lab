@@ -449,8 +449,8 @@ class PronunciationEvaluator:
             span = _time_span(group.items, aligned, group.position, words, group.spoken.utterance)
             if group.mismatched and _spelled_differently(group, heard, words, lexicon):
                 spelled += 1
-                for item in group.items:
-                    aligned[group.position + group.items.index(item)] = replace(item, matched=True)
+                for offset, item in enumerate(group.items):
+                    aligned[group.position + offset] = replace(item, matched=True)
             elif group.mismatched:
                 tally["mismatched"] += 1
                 text = " ".join(w.text for w in heard)

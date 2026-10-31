@@ -849,3 +849,13 @@ async def test_a_persona_label_is_not_a_person(store):
     artifact = call(bot_utterance("Yes, and overly so.", 1.0, 3.0), persona_snapshot=persona)
     out = await evaluate(store, artifact, "yes and overly so")
     assert "name" not in out.metrics["critical_by_kind"]
+
+
+async def test_a_sound_alike_counts_every_repeated_letter_of_its_token(store):
+    """Two equal tokens in one group each get marked, not the first one twice."""
+    scenario = Scenario(title="t", goal="g", pronunciation_watch=["annaanna.example"])
+    artifact = call(
+        bot_utterance("Visit anna anna dot example today.", 1.0, 4.0), scenario_snapshot=scenario
+    )
+    out = await evaluate(store, artifact, "visit ana ana dot example today")
+    assert out.metrics["token_accuracy"] == 1.0
