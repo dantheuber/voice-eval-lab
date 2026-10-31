@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from voicelab.agents.seeds import scenario_problems
+from voicelab.agents.speech import unicode_safe
 from voicelab.company.db import create_call_db, customer_notes, table_columns
 from voicelab.company.policy import load_policy
 from voicelab.core.models import Scenario
@@ -76,8 +77,8 @@ def draft_prompt() -> str:
 def _check_draft(text: str) -> tuple[Scenario | None, str]:
     """Return the scenario, or None and what to tell the LLM."""
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as error:
+        data = unicode_safe(json.loads(text))
+    except (ValueError, RecursionError) as error:  # also a giant integer or absurd nesting
         return None, f"That was not valid JSON: {error}"
     if not isinstance(data, dict):
         return None, "The reply must be a JSON object."

@@ -83,6 +83,8 @@ async def test_model_supplied_ids_are_ignored():
     [
         ("not json at all", "not valid JSON"),
         ("[1, 2, 3]", "JSON object"),
+        ('{"title": ' + "9" * 5000 + "}", "not valid JSON"),
+        ("[" * 200000, "not valid JSON"),
         (json.dumps({"title": "no goal"}), "did not match the schema"),
         (draft(customer_id="cus_9999"), "not a seeded customer"),
         (draft(beats=[]), "beats must not be empty"),
@@ -102,6 +104,14 @@ async def test_model_supplied_ids_are_ignored():
                 ]
             ),
             "no seeded mailboxes row",
+        ),
+        (
+            draft(expected_state=[{"table": "mailboxes", "where": {"used_mb": 2**70}}]),
+            "can't be matched",
+        ),
+        (
+            draft(expected_state=[{"table": "mailboxes", "where": {"address": ["a", "b"]}}]),
+            "can't be matched",
         ),
     ],
 )

@@ -14,7 +14,14 @@ from collections.abc import AsyncIterator, Callable
 from datetime import date
 from typing import Any
 
-from voicelab.agents.speech import Lexicon, SpeechText, load_lexicon, normalize, split_sentences
+from voicelab.agents.speech import (
+    Lexicon,
+    SpeechText,
+    load_lexicon,
+    normalize,
+    split_sentences,
+    unicode_safe,
+)
 from voicelab.company.policy import load_policy
 from voicelab.company.tools import ToolDispatcher
 from voicelab.core.models import SystemEvent, ToolCallEvent, new_id
@@ -76,7 +83,7 @@ def _tool_call_from_json(value: Any) -> ToolCall | None:
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # bad JSON, a giant integer, or absurd nesting
             return None
     if not isinstance(name, str) or not isinstance(arguments, dict):
         return None
@@ -96,7 +103,7 @@ def parse_text_tool_calls(text: str) -> tuple[list[ToolCall], bool]:
     while position >= 0:
         try:
             value, end = decoder.raw_decode(body, position)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             break
         call = _tool_call_from_json(value)
         if call:
@@ -179,14 +186,14 @@ class SupportBot:
             )
             try:
                 async for delta in stream:
-                    raw += delta.text
+                    raw += unicode_safe(delta.text)
                     final = delta.final or final
                     for sentence in _unsaid(raw, said):
                         said.append(sentence)
                         segment = normalize(sentence, self.lexicon)
                         if segment.spoken:
                             yield segment
-                text = final.text if final and final.text else raw
+                text = unicode_safe(final.text) if final and final.text else raw
                 for sentence in _unsaid(text, said, include_tail=True):
                     said.append(sentence)
                     segment = normalize(sentence, self.lexicon)
@@ -277,19 +284,41 @@ class SupportBot:
         return normalize(line, self.lexicon)
 
     def _run_tools(self, text: str, calls: list[ToolCall]) -> None:
-        # History updates together with no await in between. A cancelled turn can't leave a tool
-        # call without its result, which backends reject on the next request.
-        last = self.messages[-1]
-        if last.role == "assistant" and not last.tool_calls:  # speech from a round that was retried
-            self.messages.pop()
-            text = f"{last.content} {text}".strip()
-        self.messages.append(ChatMessage(role="assistant", content=text, tool_calls=calls))
+        """Run a batch, then record it all at once.
+
+        History only changes after every call has a result, with no await in between. A crash or
+        a cancelled turn can't leave a tool call unanswered, which backends reject on the next
+        request. A crash stops the batch, since later calls may depend on the failed one.
+        """
+        calls = [
+            call.model_copy(update={"arguments": unicode_safe(call.arguments)}) for call in calls
+        ]
+        results: list[ChatMessage] = []
+        events: list[ToolCallEvent | SystemEvent] = []
+        crashed = False
         for call in calls:
             at_s = self.clock()
             started = time.perf_counter()
-            result = self.dispatcher.dispatch(call.name, call.arguments)
-            duration_ms = (time.perf_counter() - started) * 1000
-            self.messages.append(
+            if crashed:
+                result = {"error": "not run because an earlier tool failed"}
+            else:
+                try:
+                    result = self.dispatcher.dispatch(call.name, call.arguments)
+                except Exception as failure:
+                    crashed = True
+                    result = {"error": f"{call.name} failed: {failure}"}
+                    events.append(SystemEvent(at_s=at_s, kind="tool_failed", detail=repr(failure)))
+            events.append(
+                ToolCallEvent(
+                    at_s=at_s,
+                    name=call.name,
+                    arguments=call.arguments,
+                    result=result,
+                    error=result.get("error"),
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                )
+            )
+            results.append(
                 ChatMessage(
                     role="tool",
                     content=json.dumps(result),
@@ -297,20 +326,19 @@ class SupportBot:
                     name=call.name,
                 )
             )
-            if self.on_event:
-                self.on_event(
-                    ToolCallEvent(
-                        at_s=at_s,
-                        name=call.name,
-                        arguments=call.arguments,
-                        result=result,
-                        error=result.get("error"),
-                        duration_ms=duration_ms,
-                    )
-                )
             if call.name == "end_call" and result.get("ended"):
                 self.ended = True
                 self.end_reason = result.get("reason", "")
+
+        last = self.messages[-1]
+        if last.role == "assistant" and not last.tool_calls:  # speech from a round that was retried
+            self.messages.pop()
+            text = f"{last.content} {text}".strip()
+        self.messages.append(ChatMessage(role="assistant", content=text, tool_calls=calls))
+        self.messages.extend(results)
+        if self.on_event:
+            for event in events:
+                self.on_event(event)
 
     def _report(self, kind: str, detail: str) -> None:
         if self.on_event:

@@ -1,5 +1,7 @@
 """The caller bot and the text-only call runner."""
 
+import json
+
 import pytest
 from scripted_llm import ScriptedLLM, call, caller_says, uses
 
@@ -414,6 +416,19 @@ async def test_bad_json_is_retried(bad):
     bot, llm = caller(bad, caller_says("Hello?"))
     assert (await bot.next_line("Hi")).text == "Hello?"
     assert "not valid JSON" in request_text(llm)
+
+
+@pytest.mark.parametrize("bad", ['{"say": ' + "9" * 5000 + "}", '{"say": ' + "[" * 200000 + "}"])
+async def test_json_python_cannot_parse_is_retried_not_a_crash(bad):
+    bot, llm = caller(bad, caller_says("Hello?"))
+    assert (await bot.next_line("Hi")).text == "Hello?"
+    assert len(llm.requests) == 2
+
+
+async def test_lone_surrogates_never_reach_the_transcript():
+    bot, _ = caller(json.dumps({"say": "Hi \ud800there", "completed_beat": None}))
+    line = await bot.next_line("Hello")
+    line.text.encode("utf-8")
 
 
 async def test_bad_json_twice_falls_back():

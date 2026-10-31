@@ -238,6 +238,130 @@ async def test_no_event_callback_is_fine(db):
     assert [s.display for s in await turn(bot)] == ["Okay."]
 
 
+# Tool failures leave history valid ------------------------------------------------------------
+
+
+class BreakingDispatcher(ToolDispatcher):
+    """A dispatcher where one tool has a bug, the failure no rejection path covers."""
+
+    def dispatch(self, name, arguments=None):
+        if name == "update_dns_record":
+            raise RuntimeError("tool bug")
+        return super().dispatch(name, arguments)
+
+
+def assert_every_call_has_a_result(messages):
+    for index, message in enumerate(messages):
+        expected = [item.id for item in message.tool_calls]
+        results = messages[index + 1 : index + 1 + len(expected)]
+        assert [result.tool_call_id for result in results] == expected
+
+
+async def test_an_oversized_integer_comes_back_to_the_model(db):
+    too_big = call(
+        "update_dns_record",
+        domain="nguyenauto.example",
+        type="MX",
+        value="mail.fernhill.example",
+        ttl=2**63,
+    )
+    bot, llm, events = make_bot(db, uses(too_big, call("list_plans")), "Let me try again.")
+    assert [s.display for s in await turn(bot)] == ["Let me try again."]
+    assert "ttl" in events[0].error
+    assert_every_call_has_a_result(llm.requests[1]["messages"])
+
+
+async def test_a_crashing_tool_gives_every_call_in_the_batch_a_result(db):
+    batch = uses(
+        call("list_plans"),
+        call("update_dns_record", domain="a", type="MX", value="b"),
+        call("unlock_mailbox", address="evelyn@hartfamily.example"),
+    )
+    events = []
+    llm = ScriptedLLM(batch, "Sorry, something went wrong.")
+    bot = SupportBot(llm, BreakingDispatcher(db), on_event=events.append)
+    bot.greet()
+
+    assert [s.display for s in await turn(bot)] == ["Sorry, something went wrong."]
+
+    assert_every_call_has_a_result(bot.messages)
+    assert_every_call_has_a_result(llm.requests[1]["messages"])
+    tools = tool_events(events)
+    assert [event.name for event in tools] == [
+        "list_plans",
+        "update_dns_record",
+        "unlock_mailbox",
+    ]
+    assert tools[0].error is None
+    assert "tool bug" in tools[1].error
+    assert "not run" in tools[2].error
+    assert "tool_failed" in [e.kind for e in events if isinstance(e, SystemEvent)]
+
+
+async def test_a_call_after_a_crash_never_runs(db):
+    batch = uses(
+        call("update_dns_record", domain="a", type="MX", value="b"),
+        call("unlock_mailbox", address="evelyn@hartfamily.example"),
+    )
+    bot = SupportBot(ScriptedLLM(batch, "Sorry."), BreakingDispatcher(db))
+    bot.greet()
+    await turn(bot)
+    assert diff_against_seed(db) == []
+
+
+async def test_end_call_after_a_crash_does_not_end_the_call(db):
+    batch = uses(call("update_dns_record", domain="a", type="MX", value="b"), call("end_call"))
+    bot = SupportBot(ScriptedLLM(batch, "Sorry about that."), BreakingDispatcher(db))
+    bot.greet()
+    await turn(bot)
+    assert bot.ended is False
+
+
+async def test_a_rejected_call_does_not_stop_the_rest_of_the_batch(db):
+    batch = uses(call("get_invoice", invoice_id="FH-1"), call("list_plans"))
+    bot, _, events = make_bot(db, batch, "Okay.")
+    await turn(bot)
+    assert events[0].error
+    assert events[1].error is None
+
+
+async def test_a_crashing_timeline_callback_leaves_history_valid(db):
+    def broken(event):
+        raise RuntimeError("timeline bug")
+
+    batch = uses(call("list_plans"), call("get_invoice", invoice_id="FH-4419"))
+    bot = SupportBot(ScriptedLLM(batch), ToolDispatcher(db), on_event=broken)
+    bot.greet()
+    with pytest.raises(RuntimeError):
+        await turn(bot)
+    assert_every_call_has_a_result(bot.messages)
+
+
+async def test_lone_surrogates_cannot_poison_history_or_the_timeline(db):
+    bad = json.loads('"\\ud800"')
+    batch = uses(call("create_ticket", subject=bad, summary="x"))
+    bot, _, events = make_bot(db, batch, f"Sorry {bad}about that.")
+    await turn(bot)
+    for message in bot.messages:
+        message.model_dump_json()
+    for event in events:
+        event.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"name": "list_plans", "arguments": {"n": ' + "9" * 5000 + "}}",
+        '{"name": "list_plans", "arguments": ' + "[" * 200000,
+        '{"name": "list_plans", "arguments": "' + "[" * 200000 + '"}',
+    ],
+)
+async def test_tool_json_python_cannot_parse_is_a_retry_not_a_crash(db, text):
+    bot, llm, _ = make_bot(db, text, "How can I help?")
+    assert [s.display for s in await turn(bot)] == ["How can I help?"]
+    assert len(llm.requests) == 2
+
+
 # Malformed output -----------------------------------------------------------------------------
 
 

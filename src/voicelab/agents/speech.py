@@ -14,6 +14,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -385,6 +386,20 @@ _MARKUP = (
     (re.compile(r"[*`]+"), ""),
     (re.compile("[\U0001f300-\U0001faff☀-➿]"), ""),
 )
+
+
+def unicode_safe(value: Any) -> Any:
+    """Replace lone surrogates in model output. JSON can carry them, but UTF-8 can't encode them.
+
+    Left in, one would fail every later request and the save of the call artifact.
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {unicode_safe(key): unicode_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [unicode_safe(item) for item in value]
+    return value
 
 
 def clean_markup(text: str) -> str:

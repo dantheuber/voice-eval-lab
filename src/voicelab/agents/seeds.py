@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import yaml
@@ -56,7 +57,12 @@ def scenario_problems(scenario: Scenario) -> list[str]:
             if expectation.op == "changed" and all(col in known for col in expectation.where):
                 condition = " AND ".join(f"{column} = ?" for column in expectation.where) or "1"
                 sql = f"SELECT 1 FROM {expectation.table} WHERE {condition}"
-                if not db.row(sql, *expectation.where.values()):
+                try:
+                    found = db.row(sql, *expectation.where.values())
+                except (sqlite3.Error, OverflowError):  # a list or an oversized number
+                    problems.append(f"{expectation.where} can't be matched against a row")
+                    continue
+                if not found:
                     problems.append(
                         f"no seeded {expectation.table} row matches {expectation.where}"
                     )

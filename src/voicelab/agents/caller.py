@@ -14,9 +14,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
-from voicelab.agents.speech import SpeechText
+from voicelab.agents.speech import SpeechText, unicode_safe
 from voicelab.agents.support import SupportBot
 from voicelab.company.db import diff_against_seed
 from voicelab.core.models import (
@@ -102,8 +102,8 @@ def _parse_reply(text: str) -> _Reply | None:
     if start < 0 or end < start:
         return None
     try:
-        reply = _Reply.model_validate(json.loads(text[start : end + 1]))
-    except (json.JSONDecodeError, ValidationError):
+        reply = _Reply.model_validate(unicode_safe(json.loads(text[start : end + 1])))
+    except (ValueError, RecursionError):  # bad JSON or schema, a giant integer, absurd nesting
         return None
     return reply if reply.say.strip() or reply.hang_up else None
 

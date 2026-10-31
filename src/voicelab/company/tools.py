@@ -12,7 +12,9 @@ out or "verify" a caller by looking at them.
 
 from __future__ import annotations
 
+import contextlib
 import re
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -39,6 +41,7 @@ class _Tool:
 
 _CATALOG: dict[str, _Tool] = {}
 _JSON_TYPES = {str: "string", int: "integer"}
+_MAX_INTEGER = 2**63 - 1  # SQLite integers are signed 64 bit
 
 
 def _tool(
@@ -75,17 +78,33 @@ def _tool(
 
 def _coerce(name: str, value: Any, kind: type) -> Any:
     """Accept the near misses models produce, such as a PIN sent as a number."""
-    if kind is str:
-        if isinstance(value, bool) or not isinstance(value, str | int | float):
-            raise ToolRejected(f"{name} must be text")
-        return str(value).strip()
+    return _text_value(name, value) if kind is str else _integer_value(name, value)
+
+
+def _text_value(name: str, value: Any) -> str:
+    if isinstance(value, bool) or not isinstance(value, str | int | float):
+        raise ToolRejected(f"{name} must be text")
+    try:
+        text = str(value).strip()
+        text.encode("utf-8")
+    except ValueError:  # a lone surrogate, or an integer too long for Python to print
+        raise ToolRejected(f"{name} is not valid text") from None
+    return text
+
+
+def _integer_value(name: str, value: Any) -> int:
+    number = None
     if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
-        return int(value)
-    raise ToolRejected(f"{name} must be a whole number, for example 4999 for $49.99")
+        number = value
+    elif isinstance(value, float) and value.is_integer():
+        number = int(value)
+    elif isinstance(value, str) and re.fullmatch(r"-?\d{1,20}", value.strip()):
+        number = int(value)
+    if number is None:
+        raise ToolRejected(f"{name} must be a whole number, for example 4999 for $49.99")
+    if not -_MAX_INTEGER - 1 <= number <= _MAX_INTEGER:
+        raise ToolRejected(f"{name} is too large")
+    return number
 
 
 def _digits(text: str) -> str:
@@ -755,18 +774,32 @@ class ToolDispatcher:
         self.db = db
 
     def dispatch(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Run a tool. Bad requests come back as {"error": ...} so the LLM can correct itself."""
+        """Run a tool. Bad requests come back as {"error": ...} so the LLM can correct itself.
+
+        Tools write several rows, so any failure undoes all of them. A bug in a tool is undone
+        too, and still raises.
+        """
         tool = _CATALOG.get(name)
         if tool is None:
             return {"error": f"unknown tool {name}"}
         try:
             values = self._check_arguments(tool, arguments or {})
             result = tool.run(self.db, **values)
+            self.db.conn.commit()
         except ToolRejected as rejected:
-            self.db.conn.rollback()
+            self._undo()
             return {"error": str(rejected)}
-        self.db.conn.commit()
+        except (sqlite3.Error, OverflowError, UnicodeError) as failure:
+            self._undo()
+            return {"error": f"{name} could not be saved: {failure}"}
+        except Exception:
+            self._undo()
+            raise
         return result
+
+    def _undo(self) -> None:
+        with contextlib.suppress(sqlite3.Error):  # a closed connection has nothing to undo
+            self.db.conn.rollback()
 
     @staticmethod
     def _check_arguments(tool: _Tool, arguments: dict[str, Any]) -> dict[str, Any]:

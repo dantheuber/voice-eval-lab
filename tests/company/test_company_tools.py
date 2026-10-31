@@ -1,6 +1,7 @@
 """Tool dispatch. Tools reject the impossible and never enforce policy."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -524,3 +525,70 @@ def test_policy_covers_what_the_bot_needs():
     for phrase in ("verify_identity", "$50", "30 days", "already refunded", "port 993", "port 587"):
         assert phrase in policy
     assert len(policy.split()) < 450  # the bot runs on a small model, so this has to stay short
+
+
+# Storage limits -------------------------------------------------------------------------------
+
+DNS_UPDATE = {"domain": "nguyenauto.example", "type": "MX", "value": "mail.fernhill.example"}
+
+
+@pytest.mark.parametrize("field", ["ttl", "priority"])
+@pytest.mark.parametrize("value", [2**63, -(2**63) - 1, 2**70, 1e300, "9" * 5000, "9" * 20])
+def test_integers_sqlite_cannot_store_are_rejected(tools, db, field, value):
+    result = tools.dispatch("update_dns_record", DNS_UPDATE | {field: value})
+    assert field in result["error"]
+    assert diff_against_seed(db) == []
+
+
+def test_largest_storable_integer_is_accepted(tools, db):
+    assert "error" not in tools.dispatch("update_dns_record", DNS_UPDATE | {"ttl": 2**63 - 1})
+    assert diff_against_seed(db)[0].after["ttl"] == 2**63 - 1
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "field"),
+    [
+        ("update_dns_record", DNS_UPDATE | {"value": "\ud800"}, "value"),
+        ("create_ticket", {"subject": "\ud800", "summary": "x"}, "subject"),
+        ("create_ticket", {"subject": "s", "summary": "x\udfff"}, "summary"),
+        ("list_invoices", {"customer_id": "\ud800"}, "customer_id"),
+        ("find_customer", {"phone": 10**5000}, "phone"),
+    ],
+)
+def test_text_sqlite_cannot_store_is_rejected(tools, db, name, arguments, field):
+    assert field in tools.dispatch(name, arguments)["error"]
+    assert diff_against_seed(db) == []
+
+
+def test_storage_failure_undoes_the_whole_tool(tools, db):
+    # renew_domain writes an invoice and a payment before this update fails.
+    db.conn.execute(
+        "CREATE TRIGGER no_domain_writes BEFORE UPDATE ON domains"
+        " BEGIN SELECT RAISE(ABORT, 'disk trouble'); END"
+    )
+    result = tools.dispatch("renew_domain", {"domain": "thompsonphoto.example"})
+    assert "disk trouble" in result["error"]
+    assert "renew_domain" in result["error"]
+    assert diff_against_seed(db) == []
+    tools.dispatch("unlock_mailbox", {"address": "evelyn@hartfamily.example"})
+    assert changed_tables(db) == {("mailboxes", "update")}
+
+
+def test_a_closed_database_is_an_error_result(tools, db):
+    db.close()
+    assert "error" in tools.dispatch("get_invoice", {"invoice_id": "FH-4419"})
+    assert "error" in tools.dispatch("unlock_mailbox", {"address": "evelyn@hartfamily.example"})
+
+
+def test_a_bug_in_a_tool_still_rolls_back(tools, db, monkeypatch):
+    import voicelab.company.tools as module
+
+    def explode(*args, **kwargs):
+        db.conn.execute("UPDATE mailboxes SET locked = 0")
+        raise KeyError("bug")
+
+    tool = module._CATALOG["unlock_mailbox"]
+    monkeypatch.setitem(module._CATALOG, "unlock_mailbox", replace(tool, run=explode))
+    with pytest.raises(KeyError):
+        tools.dispatch("unlock_mailbox", {"address": "evelyn@hartfamily.example"})
+    assert diff_against_seed(db) == []
