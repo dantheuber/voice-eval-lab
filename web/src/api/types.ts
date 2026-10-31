@@ -167,7 +167,6 @@ export interface TalkSessionState { sessionId: string; callId: string; state: "c
 export type VoicelabServerMessage =
   | { type: "event"; event: ToolCallEvent | BargeInEvent | SystemEvent }
   | { type: "metrics"; replyP50S: number; lastReplyS: number }
-  | { type: "beat"; beatId: string; reached: boolean }
   | { type: "warning"; code: "echo_suspected" | "no_headphones"; message: string };
 
 // Upload

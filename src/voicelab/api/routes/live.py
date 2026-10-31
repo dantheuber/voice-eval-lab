@@ -17,7 +17,7 @@ from voicelab.services.events import Subscription
 
 router = APIRouter()
 
-_ICE_SERVERS = [{"urls": "stun:stun.l.google.com:19302"}]
+_ICE_SERVERS: list[dict[str, str]] = []  # same machine or LAN, so host candidates reach it
 _RUN_DETAIL_MESSAGES = ("partial", "turn", "event")
 
 

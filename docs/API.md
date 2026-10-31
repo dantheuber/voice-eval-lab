@@ -241,7 +241,7 @@ The client sends `{ "type": "watch", "callId": string }` to choose which concurr
 The mic call uses Pipecat's `SmallWebRTCTransport`. The browser uses `@pipecat-ai/client-js` and `@pipecat-ai/small-webrtc-transport`; the server runs `pipecat.transports.smallwebrtc`.
 
 - `POST /api/talk/sessions` body `{ "scenarioId": string | null, "personaId": string | null, "line": LineConditions | null, "record": boolean, "profile": string | null }`
-  → 201 `{ "sessionId": string, "callId": string, "offerUrl": "/api/talk/sessions/<sessionId>/offer", "iceServers": [ { "urls": "stun:stun.l.google.com:19302" } ], "sheet": { "youAre": string, "problem": string, "beats": Beat[], "mustNotSay": string[] } | null }`
+  → 201 `{ "sessionId": string, "callId": string, "offerUrl": "/api/talk/sessions/<sessionId>/offer", "iceServers": [], "sheet": { "youAre": string, "problem": string, "beats": Beat[], "mustNotSay": string[] } | null }`
   503 `model_not_ready` if the bot LLM, STT, or TTS is loading, with the role in `detail`.
 - `POST /api/talk/sessions/:sessionId/offer` is the Pipecat small-WebRTC signalling endpoint. Body `{ "sdp": string, "type": "offer", "pc_id": string | null, "restart_pc": boolean }` → `{ "sdp": string, "type": "answer", "pc_id": string }`. These four keys are snake_case because Pipecat's client sends them that way; do not camelCase this one route.
 - `POST /api/talk/sessions/:sessionId/end` → `{ "callId": string }`. The recording is finalised and evaluation starts; follow `/ws/calls/:callId`.
@@ -263,7 +263,6 @@ Over the WebRTC data channel the server sends standard RTVI messages, which the 
 ```json
 { "voicelab": { "type": "event", "event": ToolCallEvent | BargeInEvent | SystemEvent } }
 { "voicelab": { "type": "metrics", "replyP50S": 1.3, "lastReplyS": 1.1 } }
-{ "voicelab": { "type": "beat", "beatId": "identify", "reached": true } }
 { "voicelab": { "type": "warning", "code": "echo_suspected" | "no_headphones", "message": "…" } }
 ```
 

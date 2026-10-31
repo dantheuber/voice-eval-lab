@@ -12,6 +12,7 @@
 .meter i.on { background: var(--caller); }
 .spk.bot .meter i.on { background: var(--bot); }
 .meter i.on.hot { background: var(--fail); }
+.endbar > .faint { flex: 1 1 200px; min-width: 0; }
 .endbar { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3); border-top: 1px solid var(--line-1); background: var(--bg-2); flex-wrap: wrap; }
 .clock { font-family: var(--font-mono); font-size: var(--fs-4); font-variant-numeric: tabular-nums; }
 .events { font-size: var(--fs-1); }
@@ -26,8 +27,6 @@
 .pick small { display: block; color: var(--ink-3); }
 .sheet { font-size: 12px; }
 .sheet ol { margin: 4px 0 0 16px; padding: 0; }
-.sheet li.done { color: var(--ink-3); text-decoration: line-through; }
-.sheet li.next { font-weight: 600; }
 .turns { padding: var(--s-2) var(--s-3); font-size: var(--fs-2); border-top: 1px solid var(--line-1); flex: 1; overflow: auto; }
 .lt { display: grid; grid-template-columns: 52px 1fr; gap: var(--s-2); padding: 4px 0; }
 .lt b { font-size: var(--fs-0); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; padding-top: 2px; }

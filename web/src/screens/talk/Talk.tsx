@@ -52,8 +52,14 @@ export function TalkScreen() {
   });
   const endM = useMutation({
     mutationFn: async () => { call.end(); const r = await endpoints.endTalkSession(session!.sessionId); return r.callId; },
-    onSuccess: (callId) => { setEndedCallId(callId); setPhase("evaluating"); },
+    onSuccess: (callId) => {
+      if (!record) { toast("Call ended. Unlisted calls aren't kept."); setPhase("setup"); setSession(null); return; }
+      setEndedCallId(callId); setPhase("evaluating");
+    },
   });
+  // The bot can hang up and the connection can drop, and then there's nothing left to wait for on this screen.
+  const hungUp = call.state.status === "ended";
+  useEffect(() => { if (phase === "incall" && hungUp && !endM.isPending && !endM.isError) endM.mutate(); }, [phase, hungUp, endM]);
   const escOnce = useRef(false);
   useHotkeys({
     Enter: () => { if (phase === "setup" && !create.isPending && !mic.error) create.mutate(); },
@@ -122,9 +128,8 @@ function InCall({ session, call, micLevel, headphones, onEnd, ending }: { sessio
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(t); }, []);
   const turnsRef = useRef<HTMLDivElement>(null);
   useEffect(() => { turnsRef.current?.scrollTo({ top: 1e9 }); }, [st.lines]);
-  const elapsed = st.startedAt ? (now - st.startedAt) / 1000 : 0;
+  const elapsed = st.startedAt ? Math.max(0, now - st.startedAt) / 1000 : 0;
   const sheet = session.sheet;
-  const nextBeat = sheet?.beats.find((b) => !st.beatsReached.includes(b.id));
   return (
     <div className={s.talk}>
       <div className="stack" style={{ minHeight: 0 }}>
@@ -132,7 +137,7 @@ function InCall({ session, call, micLevel, headphones, onEnd, ending }: { sessio
           <Panel title="Your sheet"><div className={s.sheet}>
             <div><b>You are</b> {sheet.youAre}</div>
             <div style={{ marginTop: 6 }}><b>The problem</b> {sheet.problem}</div>
-            <div style={{ marginTop: 6 }}><b>Beats</b><ol>{sheet.beats.map((b) => <li key={b.id} className={st.beatsReached.includes(b.id) ? s.done : b.id === nextBeat?.id ? s.next : ""}>{b.instruction}</li>)}</ol></div>
+            <div style={{ marginTop: 6 }}><b>Beats</b><ol>{sheet.beats.map((b) => <li key={b.id}>{b.instruction}</li>)}</ol></div>
             <div style={{ marginTop: 6 }}><b>Must not say</b> {sheet.mustNotSay.join(", ")}.</div>
           </div></Panel>
         ) : <Panel title="Free call"><div className={s.sheet}>No scenario. Say whatever you like; the call is evaluated for timing, pronunciation, and audio quality.</div></Panel>}

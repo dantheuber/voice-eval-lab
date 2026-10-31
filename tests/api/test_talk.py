@@ -18,7 +18,7 @@ def test_session_flow_ends_in_evaluation(client, rig, waiter):
     session = open_session(client)
     session_id, call_id = session["sessionId"], session["callId"]
     assert session["offerUrl"] == f"/api/talk/sessions/{session_id}/offer"
-    assert session["iceServers"] == [{"urls": "stun:stun.l.google.com:19302"}]
+    assert session["iceServers"] == []  # nothing leaves this machine
     assert session["sheet"] is None
     state = client.get(f"/api/talk/sessions/{session_id}").json()
     assert state["state"] == "connecting"
