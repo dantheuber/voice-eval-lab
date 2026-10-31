@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffWords, findingsByUtterance } from "./Transcript";
+import { diffWords, findingsByUtterance, sameWords } from "./Transcript";
 import { reviewA } from "@/api/mock/fixtures";
 
 describe("diffWords", () => {
@@ -14,6 +14,19 @@ describe("diffWords", () => {
     const d = diffWords("same words", "same words");
     expect(d.del).toBe("");
     expect(d.ins).toBe("");
+  });
+});
+
+describe("what real ASR changes that isn't a word", () => {
+  it("treats punctuation, case, and hyphens as the same words", () => {
+    expect(sameWords("Thanks for calling Fernhill Internet, this is Fern.", "Thanks for calling Fernhill Internet. This is Fern.")).toBe(true);
+    expect(sameWords("forty nine dollars", "forty-nine dollars")).toBe(true);
+    expect(sameWords("forty nine dollars", "fifty nine dollars")).toBe(false);
+  });
+  it("doesn't widen a real substitution to the punctuation around it", () => {
+    const d = diffWords("One moment, let me check FH-4419 now.", "One moment. Let me check FH-4490 now.");
+    expect(d.del).toBe("FH-4419");
+    expect(d.ins).toBe("FH-4490");
   });
 });
 

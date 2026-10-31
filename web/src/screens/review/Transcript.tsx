@@ -5,11 +5,15 @@ import { evalName, fmtClock, sevClass } from "@/lib/format";
 import { Icon } from "@/components/ui";
 import s from "./review.module.css";
 
+/* ASR picks its own punctuation, case, and hyphens, so nearly every real line differs in those. They aren't words the bot got wrong. */
+const bare = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+export const sameWords = (a: string, b: string) => bare(a) === bare(b);
+
 /* Word-level diff good enough to highlight a substituted token. The pronunciation evaluator's alignment is used when present. */
 export function diffWords(intended: string, heard: string): { pre: string; del: string; ins: string; post: string } {
   const a = intended.split(" "), b = heard.split(" ");
-  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
-  let j = 0; while (j < a.length - i && j < b.length - i && a[a.length - 1 - j] === b[b.length - 1 - j]) j++;
+  let i = 0; while (i < a.length && i < b.length && bare(a[i]) === bare(b[i])) i++;
+  let j = 0; while (j < a.length - i && j < b.length - i && bare(a[a.length - 1 - j]) === bare(b[b.length - 1 - j])) j++;
   return { pre: b.slice(0, i).join(" "), del: a.slice(i, a.length - j).join(" "), ins: b.slice(i, b.length - j).join(" "), post: b.slice(b.length - j).join(" ") };
 }
 
@@ -75,7 +79,7 @@ export function Transcript({ payload, onSeek, onSelectFinding }: { payload: Revi
         }
         const heard = e.heardText ?? e.spokenText ?? "";
         const intended = e.intendedText;
-        const differs = !!(showIntended && intended && e.speaker === "bot" && intended !== heard && !e.interrupted);
+        const differs = !!(showIntended && intended && e.speaker === "bot" && !sameWords(intended, heard) && !e.interrupted);
         const d = differs ? diffWords(intended!, heard) : null;
         return (
           <div key={e.id} ref={active ? activeRef : undefined} className={`${s.turn} ${s[e.speaker]} ${active ? s.active : ""}`} tabIndex={0} data-utt={e.id}

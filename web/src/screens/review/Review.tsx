@@ -12,6 +12,7 @@ import { useReview } from "@/store/review";
 import { toast } from "@/store/toast";
 import { fmtClock, fmtDuration, sevClass, verdictLabel } from "@/lib/format";
 import type { CallWsMessage, Finding, ReviewPayload, Verdict } from "@/api/types";
+import { EventsLane } from "./EventsLane";
 import { Waveform } from "./Waveform";
 import { Transcript } from "./Transcript";
 import { DbDiff, DeliveryPanel, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, selectFirstOpen, verdictAllowed } from "./Findings";
@@ -190,13 +191,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
                 <div className={`${s.ln} ${s.bot}`}><button type="button" aria-pressed={st.mute.bot} title="Mute bot channel (b)" onClick={() => st.toggleMute("bot")}><i />bot</button></div>
                 <div className={`${s.lane} ${s.bot} ${st.mute.bot ? s.muted : ""}`}><Waveform peaks={payload.peaks.bot} perSecond={payload.peaks.perSecond} durationS={D} overlaps={payload.overlaps} color="bot" onSeek={seek} /></div>
                 <div className={s.ln}>events</div>
-                <div className={s.events}>{payload.call.timeline.filter((e) => e.type !== "utterance" && !(e.type === "system" && e.kind !== "db_change")).map((e) => {
-                  if (e.type === "utterance") return null;
-                  const kind = e.type === "tool_call" ? "tool" : e.type === "barge_in" ? "barge" : "db";
-                  const label = e.type === "tool_call" ? e.name : e.type === "barge_in" ? "barge-in" : e.detail.split(" ").slice(0, 2).join(" ");
-                  const title = e.type === "tool_call" ? `${e.name}(${JSON.stringify(e.arguments)}) -> ${JSON.stringify(e.result)}` : e.type === "barge_in" ? `Caller started speaking at ${fmtClock(e.atS)}${e.botStoppedAtS != null ? `; bot stopped after ${(e.botStoppedAtS - e.atS).toFixed(1)} s` : ""}` : e.detail;
-                  return <button key={e.id} type="button" className={`${s.ev} ${s[kind]}`} style={{ left: `${(e.atS / D) * 100}%` }} title={title} onClick={() => seek(Math.max(0, e.atS - 0.5))}><Icon name={kind === "tool" ? "tool" : kind === "db" ? "db" : "warn"} size={10} />{label}</button>;
-                })}</div>
+                <EventsLane timeline={payload.call.timeline} durationS={D} onSeek={seek} />
                 <div className={s.ln} />
                 <div className={s.ruler}>{ticks.map((t) => <span key={t} style={{ left: `${(t / D) * 100}%` }}>{fmtClock(t)}</span>)}</div>
                 <Overlay lanesRef={lanesRef} D={D} />

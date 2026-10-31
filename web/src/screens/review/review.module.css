@@ -27,7 +27,7 @@
 .lane.caller { border-radius: var(--r-1) var(--r-1) 0 0; border-bottom: 0; }
 .lane.bot { border-radius: 0 0 var(--r-1) var(--r-1); }
 .lane.muted canvas { opacity: .35; }
-.events { position: relative; height: 22px; }
+.events { position: relative; min-height: 22px; }
 .findingsLane { position: relative; height: 22px; }
 .ruler { position: relative; height: 16px; font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
 .ruler span { position: absolute; top: 0; transform: translateX(-50%); }
@@ -43,7 +43,7 @@
 .pin.sel, .pin:hover { background: var(--ink-1); color: var(--bg-1); border-color: var(--ink-1); }
 .pin.done { opacity: .45; }
 .pin.done.sel { opacity: 1; }
-.ev { position: absolute; top: 3px; height: 16px; padding: 0 5px; border-radius: 3px; font: 500 10px/14px var(--font-mono); border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-2); transform: translateX(-50%); white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.ev { position: absolute; height: 16px; padding: 0 5px; border-radius: 3px; font: 500 10px/14px var(--font-mono); border: 1px solid var(--line-2); background: var(--bg-2); color: var(--ink-2); white-space: nowrap; cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
 .ev.db { border-color: var(--accent); color: var(--accent); }
 .ev.barge { border-color: var(--fail); color: var(--fail); }
 .ev:hover { background: var(--bg-4); color: var(--ink-1); z-index: 4; }
