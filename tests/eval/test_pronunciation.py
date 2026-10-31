@@ -607,7 +607,7 @@ def test_a_contradicted_letter_is_still_part_of_its_id():
     tokens = tokenize("F as in Sam H as in house 4 4 1 9".split())
 
     assert [t.critical for t in tokens] == ["id"] * 6
-    assert (tokens[0].start, tokens[0].end) == (0, 4)
+    assert (tokens[0].start, tokens[0].end) == (0, 12)  # the id spans every word said for it
 
 
 @pytest.mark.parametrize("anchor", ["x-ray", "X-ray.", "xray"])
