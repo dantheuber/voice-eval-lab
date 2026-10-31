@@ -101,7 +101,9 @@ async def test_a_real_barge_in_stops_the_bot_where_the_artifact_says(store):
     assert barges, "the caller never cut in"
     barge = barges[0]
     assert barge.bot_stopped_at_s - barge.at_s < 1.5
-    cut = next(u for u in artifact.timeline if getattr(u, "id", "") == barge.interrupted_utterance_id)
+    cut = next(
+        event for event in artifact.timeline if event.id == barge.interrupted_utterance_id
+    )
     assert cut.interrupted and cut.spoken_text != cut.intended_text
 
     bot = AudioClip.from_file(store.paths(artifact.id).bot)

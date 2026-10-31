@@ -26,6 +26,7 @@ from enginefakes import (
 )
 
 from voicelab.agents import CallerBot, Interruption
+from voicelab.agents.support import FILLER_LINE
 from voicelab.core.audio import AudioClip
 from voicelab.core.models import (
     BargeInEvent,
@@ -196,6 +197,26 @@ async def test_the_bot_stops_for_a_caller_who_talks_over_a_long_reply(store, mon
     reply = next(u for u in utterances(artifact) if u.intended_text == LONG_REPLY)
     assert reply.interrupted and reply.spoken_text != LONG_REPLY
     assert any(isinstance(e, BargeInEvent) for e in artifact.timeline)
+
+
+async def test_the_caller_waits_when_told_to_hold_on(store):
+    slow_tool = uses("list_plans", text=FILLER_LINE)
+
+    class PausesAfterTheFiller(Scripted):
+        async def stream_chat(self, messages, **options):
+            if messages[-1].role == "tool":
+                await asyncio.sleep(1.5)  # a slow second LLM round, in silence
+            async for delta in super().stream_chat(messages, **options):
+                yield delta
+
+    caller = quick_caller(says("Hello."))
+    artifact = await live_call(
+        store, llm_caller=caller, llm_support=PausesAfterTheFiller(slow_tool, default="Done now.")
+    )
+
+    assert not any(isinstance(e, BargeInEvent) for e in artifact.timeline)
+    assert "Done now." in caller.requests[1][-1].content
+    assert FILLER_LINE in caller.requests[1][-1].content
 
 
 async def test_the_bot_ending_the_call_ends_it(store):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 from pipecat.frames.frames import (
@@ -44,6 +45,7 @@ from voicelab.providers.base import STT
 logger = logging.getLogger(__name__)
 
 _END_SLACK_S = 0.1  # the output drops a partial last chunk
+_HOLD_ON = re.compile(r"(?:one moment|let me check that)[.!,]?\s*$", re.IGNORECASE)
 
 
 async def _one(segment: SpeechText) -> AsyncIterator[SpeechText]:
@@ -420,6 +422,10 @@ class CallerBrain(Brain):
         if self.cut_timer is not None and not self.cut_timer.done():
             await self.cancel_task(self.cut_timer)
         self.cut_timer = None
+        if self.turn_open or self.working:
+            return  # one line at a time, and what was heard stays for the next reply
+        if _HOLD_ON.search(" ".join(self.heard_parts)):
+            return  # asked to wait, as a person would. Idle handling covers a bot that never does
         heard = self.take_heard()
         if self.cut_in_this_turn or self.call_over:
             return  # already answered, over the top of the bot
@@ -469,4 +475,4 @@ class CallerBrain(Brain):
     async def on_idle(self) -> None:
         """Nobody has said anything for a while, so the caller speaks up rather than wait."""
         if not self.working and not self.turn_open and not self.call_over:
-            self.run(self._say_next(""))
+            self.run(self._say_next(self.take_heard()))

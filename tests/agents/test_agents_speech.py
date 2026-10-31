@@ -34,7 +34,8 @@ def test_returns_display_and_spoken():
     result = normalize("Invoice FH-4419 is $49.99.")
     assert result.display == "Invoice FH-4419 is $49.99."
     assert result.spoken == (
-        "Invoice F, as in frank. H, as in house. Four, four, one, nine. is forty nine dollars and ninety nine cents."
+        "Invoice F, as in frank. H, as in house. Four, four, one, nine. "
+        "is forty nine dollars and ninety nine cents."
     )
 
 
