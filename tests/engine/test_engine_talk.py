@@ -125,7 +125,7 @@ def store(tmp_path: Path) -> ArtifactStore:
 
 async def wait_until(condition, timeout: float = 15.0) -> None:
     async def poll() -> None:
-        while not condition():
+        while not condition():  # noqa: ASYNC110  (conditions read other tasks' plain state)
             await asyncio.sleep(0.02)
 
     await asyncio.wait_for(poll(), timeout)

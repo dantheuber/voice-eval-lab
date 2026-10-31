@@ -33,18 +33,28 @@ website hosting, domains, and SSL certificates. Today is {today}.
 
 You are on a live phone call, and everything you write is read aloud.
 - Use plain spoken sentences. No markdown, lists, or symbols.
-- Say one or two short sentences, then stop.
+- Say one or two short sentences, then stop. Stay under 30 words.
 - Ask one question at a time.
 - Look facts up with tools. Never guess account details.
+- Don't announce what you're about to look up, and don't repeat what you already said.
+- Never say ids that start with pay_, rfd_, or cus_. They mean nothing to the caller.
 - Before changing anything, say what you will do and wait for a clear yes.
 - If you can't do something, say so and open a ticket.
 - When the caller is finished, say goodbye and call end_call.
+
+You hear the caller through speech recognition, so ids can arrive spelled out or split up.
+- Invoice numbers are two letters and four digits, like FH-4419. Join spelled letters and numbers \
+into one id before you use a tool.
+- If a lookup finds nothing, don't guess. Ask for the phone or email on the account, or ask the \
+caller to spell it.
+- If a lookup says close_match, confirm the name on the account with the caller.
 
 {policy}"""
 
 GREETING = "Thanks for calling Fernhill Internet, this is Fern. How can I help you today?"
 GOODBYE = "Thanks for calling Fernhill Internet. Goodbye."
 TROUBLE_LINE = "I'm sorry, I'm having trouble with our system. Could you say that again?"
+FILLER_LINE = "One moment, let me check that."
 
 # Some chat templates reject a conversation whose first turn isn't from the user.
 _CALL_CONNECTED = "(The phone rings and you answer.)"
@@ -140,6 +150,7 @@ class SupportBot:
         temperature: float = 0.3,
         max_tokens: int = 256,
         max_tool_rounds: int = 6,
+        filler_after_s: float | None = None,
     ) -> None:
         self.llm = llm
         self.dispatcher = dispatcher
@@ -151,6 +162,9 @@ class SupportBot:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_tool_rounds = max_tool_rounds
+        # A tool turn needs a second LLM round, so one that was slow to reach its tool call will
+        # leave the caller in silence for twice as long. Live calls set this, and None means never.
+        self.filler_after_s = filler_after_s
         self.ended = False
         self.end_reason = ""
         self._turn = 0  # bumped by each new turn and each interrupt, which stops the running turn
@@ -178,6 +192,7 @@ class SupportBot:
         turn = self._turn
         retry = False
         segments_spoken = 0
+        started = time.monotonic()
         for _ in range(self.max_tool_rounds):
             said: list[str] = []
             raw = ""
@@ -224,6 +239,12 @@ class SupportBot:
                 calls, malformed = parse_text_tool_calls(text)
 
             if calls:
+                waited = time.monotonic() - started
+                if not segments_spoken and self._wants_filler(waited, calls):
+                    segments_spoken += 1
+                    yield self._say(FILLER_LINE)
+                    if turn != self._turn:
+                        return
                 self._run_tools(calls)
                 retry = False
                 if self.ended:
@@ -238,6 +259,11 @@ class SupportBot:
 
         self._report("tool_loop_limit", f"gave up after {self.max_tool_rounds} rounds")
         yield self._say(TROUBLE_LINE)
+
+    def _wants_filler(self, waited_s: float, calls: list[ToolCall]) -> bool:
+        if self.filler_after_s is None or waited_s < self.filler_after_s:
+            return False
+        return not any(call.name == "end_call" for call in calls)
 
     def on_interrupted(self, spoken_text: str) -> None:
         """Rewrite the last turn to what was actually played before the caller cut in.

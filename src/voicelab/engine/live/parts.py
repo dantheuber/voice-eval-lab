@@ -94,6 +94,7 @@ class LiveSettings:
     caller_patience_s: float = 12.0  # a caller left in silence this long speaks up
     settle_s: float = 0.06  # the output's in-flight chunk finishes within this after a cut
     settle_after_end_s: float = 1.5  # time for the far side to hear the last words of a call
+    filler_after_s: float | None = 0.6  # say "one moment" if the tool call took this long to come
 
 
 def simple_settings() -> LiveSettings:

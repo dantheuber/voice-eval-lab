@@ -151,7 +151,10 @@ class AudioListeningEvaluator:
     async def run(self, ctx: EvalContext, out: EvaluatorOutput) -> None:
         analyst = ctx.deps.analyst
         if analyst is None:
-            raise Skip("no audio analyst configured")
+            raise Skip(
+                "no audio listener configured: none beat chance in benchmarks, and delivery "
+                "measurements cover this"
+            )
         out.model = analyst.name
         audio = ctx.audio(Speaker.BOT)
         clips = pick_clips(ctx, audio.duration_s, ctx.config.listening)

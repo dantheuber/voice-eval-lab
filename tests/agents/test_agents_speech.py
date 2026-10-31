@@ -21,7 +21,7 @@ def spoken(text: str) -> str:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("FH-4419", "F H dash 4 4 1 9"),
+        ("FH-4419", "F, as in frank. H, as in house. Four, four, one, nine."),
         ("$49.99", "forty nine dollars and ninety nine cents"),
         ("mail.fernhill.example", "mail dot fernhill dot example"),
     ],
@@ -33,17 +33,23 @@ def test_examples_from_the_brief(text, expected):
 def test_returns_display_and_spoken():
     result = normalize("Invoice FH-4419 is $49.99.")
     assert result.display == "Invoice FH-4419 is $49.99."
-    assert result.spoken == "Invoice F H dash 4 4 1 9 is forty nine dollars and ninety nine cents."
+    assert result.spoken == (
+        "Invoice F, as in frank. H, as in house. Four, four, one, nine. is forty nine dollars and ninety nine cents."
+    )
 
 
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("TK-2203", "T K dash 2 2 0 3"),
-        ("fh-4419", "F H dash 4 4 1 9"),
-        ("FH4419", "F H 4 4 1 9"),
-        ("Your invoice, FH-4419, is paid.", "Your invoice, F H dash 4 4 1 9, is paid."),
-        ("(FH-4419)", "(F H dash 4 4 1 9)"),
+        ("TK-2203", "T, as in tom. K, as in kite. Two, two, zero, three."),
+        ("fh-4419", "F, as in frank. H, as in house. Four, four, one, nine."),
+        ("FH4419", "F, as in frank. H, as in house. Four, four, one, nine."),
+        ("AC9077", "A, as in apple. C, as in cat. Nine, zero, seven, seven."),
+        (
+            "Your invoice, FH-4419, is paid.",
+            "Your invoice, F, as in frank. H, as in house. Four, four, one, nine, is paid.",
+        ),
+        ("(FH-4419)", "(F, as in frank. H, as in house. Four, four, one, nine.)"),
     ],
 )
 def test_ids(text, expected):
@@ -86,7 +92,7 @@ def test_money(text, expected):
         ("billing.fernhill.example.", "billing dot fernhill dot example."),
         ("example.com", "example dot com"),
         ("my-site.example", "my dash site dot example"),
-        ("site24.example", "site 2 4 dot example"),
+        ("site24.example", "site two, four dot example"),
         ("whitfieldlandscaping.example", "whitfield landscaping dot example"),
         ("https://fernhill.example", "fernhill dot example"),
         ("https://fernhill.example/", "fernhill dot example"),
@@ -112,7 +118,7 @@ def test_a_typo_is_not_a_hostname():
         ("priya.nair@mailbox.example", "priya dot nair at mailbox dot example"),
         ("first_last@a-b.example", "first underscore last at a dash b dot example"),
         ("sales+news@x.com", "sales plus news at x dot com"),
-        ("bob2@x.com", "bob 2 at x dot com"),
+        ("bob2@x.com", "bob two at x dot com"),
         ("Write to info@x.com.", "Write to info at x dot com."),
     ],
 )
@@ -123,15 +129,18 @@ def test_email_addresses(text, expected):
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("(503) 555-0101", "5 0 3, 5 5 5, 0 1 0 1"),
-        ("503-555-0101", "5 0 3, 5 5 5, 0 1 0 1"),
-        ("503.555.0101", "5 0 3, 5 5 5, 0 1 0 1"),
-        ("503 555 0101", "5 0 3, 5 5 5, 0 1 0 1"),
-        ("+1 503 555 0101", "1, 5 0 3, 5 5 5, 0 1 0 1"),
-        ("1-800-555-0199", "1, 8 0 0, 5 5 5, 0 1 9 9"),
-        ("555-0199", "5 5 5, 0 1 9 9"),
-        ("5035550101", "5 0 3, 5 5 5, 0 1 0 1"),
-        ("Call 503-555-0101 today.", "Call 5 0 3, 5 5 5, 0 1 0 1 today."),
+        ("(503) 555-0101", "five, zero, three, five, five, five, zero, one, zero, one"),
+        ("503-555-0101", "five, zero, three, five, five, five, zero, one, zero, one"),
+        ("503.555.0101", "five, zero, three, five, five, five, zero, one, zero, one"),
+        ("503 555 0101", "five, zero, three, five, five, five, zero, one, zero, one"),
+        ("+1 503 555 0101", "one, five, zero, three, five, five, five, zero, one, zero, one"),
+        ("1-800-555-0199", "one, eight, zero, zero, five, five, five, zero, one, nine, nine"),
+        ("555-0199", "five, five, five, zero, one, nine, nine"),
+        ("5035550101", "five, zero, three, five, five, five, zero, one, zero, one"),
+        (
+            "Call 503-555-0101 today.",
+            "Call five, zero, three, five, five, five, zero, one, zero, one today.",
+        ),
     ],
 )
 def test_phone_numbers(text, expected):
@@ -160,7 +169,7 @@ def test_dates(text, expected):
 def test_impossible_dates_are_read_as_digits_not_as_a_wrong_date(text):
     result = spoken(text)
     assert not any(month in result for month in ("February", "January", "first", "thirtieth"))
-    assert any(character.isdigit() for character in result)
+    assert "," in result  # read out one digit at a time
 
 
 @pytest.mark.parametrize(
@@ -212,17 +221,17 @@ def test_terms_do_not_match_inside_words():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("port 993", "port 9 9 3"),
-        ("Port 587", "Port 5 8 7"),
-        ("ports 993 and 587", "ports 9 9 3 and 5 8 7"),
-        ("Your PIN is 4821.", "Your pin is 4 8 2 1."),
-        ("zip code 97214", "zip code 9 7 2 1 4"),
-        ("billing zip is 97214", "billing zip is 9 7 2 1 4"),
-        ("card ending in 4242", "card ending in 4 2 4 2"),
-        ("invoice 4419", "invoice 4 4 1 9"),
-        ("ticket number 2203", "ticket number 2 2 0 3"),
-        ("97214", "9 7 2 1 4"),
-        ("0421", "0 4 2 1"),
+        ("port 993", "port nine, nine, three"),
+        ("Port 587", "Port five, eight, seven"),
+        ("ports 993 and 587", "ports nine, nine, three and five, eight, seven"),
+        ("Your PIN is 4821.", "Your pin is four, eight, two, one."),
+        ("zip code 97214", "zip code nine, seven, two, one, four"),
+        ("billing zip is 97214", "billing zip is nine, seven, two, one, four"),
+        ("card ending in 4242", "card ending in four, two, four, two"),
+        ("invoice 4419", "invoice four, four, one, nine"),
+        ("ticket number 2203", "ticket number two, two, zero, three"),
+        ("97214", "nine, seven, two, one, four"),
+        ("0421", "zero, four, two, one"),
     ],
 )
 def test_numbers_read_digit_by_digit(text, expected):
@@ -271,13 +280,13 @@ def test_times(text, expected):
 
 
 def test_ip_address_is_not_a_hostname_or_number():
-    assert spoken("203.0.113.11") == "2 0 3 dot 0 dot 1 1 3 dot 1 1"
+    assert spoken("203.0.113.11") == "two, zero, three dot zero dot one, one, three dot one, one"
 
 
 def test_one_rule_never_rewrites_another_rules_output():
     # The hostname rule says "S M T P"; a later term pass must not see its digits or words.
     assert spoken("Use smtp.fernhill.example port 587 with STARTTLS.") == (
-        "Use S M T P dot fernhill dot example port 5 8 7 with start T L S."
+        "Use S M T P dot fernhill dot example port five, eight, seven with start T L S."
     )
 
 
@@ -313,7 +322,10 @@ def test_markup_is_removed(text, expected):
 
 
 def test_markup_never_reaches_tts():
-    assert spoken("**Your** invoice:\n- FH-4419") == "Your invoice: F H dash 4 4 1 9"
+    assert (
+        spoken("**Your** invoice:\n- FH-4419")
+        == "Your invoice: F, as in frank. H, as in house. Four, four, one, nine."
+    )
 
 
 def test_dashes_become_pauses():

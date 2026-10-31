@@ -21,8 +21,9 @@ REFUND_LIMIT_CENTS = 5000
 CONFIRM = "Shall I go ahead?"
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_DOMAIN = re.compile(r"\b[a-z0-9-]+\.example\b", re.IGNORECASE)
-_PHONE = re.compile(r"\(?\b\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b")
+# Speech splits a domain into words, and only "dot example" marks where it ends.
+_DOMAIN = re.compile(r"\bdomain is ((?:[a-z0-9-]+ )*[a-z0-9-]+\.example)\b", re.IGNORECASE)
+_PHONE = re.compile(r"\(?\b\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}\b")
 _INVOICE = re.compile(r"\bFH-?\s?(\d{4})\b", re.IGNORECASE)
 _ZIP_AND_PIN = re.compile(r"\b(\d{5})\b.*?\b(\d{4})\b", re.DOTALL)
 _YES = re.compile(r"\b(?:yes|yeah|go ahead|sure|okay|please do)\b", re.IGNORECASE)
@@ -240,7 +241,7 @@ class _Plan:
 
 def _caller_domain(call: _Call) -> str:
     found = _DOMAIN.search(call.everything_said)
-    return found.group().lower() if found else ""
+    return found.group(1).lower() if found else ""
 
 
 def _caller_address(call: _Call) -> str:
@@ -443,7 +444,7 @@ def _identify(call: _Call) -> LLMResponse | None:
     elif phone:
         arguments = {"phone": phone.group()}
     elif domain:
-        arguments = {"domain": domain.group().lower()}
+        arguments = {"domain": domain.group(1).lower()}
     if arguments and not call.fresh_results:
         return _use(call, "find_customer", arguments, "Let me look that up.")
     return _say("Can I get the domain, phone number, or email on your account?")

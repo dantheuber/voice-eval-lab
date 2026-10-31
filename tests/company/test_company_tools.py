@@ -592,3 +592,52 @@ def test_a_bug_in_a_tool_still_rolls_back(tools, db, monkeypatch):
     with pytest.raises(KeyError):
         tools.dispatch("unlock_mailbox", {"address": "evelyn@hartfamily.example"})
     assert diff_against_seed(db) == []
+
+
+# Lookups from what speech recognition heard -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"domain": "whitfield landscaping dot example"},
+        {"domain": "whitfield landscaping.example"},
+        {"domain": "WhitfieldLandscaping.example"},
+        {"email": "dana at whitfield landscaping dot example"},
+        {"phone": "503 555 0101"},
+        {"phone": "5035550101"},
+        {"invoice_id": "fh 4419"},
+        {"invoice_id": "FH4419"},
+    ],
+)
+def test_find_customer_takes_what_a_speech_recognizer_writes(db, arguments):
+    found = ToolDispatcher(db).dispatch("find_customer", arguments)
+
+    assert found == {"found": True, "customer_id": "cus_1001", "name": "Dana Whitfield"}
+
+
+def test_a_nearly_right_domain_is_found_and_flagged_so_the_bot_can_confirm(db):
+    found = ToolDispatcher(db).dispatch(
+        "find_customer", {"domain": "whitfeild landscaping.example"}
+    )
+
+    assert found["customer_id"] == "cus_1001"
+    assert found["close_match"] == "whitfieldlandscaping.example"
+
+
+def test_a_nearly_right_email_is_found_and_flagged(db):
+    found = ToolDispatcher(db).dispatch("find_customer", {"email": "evelin@hartfamily.example"})
+
+    assert found["customer_id"] == "cus_1003" and "close_match" in found
+
+
+def test_a_different_business_is_not_a_close_match(db):
+    found = ToolDispatcher(db).dispatch("find_customer", {"domain": "win auto.example"})
+
+    assert found == {"found": False}
+
+
+def test_customer_ids_match_in_any_case(db):
+    found = ToolDispatcher(db).dispatch("get_account_summary", {"customer_id": "CUS_1001"})
+
+    assert found["customer_id"] == "cus_1001"

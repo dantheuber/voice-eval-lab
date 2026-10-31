@@ -274,10 +274,12 @@ async def test_each_brain_gets_the_heard_text_and_never_the_intended_text(store)
 
 
 async def test_spelled_ids_are_repaired_for_the_brain_but_stay_raw_in_the_artifact(store):
-    spelled = "My account is a C nine zero seven seven."
+    raw = "My account is a C nine zero seven seven."
     caller = Scripted(says("My account is AC9077."), says("Bye.", hang_up=True))
     support = Scripted("Got it.")
-    hearing = Rewriting({"AC9077": "a C nine zero seven seven"})
+    hearing = Rewriting(
+        {"A, as in apple. C, as in cat. Nine, zero, seven, seven.": "a C nine zero seven seven."}
+    )
 
     artifact = await call(
         store,
@@ -288,7 +290,23 @@ async def test_spelled_ids_are_repaired_for_the_brain_but_stay_raw_in_the_artifa
     )
 
     assert support.requests[0][-1].content == "My account is AC9077."
-    assert utterances(artifact, Speaker.CALLER)[0].heard_text == spelled
+    assert utterances(artifact, Speaker.CALLER)[0].heard_text == raw
+
+
+async def test_a_caller_line_is_spoken_in_its_tts_form(store):
+    caller = Scripted(says("It's invoice FH-4419."), says("Bye.", hang_up=True))
+    support = Scripted("Thanks.")
+
+    artifact = await call(
+        store,
+        req=request(scenario=scenario(facts={"invoice": "FH-4419"})),
+        llm_caller=caller,
+        llm_support=support,
+    )
+
+    turn = utterances(artifact, Speaker.CALLER)[0]
+    assert "as in frank" in turn.intended_text and "as in frank" in turn.heard_text
+    assert support.requests[0][-1].content == "It's invoice FH4419."
 
 
 async def test_real_audio_crosses_the_line_in_both_directions(store):

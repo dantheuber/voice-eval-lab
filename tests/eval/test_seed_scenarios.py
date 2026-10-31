@@ -241,7 +241,7 @@ def test_a_spelled_invoice_reads_as_one_critical_id():
     words = spoken.split()
     ids = [t for t in tokenize(words, lexicon=LEXICON) if t.critical == "id"]
     assert "".join(t.norm for t in ids) == "fh4419"
-    assert {(t.start, t.end) for t in ids} == {(1, 8)}
+    assert {(t.start, t.end) for t in ids} == {(1, 13)}
 
 
 WATCH_TERMS = sorted(
@@ -302,7 +302,7 @@ async def test_wrong_digit_against_tts_text_names_the_whole_code(store):
     assert len(out.findings) == 1
     finding = out.findings[0]
     assert finding.severity == "major"
-    assert "F H dash 4 4 1 9" in finding.title
+    assert "F, as in frank." in finding.title
 
 
 async def test_wrong_amount_against_tts_text_is_major(store):

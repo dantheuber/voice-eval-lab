@@ -7,6 +7,7 @@ import pytest
 from scripted_llm import ScriptedLLM, call, uses
 
 from voicelab.agents.support import (
+    FILLER_LINE,
     GOODBYE,
     GREETING,
     SYSTEM_PROMPT,
@@ -67,7 +68,7 @@ def test_system_prompt_is_built_for_voice(db):
 
 
 def test_prompt_stays_short_for_a_small_model():
-    assert len(SYSTEM_PROMPT.split()) < 120
+    assert len(SYSTEM_PROMPT.split()) < 225
 
 
 def test_greeting_is_fixed_and_recorded(db):
@@ -107,7 +108,8 @@ async def test_segments_carry_spoken_forms(db):
     first, second = await turn(bot)
     assert first.display == "Invoice FH-4419 was $49.99."
     assert first.spoken == (
-        "Invoice F H dash 4 4 1 9 was forty nine dollars and ninety nine cents."
+        "Invoice F, as in frank. H, as in house. Four, four, one, nine. "
+        "was forty nine dollars and ninety nine cents."
     )
     assert second.spoken == "Thanks."
 
@@ -117,7 +119,7 @@ async def test_segments_carry_spoken_forms(db):
     [
         ("It expires on Nov. 6, 2027.", "It expires on November sixth, twenty twenty seven."),
         ("Due Sept. 3. Thanks.", "Due September third."),
-        ("Call ext. 123 now.", "Call ext. 1 2 3 now."),
+        ("Call ext. 123 now.", "Call ext. one, two, three now."),
     ],
 )
 async def test_tokens_across_an_abbreviation_normalize_whole(db, reply, spoken):
@@ -823,3 +825,91 @@ def test_instructions_match_what_the_bot_uses(db):
 async def test_a_new_bot_has_not_ended(db):
     bot, _, _ = make_bot(db)
     assert bot.ended is False
+
+
+# Filler ------------------------------------------------------------------------------------------
+
+
+class SlowFirstRound(ScriptedLLM):
+    """Takes `delay_s` to reach its answer, as a bigger model would."""
+
+    def __init__(self, *script, delay_s: float) -> None:
+        super().__init__(*script)
+        self.delay_s = delay_s
+
+    async def stream_chat(self, messages, **options):
+        await asyncio.sleep(self.delay_s)
+        async for delta in super().stream_chat(messages, **options):
+            yield delta
+
+
+def filler_bot(db, llm, *, filler_after_s=0.01) -> SupportBot:
+    return SupportBot(llm, ToolDispatcher(db), filler_after_s=filler_after_s)
+
+
+async def spoken_by(bot: SupportBot, text: str) -> list[str]:
+    return [segment.spoken async for segment in bot.respond(text)]
+
+
+async def test_a_slow_tool_turn_says_something_while_the_caller_waits(db):
+    llm = SlowFirstRound(uses(call("list_plans")), "We have three plans.", delay_s=0.02)
+
+    said = await spoken_by(filler_bot(db, llm), "What plans do you have?")
+
+    assert said == [FILLER_LINE, "We have three plans."]
+
+
+async def test_the_filler_is_in_the_history_as_speech_beside_its_tool_call(db):
+    llm = SlowFirstRound(uses(call("list_plans")), "We have three plans.", delay_s=0.02)
+    bot = filler_bot(db, llm)
+
+    await spoken_by(bot, "What plans do you have?")
+
+    turn = next(m for m in bot.messages if m.tool_calls)
+    assert turn.content == FILLER_LINE
+
+
+async def test_a_fast_tool_turn_stays_quiet(db):
+    llm = ScriptedLLM(uses(call("list_plans")), "We have three plans.")
+
+    said = await spoken_by(filler_bot(db, llm, filler_after_s=5.0), "What plans?")
+
+    assert said == ["We have three plans."]
+
+
+async def test_no_filler_once_the_bot_has_said_something_this_turn(db):
+    llm = SlowFirstRound(
+        uses(call("list_plans"), text="Sure, let me look."), "We have three plans.", delay_s=0.02
+    )
+
+    said = await spoken_by(filler_bot(db, llm), "What plans?")
+
+    assert FILLER_LINE not in said
+
+
+async def test_no_filler_unless_asked_for(db):
+    llm = SlowFirstRound(uses(call("list_plans")), "Three plans.", delay_s=0.02)
+
+    said = await spoken_by(filler_bot(db, llm, filler_after_s=None), "What plans?")
+
+    assert said == ["Three plans."]
+
+
+async def test_no_filler_before_hanging_up(db):
+    llm = SlowFirstRound(uses(call("end_call", reason="done")), delay_s=0.02)
+
+    said = await spoken_by(filler_bot(db, llm), "Bye.")
+
+    assert FILLER_LINE not in said
+
+
+async def test_cutting_in_on_the_filler_stops_the_tool(db):
+    llm = SlowFirstRound(uses(call("create_ticket", subject="s", summary="t")), delay_s=0.02)
+    bot = filler_bot(db, llm)
+    reply = bot.respond("Open a ticket.")
+
+    assert (await anext(reply)).spoken == FILLER_LINE
+    bot.on_interrupted("")
+    await reply.aclose()
+
+    assert db.row("SELECT COUNT(*) AS n FROM tickets WHERE subject = 's'")["n"] == 0

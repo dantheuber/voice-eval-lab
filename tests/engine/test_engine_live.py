@@ -293,7 +293,7 @@ async def test_cancelling_a_live_call_writes_the_recording_and_propagates(store)
             settings=simple_settings(),
         )
     )
-    while not messages.of("partial"):
+    while not messages.of("partial"):  # noqa: ASYNC110  (a plain list, filled by another task)
         await asyncio.sleep(0.05)
     await asyncio.sleep(1.0)
 

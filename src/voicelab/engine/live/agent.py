@@ -60,7 +60,13 @@ def support_side(
             ),
             None,
         )
-    support = SupportBot(stack.llm_support, dispatcher, on_event=log.event, clock=log.now)
+    support = SupportBot(
+        stack.llm_support,
+        dispatcher,
+        on_event=log.event,
+        clock=log.now,
+        filler_after_s=settings.filler_after_s,
+    )
     tts = WrappedTTS(
         stack.tts_bot, voice_id=bot_voice(stack), ledger=ledger, fail=fail, role="tts_bot"
     )

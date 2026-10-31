@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from voicelab.agents.caller import MAX_TURNS_REASON, TYPICAL_TURN_WORDS, CallerBot, CallerLine
-from voicelab.agents.speech import SpeechText
+from voicelab.agents.speech import SpeechText, load_lexicon, normalize
 from voicelab.agents.support import SupportBot
 from voicelab.company.db import CompanyDb, create_call_db, diff_against_seed
 from voicelab.company.tools import ToolDispatcher
@@ -238,6 +238,7 @@ class _Call:
         self.to_caller = PhoneLine(conditions, seed=request.seed * 2 + 1)
         self.latency_s = self.to_bot.latency_s
         self.compute = _ComputeLog()
+        self.lexicon = load_lexicon()
         self.turn = 0
         self._unsent: list[ToolCallEvent | SystemEvent | BargeInEvent] = []
         self.support: SupportBot
@@ -296,7 +297,8 @@ class _Call:
         self.clock.advance(self.config.answer_s)
         played = await self._bot_turn(_one_segment(self.support.greet()))
         while True:
-            line = await self._step("llm_caller", self.caller.next_line(played.heard))
+            heard = prepare_heard_text(played.heard)
+            line = await self._step("llm_caller", self.caller.next_line(heard))
             bot_heard = await self._caller_speaks(line, played.barge_at_s)
             if line.completed_beat:
                 self._system("beat_completed", line.completed_beat)
@@ -408,11 +410,12 @@ class _Call:
         """Play the caller's line, over the bot's speech if it cut in, and return what was heard."""
         if not line.text:
             return ""
-        self._partial(Speaker.CALLER, line.text)
+        spoken = normalize(line.text, self.lexicon).spoken
+        self._partial(Speaker.CALLER, spoken)
         await self._flush()
         voice = self.request.persona.voice
         clip = await self._speak(
-            self.stack.tts_caller, line.text, voice.voice_id, voice.style, "tts_caller"
+            self.stack.tts_caller, spoken, voice.voice_id, voice.style, "tts_caller"
         )
         arrived, heard = await self._cross(self.to_bot, clip)
         if barge_at_s is None:
@@ -425,8 +428,8 @@ class _Call:
             speaker=Speaker.CALLER,
             start_s=start_s,
             end_s=end_s,
-            intended_text=line.text,
-            spoken_text=line.text,
+            intended_text=spoken,
+            spoken_text=spoken,
             heard_text=heard,
         )
         self.recorder.add_event(utterance)

@@ -660,7 +660,7 @@ async def test_caller_hears_the_spoken_form(db):
     bot = support(db, "Your invoice is FH-4419.")
     who, llm = caller(caller_says("Which invoice?"), caller_says("Bye.", hang_up=True, reason="x"))
     await run_text_call(bot, who)
-    assert "F H dash 4 4 1 9" in request_text(llm)
+    assert "F, as in frank" in request_text(llm)
     assert "FH-4419." not in request_text(llm).split("Reply with JSON")[0].split("Agent:")[-1]
 
 

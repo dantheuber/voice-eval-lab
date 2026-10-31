@@ -9,13 +9,16 @@ import respx
 
 from voicelab.agents import load_personas
 from voicelab.core.audio import AudioClip
-from voicelab.core.profiles import build_stack, load_profiles
+from voicelab.core.profiles import build_stack, default_profiles_dir, load_profiles
 from voicelab.providers.adapters.local_speech import (
+    PHONON_PERSONA_VOICES,
+    PHONON_VOICES,
     POCKET_PERSONA_VOICES,
     POCKET_VOICES,
     HttpTranscriptionSTT,
     LlamaAudioAnalyst,
     LlamaTTS,
+    PhononTTS,
     PocketTTS,
     SpeechServerError,
     WhisperCppSTT,
@@ -94,6 +97,17 @@ async def test_the_model_id_is_looked_up_once_when_not_configured():
 
     assert listing.call_count == 1
     assert b"parakeet-oss" in form_fields(route.calls[0].request)
+
+
+@respx.mock
+async def test_the_language_tag_qwen_asr_writes_first_is_removed():
+    respx.post(f"{BASE}/v1/audio/transcriptions").mock(
+        return_value=httpx.Response(200, json={"text": "language English<asr_text>Hello there."})
+    )
+
+    transcript = await HttpTranscriptionSTT(BASE, "m").transcribe(CLIP)
+
+    assert transcript.text == "Hello there."
 
 
 async def test_transcribing_nothing_makes_no_request():
@@ -245,6 +259,38 @@ async def test_llama_tts_offers_both_voices():
     assert {v.id for v in await LlamaTTS(BASE).voices()} == {"female", "male"}
 
 
+# Phonon ------------------------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_phonon_streams_pcm_and_maps_persona_voices():
+    data = b"\x01\x00\x02\x00\x03\x00"
+    route = respx.post(f"{BASE}/tts").mock(
+        return_value=httpx.Response(200, stream=Split(data[:3], data[3:]))
+    )
+    tts = PhononTTS(BASE)
+
+    clip = await tts.synthesize("Hello", voice_id="default_male_3")
+
+    assert isinstance(tts, TTS)
+    assert clip.pcm == data and clip.sample_rate == 24000
+    assert json.loads(route.calls[0].request.content) == {"text": "Hello", "voice": "Miles"}
+
+
+@respx.mock
+async def test_phonon_errors_are_reported():
+    respx.post(f"{BASE}/tts").mock(return_value=httpx.Response(500, text="no such voice"))
+
+    with pytest.raises(SpeechServerError, match="no such voice"):
+        await PhononTTS(BASE).synthesize("Hello", voice_id="Easton")
+
+
+def test_every_seeded_persona_has_its_own_phonon_voice_of_the_right_gender():
+    for voice in {p.voice.voice_id for p in load_personas().values()}:
+        assert PHONON_VOICES[PHONON_PERSONA_VOICES[voice]][0] == voice.split("_")[1]
+    assert len(set(PHONON_PERSONA_VOICES.values())) == len(PHONON_PERSONA_VOICES)
+
+
 # Pocket TTS --------------------------------------------------------------------------------------
 
 
@@ -339,8 +385,9 @@ def test_local_profiles_build_and_are_live_capable(name):
     assert profile.live_capable is True
     assert isinstance(stack.stt_eval, WhisperCppSTT)
     assert isinstance(stack.stt_live, HttpTranscriptionSTT)
-    assert isinstance(stack.tts_caller, PocketTTS)
-    assert profile.roles["tts_bot"]["voice_id"] == "female"
+    assert isinstance(stack.tts_bot, PhononTTS)
+    assert stack.audio_analyst is None  # no listener beat chance, so none is configured
+    assert profile.roles["tts_bot"]["voice_id"] in PHONON_VOICES
     ports = [service.port for service in profile.services]
     assert len(ports) == len(set(ports)) and all(port >= 18000 for port in ports)
 
@@ -350,6 +397,14 @@ def test_the_main_profile_uses_the_more_accurate_llm_and_fast_uses_the_quicker_o
 
     assert "qwen" in profiles["local-default"].roles["llm_support"]["name"]
     assert "lfm3" in profiles["local-fast"].roles["llm_support"]["name"]
+
+
+def test_the_main_profile_has_no_lfm_models_so_no_revenue_limit():
+    text = (default_profiles_dir() / "local-default.yaml").read_text()
+
+    assert "LFM3" not in text.split("id: local-default")[1]
+    for name in ("local-fast", "local-realtime"):
+        assert "USD 10" in (default_profiles_dir() / f"{name}.yaml").read_text()
 
 
 def test_only_the_realtime_profile_plays_the_bot_with_realtime():

@@ -13,6 +13,7 @@ out or "verify" a caller by looking at them.
 from __future__ import annotations
 
 import contextlib
+import difflib
 import re
 import sqlite3
 from collections.abc import Callable
@@ -42,6 +43,12 @@ class _Tool:
 _CATALOG: dict[str, _Tool] = {}
 _JSON_TYPES = {str: "string", int: "integer"}
 _MAX_INTEGER = 2**63 - 1  # SQLite integers are signed 64 bit
+_CLOSE_MATCH = 0.82  # one or two wrong letters in a domain, but not a different business
+_EMAIL_VALUES = (
+    "SELECT email AS value, id AS customer_id FROM customers"
+    " UNION SELECT address, customer_id FROM mailboxes"
+)
+_DOMAIN_VALUES = "SELECT name AS value, customer_id FROM domains"
 
 
 def _tool(
@@ -161,7 +168,7 @@ def _add_years(start: date, years: int) -> date:
 
 
 def _customer(db: CompanyDb, customer_id: str) -> dict[str, Any]:
-    found = db.row("SELECT * FROM customers WHERE id = ?", customer_id)
+    found = db.row("SELECT * FROM customers WHERE id = ?", customer_id.strip().lower())
     if found is None:
         raise ToolRejected(f"no customer with id {customer_id}")
     return found
@@ -253,39 +260,84 @@ def _clear_past_due(db: CompanyDb, customer_id: str) -> None:
 # Customer lookup -------------------------------------------------------------------------------
 
 
+def _spoken_address(text: str) -> str:
+    """Undo what speech does to an address: "dana at bell hardware dot example"."""
+    joined = re.sub(r"\s+dot\s+", ".", text.strip().lower())
+    joined = re.sub(r"\s+at\s+", "@", joined)
+    return re.sub(r"\s+", "", joined)
+
+
+def _letters_digits(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _closest_customer(db: CompanyDb, heard: str, sql: str) -> tuple[dict[str, Any], str] | None:
+    """The one customer whose address nearly matches. Identity is still checked by zip and PIN.
+
+    Near matches on two customers mean the guess can't pick between them, so neither wins.
+    """
+    rows = db.rows(sql)
+    keyed: dict[str, dict[str, Any]] = {_letters_digits(row["value"]): row for row in rows}
+    close = difflib.get_close_matches(_letters_digits(heard), keyed, n=3, cutoff=_CLOSE_MATCH)
+    if len({keyed[match]["customer_id"] for match in close}) != 1:
+        return None
+    row = keyed[close[0]]
+    return _customer(db, row["customer_id"]), row["value"]
+
+
 @_tool(
-    "Find a customer by phone, email, or website domain. Give one.",
+    "Find a customer by phone, email, domain, or invoice id. Give what you have.",
     optional={
         "phone": (str, "Phone number"),
         "email": (str, "Email or mailbox address"),
         "domain": (str, "Website or email domain"),
+        "invoice_id": (str, "Invoice id, like FH-4419"),
     },
 )
 def find_customer(
-    db: CompanyDb, phone: str = "", email: str = "", domain: str = ""
+    db: CompanyDb, phone: str = "", email: str = "", domain: str = "", invoice_id: str = ""
 ) -> dict[str, Any]:
-    if not (phone or email or domain):
-        raise ToolRejected("give a phone, email, or domain")
+    if not (phone or email or domain or invoice_id):
+        raise ToolRejected("give a phone, email, domain, or invoice id")
     found = None
     if phone:
         key = _phone_key(phone)
         matches = db.rows("SELECT * FROM customers")
         found = next((c for c in matches if _phone_key(c["phone"]) == key), None)
-    if found is None and email:
-        address = email.lower()
+    address = _spoken_address(email)
+    if found is None and address:
         found = db.row("SELECT * FROM customers WHERE email = ?", address) or db.row(
             "SELECT c.* FROM customers c JOIN mailboxes m ON m.customer_id = c.id"
             " WHERE m.address = ?",
             address,
         )
-    if found is None and domain:
+    host = _clean_domain(_spoken_address(domain))
+    if found is None and host:
         found = db.row(
             "SELECT c.* FROM customers c JOIN domains d ON d.customer_id = c.id WHERE d.name = ?",
-            _clean_domain(domain),
+            host,
         )
-    if found is None:
+    if found is None and invoice_id:
+        found = db.row(
+            "SELECT c.* FROM customers c JOIN invoices i ON i.customer_id = c.id WHERE i.id = ?",
+            _invoice_id(invoice_id),
+        )
+    if found is not None:
+        return {"found": True, "customer_id": found["id"], "name": found["name"]}
+    close = None
+    if address:
+        close = _closest_customer(db, address, _EMAIL_VALUES)
+    if close is None and host:
+        close = _closest_customer(db, host, _DOMAIN_VALUES)
+    if close is None:
         return {"found": False}
-    return {"found": True, "customer_id": found["id"], "name": found["name"]}
+    customer, matched = close
+    return {
+        "found": True,
+        "customer_id": customer["id"],
+        "name": customer["name"],
+        "close_match": matched,
+    }
 
 
 @_tool(

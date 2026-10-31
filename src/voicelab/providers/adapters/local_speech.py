@@ -4,8 +4,9 @@ Each server's launch command is in `config/profiles/local-*.yaml`, and `docs/res
 benchmarks-2026-10.md` has what each was measured to do. These stay thin HTTP clients, so the app
 never loads a model or imports torch.
 
-  http_transcriptions   NeMo-Speech Parakeet, or any OpenAI-style /v1/audio/transcriptions
+  http_transcriptions   Qwen3-ASR, Parakeet, or any OpenAI-style /v1/audio/transcriptions
   whisper_cpp           whisper.cpp whisper-server, the one that returns real word probabilities
+  phonon_tts            Phonon through scripts/phonon_server.py
   llama_tts             llama-server POST /tts, for LFM3-Audio
   pocket_tts            Pocket TTS preset voices
   llama_audio_analyst   an audio-capable llama-server model listening to a clip
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _STT_RATE = 16000
 _TTS_RATE = 24000
+_ASR_TEXT_MARK = "<asr_text>"
 
 
 class SpeechServerError(RuntimeError):
@@ -60,7 +62,8 @@ class HttpTranscriptionSTT:
     """OpenAI-style transcription. `hints` are ignored, since these servers take none.
 
     Parakeet reports every word's confidence as exactly 1.0, on all 265 words checked, so
-    `trust_confidence: false` reports them as unknown rather than as certain.
+    `trust_confidence: false` reports them as unknown rather than as certain. Set
+    `word_timing: false` for llama-server, which has no word output on this route.
     """
 
     def __init__(
@@ -70,12 +73,14 @@ class HttpTranscriptionSTT:
         *,
         name: str | None = None,
         trust_confidence: bool = True,
+        word_timing: bool = True,
         timeout_s: float = 60.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.name = name or f"transcriptions/{model or base_url}"
         self.trust_confidence = trust_confidence
+        self.word_timing = word_timing
         self._http = PerLoopClient(timeout=_timeout(timeout_s))
 
     async def _model_id(self) -> str:
@@ -89,12 +94,9 @@ class HttpTranscriptionSTT:
     ) -> Transcript:
         if audio.n_samples == 0:
             return Transcript(text="", model=self.name)
-        data = {
-            "model": await self._model_id(),
-            "language": language,
-            "response_format": "verbose_json",
-            "timestamp_granularities[]": "word",
-        }
+        data = {"model": await self._model_id(), "language": language, "response_format": "json"}
+        if self.word_timing:  # llama-server refuses anything but plain json
+            data |= {"response_format": "verbose_json", "timestamp_granularities[]": "word"}
         try:
             response = await self._http.get().post(
                 f"{self.base_url}/v1/audio/transcriptions", files=_wav_upload(audio), data=data
@@ -111,7 +113,8 @@ class HttpTranscriptionSTT:
             )
             for word in reply.get("words") or []
         ]
-        text = (reply.get("text") or "").strip()
+        # Qwen3-ASR writes "language English<asr_text>..." ahead of what it heard.
+        text = (reply.get("text") or "").rsplit(_ASR_TEXT_MARK, 1)[-1].strip()
         return Transcript(text=text, words=words, language=language, model=self.name)
 
 
@@ -232,6 +235,90 @@ class LlamaTTS:
         return [
             VoiceInfo(id="female", label="LFM3 female", gender="female"),
             VoiceInfo(id="male", label="LFM3 male", gender="male"),
+        ]
+
+
+PHONON_VOICES: dict[str, tuple[str, str]] = {
+    "Easton": ("male", "American"),
+    "Delia": ("female", "American"),
+    "Harper": ("female", "American"),
+    "Hadley": ("female", "American"),
+    "Everly": ("female", "American"),
+    "Juniper": ("female", "American"),
+    "Preston": ("male", "American"),
+    "Miles": ("male", "American"),
+    "Trevor": ("male", "American"),
+    "Russell": ("male", "American"),
+    "Micah": ("male", "American"),
+    "Maeve": ("female", "British"),
+    "Hugh": ("male", "British"),
+    "Edwin": ("male", "British"),
+}
+
+PHONON_PERSONA_VOICES = {
+    "default_female_1": "Juniper",  # chatty, polite, 62
+    "default_female_2": "Everly",  # confused retiree, 78
+    "default_female_3": "Hadley",  # soft spoken, 34
+    "default_female_4": "Harper",  # rushed, 29
+    "default_female_5": "Delia",  # skeptical bookkeeper, 58
+    "default_male_1": "Preston",  # impatient owner, 47
+    "default_male_2": "Russell",  # angry customer, 53
+    "default_male_3": "Miles",  # sysadmin, 38
+    "default_male_4": "Micah",  # student, 22
+}
+
+
+@register("tts", "phonon_tts")
+class PhononTTS:
+    """Phonon 31m on CPU. Genders above are read from names and catalog notes, not verified."""
+
+    sample_rate = _TTS_RATE
+
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        name: str = "phonon-31m",
+        voice_id: str = "Easton",
+        voice_map: dict[str, str] | None = None,
+        timeout_s: float = 60.0,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.name = name
+        self.voice_id = voice_id
+        self.voice_map = PHONON_PERSONA_VOICES | (voice_map or {})
+        self._http = PerLoopClient(timeout=_timeout(timeout_s))
+
+    async def stream(
+        self, text: str, *, voice_id: str, style: str | None = None
+    ) -> AsyncIterator[AudioClip]:
+        body = {"text": text, "voice": self.voice_map.get(voice_id, voice_id)}
+        try:
+            async with self._http.get().stream(
+                "POST", f"{self.base_url}/tts", json=body
+            ) as response:
+                if response.status_code >= 400:
+                    detail = (await response.aread()).decode("utf-8", "replace")
+                    raise SpeechServerError(
+                        f"{self.name} answered {response.status_code}: {detail[:300]}"
+                    )
+                leftover = b""
+                async for chunk in response.aiter_bytes():
+                    data = leftover + chunk
+                    usable = len(data) - len(data) % 2
+                    leftover = data[usable:]
+                    if usable:
+                        yield AudioClip(data[:usable], self.sample_rate)
+        except httpx.HTTPError as failure:
+            raise SpeechServerError(f"{self.name} unreachable: {failure!r}") from failure
+
+    async def synthesize(self, text: str, *, voice_id: str, style: str | None = None) -> AudioClip:
+        return await _gather_clip(self.stream(text, voice_id=voice_id), self.sample_rate)
+
+    async def voices(self) -> list[VoiceInfo]:
+        return [
+            VoiceInfo(id=voice, label=voice, gender=gender, accent=accent)
+            for voice, (gender, accent) in PHONON_VOICES.items()
         ]
 
 

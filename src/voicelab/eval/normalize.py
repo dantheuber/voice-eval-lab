@@ -372,6 +372,27 @@ def _merge_span(tokens: list[Token], start: int, end: int, kind: str) -> None:
         tokens[i] = replace(tokens[i], start=first, end=last, critical=kind)
 
 
+def _without_spelling_anchors(tokens: list[Token]) -> list[Token]:
+    """ "F, as in frank" is a way of saying F, however the rest of it came through the ASR."""
+    kept: list[Token] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        anchored = (
+            len(token.norm) == 1
+            and token.norm.isalpha()
+            and i + 3 < len(tokens)
+            and (tokens[i + 1].norm, tokens[i + 2].norm) == ("as", "in")
+        )
+        if anchored:
+            kept.append(replace(token, end=tokens[i + 3].end, critical="acronym"))
+            i += 4
+        else:
+            kept.append(token)
+            i += 1
+    return kept
+
+
 def _mark_spelled_ids(tokens: list[Token]) -> None:
     """Spelled letters then digits are one code: "F H 4 4 1 9"."""
     i = 0
@@ -430,6 +451,7 @@ def tokenize(
     tokens = _classified(_pieces(words, tlds), words, names, tlds)
     if lexicon is not None:
         tokens = lexicon.fold(tokens)
+    tokens = _without_spelling_anchors(tokens)
     _mark_spelled_ids(tokens)
     _mark_spoken_urls(tokens, tlds)
     for phrase in watch:

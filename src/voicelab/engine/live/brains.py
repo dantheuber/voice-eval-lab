@@ -30,7 +30,7 @@ from pipecat.frames.frames import (
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voicelab.agents.caller import MAX_TURNS_REASON, CallerBot, CallerLine
-from voicelab.agents.speech import SpeechText
+from voicelab.agents.speech import SpeechText, load_lexicon, normalize
 from voicelab.agents.support import SupportBot
 from voicelab.core.audio import AudioClip
 from voicelab.core.models import BargeInEvent, Speaker, Utterance
@@ -374,6 +374,7 @@ class CallerBrain(Brain):
         self.cut_in_this_turn = False
         self.cut_timer: asyncio.Task | None = None
         self.leaving: CallerLine | None = None
+        self.lexicon = load_lexicon()
         self.intended = ""
         self.audio_this_turn: list[AudioClip] = []
         self.hearing = False
@@ -418,7 +419,7 @@ class CallerBrain(Brain):
         self.run(self._say_next(heard))
 
     async def _say_next(self, heard: str) -> None:
-        line = await self.caller.next_line(heard)
+        line = await self.caller.next_line(prepare_heard_text(heard))
         if line.completed_beat:
             self.log.system("beat_completed", line.completed_beat)
         if line.hang_up:
@@ -428,8 +429,9 @@ class CallerBrain(Brain):
                 await self._hang_up(line)
             return
         self.begin_turn()
-        self.intended = line.text
-        await self.speak(_one(SpeechText(display=line.text, spoken=line.text)))
+        segment = normalize(line.text, self.lexicon)
+        self.intended = segment.spoken
+        await self.speak(_one(segment))
         self.task = None
         await self.on_speech_paused()
 

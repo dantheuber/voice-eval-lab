@@ -234,7 +234,7 @@ def many_turns(count: int = 10) -> AudioClip:
 
 
 async def test_skips_without_an_analyst(store):
-    with pytest.raises(Skip, match="no audio analyst"):
+    with pytest.raises(Skip, match="no audio listener"):
         await listen(context(store, many_turns()))
 
 
