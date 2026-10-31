@@ -175,7 +175,7 @@ def find_barge_ins(
     return barge_ins
 
 
-def noise_reads_as_speech(bot: list[Region], artifact: CallArtifact, limit: float) -> bool:
+def noise_reads_as_speech(bot: list[Region], artifact: CallArtifact, cfg: TimingConfig) -> bool:
     """Whether the bot channel shows speech the bot's own timeline can't account for.
 
     A speech-like noise bed such as a TV passes the energy VAD. Everything measured from those
@@ -194,7 +194,10 @@ def noise_reads_as_speech(bot: list[Region], artifact: CallArtifact, limit: floa
         for region in bot
         for span in said
     )
-    return 1 - covered / total > limit
+    outside = total - covered
+    return outside / total > cfg.max_speech_off_timeline and (
+        outside >= cfg.min_speech_off_timeline_s
+    )
 
 
 def _rounded(value: float) -> float:
@@ -240,7 +243,7 @@ class TimingEvaluator:
         duration = ctx.artifact.duration_s or ctx.audio(Speaker.BOT).duration_s
         caller_turns = merge_turns(caller, cfg.turn_gap_s, bot)
         bot_turns = merge_turns(bot, cfg.turn_gap_s, caller)
-        noisy = noise_reads_as_speech(bot, ctx.artifact, cfg.max_speech_off_timeline)
+        noisy = noise_reads_as_speech(bot, ctx.artifact, cfg)
         real = ctx.artifact.timing_is_real
         inferred = ctx.channels_inferred
 

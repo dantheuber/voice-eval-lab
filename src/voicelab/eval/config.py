@@ -34,6 +34,7 @@ class TimingConfig(BaseModel):
     # Past this share of channel speech outside the timeline's utterances, line noise is reading
     # as speech. On 18 real calls the share was 0.46 with TV noise and at most 0.01 otherwise.
     max_speech_off_timeline: float = 0.25
+    min_speech_off_timeline_s: float = 5.0  # a second or two says nothing about the line
 
 
 class PronunciationConfig(BaseModel):

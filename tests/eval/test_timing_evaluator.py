@@ -325,7 +325,7 @@ async def test_reaction_stops_at_the_speech_the_caller_cut_into(store):
     assert [e["reaction_s"] for e in events] == pytest.approx([1.0], abs=TOLERANCE)
 
 
-# Calibrated on 18 real calls -----------------------------------------------------------------------
+# Calibrated on 18 real calls ---------------------------------------------------------------------
 
 
 async def findings_for(store, *, caller, bot, category, config=None):
@@ -407,6 +407,13 @@ async def test_speech_inside_the_timeline_is_measured_as_usual(store):
         store, artifact, caller=[(1.0, 2.0)], bot=[(9.0, 12.0)], duration_s=21.0
     )
     assert "slow_response" in categories(out)
+    assert "latency" not in out.metrics["skipped"]
+
+
+async def test_a_little_speech_off_the_timeline_says_nothing_about_the_line(store):
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS)
+    artifact.timeline.append(Utterance(speaker=Speaker.BOT, start_s=1.0, end_s=2.0))
+    out, _ = await evaluate(store, artifact, bot=[(9.0, 11.0)], duration_s=12.0)
     assert "latency" not in out.metrics["skipped"]
 
 

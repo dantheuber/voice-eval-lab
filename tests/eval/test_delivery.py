@@ -429,7 +429,7 @@ async def test_a_flat_voice_all_call_is_one_finding_listing_each_utterance(store
     assert sum("robotic" in f for f in flags(out)) == 7
 
 
-# Calibrated on 18 real calls -----------------------------------------------------------------------
+# Calibrated on 18 real calls ---------------------------------------------------------------------
 
 
 async def test_a_voice_that_is_fast_all_call_is_not_rushed_on_every_utterance(store):
