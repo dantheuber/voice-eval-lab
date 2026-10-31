@@ -61,7 +61,7 @@ export function RunLauncherScreen() {
               <div style={{ overflow: "auto" }}>
                 {scs.length === 0 || pes.length === 0 ? <div className="empty"><b>Nothing to run</b>You need at least one scenario and one persona.</div> : (
                   <table className={s.matrix}>
-                    <thead><tr><th></th>{pes.map((pe) => <th key={pe.id} className={s.p}><label className="check" style={{ justifyContent: "center" }}><input type="checkbox" checked={scs.every((sc) => sel.has(key(sc.id, pe.id)))} onChange={(e) => scs.forEach((sc) => toggle(key(sc.id, pe.id), e.target.checked))} aria-label={`all scenarios for ${pe.name}`} /> {pe.name.split(" ").slice(0, 2).join(" ")}</label><small>{pe.temperament}, interrupts {interruptionScale(pe.interruptionRate)}/5</small></th>)}<th className={s.p}><small>row</small></th></tr></thead>
+                    <thead><tr><th></th>{pes.map((pe) => <th key={pe.id} className={s.p}><label className="check" style={{ flexDirection: "column", gap: 2 }} title={`${pe.name}: ${pe.temperament}, interrupts ${interruptionScale(pe.interruptionRate)}/5`}><input type="checkbox" checked={scs.every((sc) => sel.has(key(sc.id, pe.id)))} onChange={(e) => scs.forEach((sc) => toggle(key(sc.id, pe.id), e.target.checked))} aria-label={`all scenarios for ${pe.name}`} /> {pe.name.split(" ").slice(0, 2).join(" ")}</label><small>{pe.temperament}</small></th>)}<th className={s.p}><small>row</small></th></tr></thead>
                     <tbody>{scs.map((sc) => (
                       <tr key={sc.id}>
                         <td className={s.s}>{sc.title}<small>{sc.customerId ?? ""}</small></td>

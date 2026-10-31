@@ -23,11 +23,12 @@
 .launch { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: var(--s-3); align-items: start; }
 .matrix { border-collapse: separate; border-spacing: 0; font-size: var(--fs-1); width: 100%; }
 .matrix th { font-weight: 500; color: var(--ink-2); padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line-1); }
-.matrix th.p { text-align: center; font-size: var(--fs-0); vertical-align: bottom; max-width: 92px; }
+.matrix th.p { text-align: center; vertical-align: bottom; width: 62px; max-width: 62px; padding: 6px 1px; }
+.matrix th.p label { font-size: 10px; line-height: 1.2; }
 .matrix th.p small { display: block; color: var(--ink-3); font-weight: 400; }
-.matrix td { padding: 4px 8px; border-bottom: 1px solid var(--line-1); text-align: center; }
-.matrix td.s { text-align: left; white-space: nowrap; }
-.matrix td.s small { color: var(--ink-3); font-family: var(--font-mono); font-size: var(--fs-0); margin-left: 6px; }
+.matrix td { padding: 4px 2px; border-bottom: 1px solid var(--line-1); text-align: center; }
+.matrix td.s { text-align: left; white-space: nowrap; padding-left: 8px; padding-right: 8px; }
+.matrix td.s small { display: block; color: var(--ink-3); font-family: var(--font-mono); font-size: var(--fs-0); }
 .matrix input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .matrix .hist { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); display: block; }
 .matrix .hist.low { color: var(--review); }
