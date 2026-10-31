@@ -1,0 +1,16 @@
+Listen to this clip of a voice support bot for Fernhill Internet. Judge how it sounds, not what
+it says.
+
+Why this clip was picked: $why
+What the bot was meant to say here: $expected
+
+Report:
+- tone: one or two words, such as warm, flat, rushed, irritated.
+- delivery: one short sentence on pacing, rhythm, and emphasis.
+- odd_pronunciations: words that sounded wrong. Leave empty if none did.
+- issues: anything a listener would notice as a problem, such as a robotic stretch, a glitch, a
+  strange pause, or an abrupt ending. Severity is "info", "minor", or "major". Leave empty if the
+  clip sounds fine, and do not invent problems.
+
+Reply with JSON only:
+{"tone": "warm", "delivery": "Even pace.", "odd_pronunciations": [], "issues": []}

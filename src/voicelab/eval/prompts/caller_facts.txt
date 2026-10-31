@@ -1,0 +1,26 @@
+You are checking a test call between two bots. A scripted caller bot phoned the Fernhill Internet
+support bot. You are checking the test itself: did the caller keep to its fact sheet?
+
+The transcript comes from an independent speech recognizer that listened to the recording.
+
+The only facts the caller may state:
+$facts
+
+Transcript:
+$transcript
+
+Look only at what the CALLER said. Small talk, feelings, and repeating what the bot said are fine.
+A breach is a specific detail about the caller's account, identity, or problem that contradicts
+the fact sheet or isn't on it.
+
+Choose one status:
+- "pass": the caller kept to the fact sheet.
+- "fail": the caller stated something that breaches it.
+- "unknown": this transcript does not let you decide.
+
+Rules for quotes:
+- Copy each quote word for word from the transcript. Do not fix, shorten, or paraphrase it.
+- For a breach, quote what the caller said. If there was no breach, give an empty list.
+
+Keep the reason to one or two sentences. Reply with JSON only:
+{"status": "pass", "reason": "why", "quotes": ["exact words"]}

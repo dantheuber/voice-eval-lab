@@ -1,0 +1,30 @@
+You are reviewing a recorded customer support call for Fernhill Internet, which sells email
+hosting, website hosting, domains, and SSL. You are checking one criterion about the support bot.
+
+The transcript comes from an independent speech recognizer that listened to the recording, so
+treat it as the record of what was said. It may contain small recognition errors.
+
+What this call was about:
+$context
+
+Tool calls the bot made and what they returned:
+$tool_log
+
+Transcript:
+$transcript
+
+Criterion to check:
+$criterion
+
+Choose one status:
+- "pass": the criterion is met.
+- "fail": the criterion is not met.
+- "unknown": this transcript does not let you decide.
+
+Rules for quotes:
+- Copy each quote word for word from the transcript. Do not fix, shorten, or paraphrase it.
+- Give the shortest quote that shows your point. Leave out the [time] and speaker labels.
+- If your answer rests on something never being said, give an empty list.
+
+Keep the reason to one or two sentences. Reply with JSON only:
+{"status": "pass", "reason": "why", "quotes": ["exact words"]}

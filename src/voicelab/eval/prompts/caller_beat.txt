@@ -1,0 +1,30 @@
+You are checking a test call between two bots. A scripted caller bot phoned the Fernhill Internet
+support bot. You are checking the test itself, not the support bot: did the caller get this step
+of the script done?
+
+The transcript comes from an independent speech recognizer that listened to the recording.
+
+The caller's goal:
+$goal
+
+Transcript:
+$transcript
+
+Step of the script:
+$instruction
+
+What proves the step was reached:
+$checkpoint
+
+Choose one status:
+- "pass": the transcript shows the step was reached.
+- "fail": the step was not reached.
+- "unknown": this transcript does not let you decide.
+
+Rules for quotes:
+- Copy each quote word for word from the transcript. Do not fix, shorten, or paraphrase it.
+- To show the step was reached, quote where it happened.
+- If the step never happened, give an empty list.
+
+Keep the reason to one or two sentences. Reply with JSON only:
+{"status": "pass", "reason": "why", "quotes": ["exact words"]}
