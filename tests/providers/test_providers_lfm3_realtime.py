@@ -104,6 +104,11 @@ async def test_it_configures_a_session_in_the_order_that_works():
     ]
 
 
+async def caller_turn(session) -> None:
+    await session.send_audio(b"\x00\x00")
+    await session.commit_turn()
+
+
 async def test_audio_is_base64_and_committing_starts_a_response():
     server = Server()
     running, voice = await serve(server)
@@ -128,7 +133,7 @@ async def test_text_and_audio_events_are_normalized_with_their_response_id():
     running, voice = await serve(Server(reply))
     session = await voice.connect(instructions="", tools=[])
 
-    await session.commit_turn()
+    await caller_turn(session)
     events = await collect(session, 3)
     await session.close()
     running.close()
@@ -154,7 +159,7 @@ async def test_a_good_tool_call_comes_out_parsed():
     running, voice = await serve(Server(reply))
     session = await voice.connect(instructions="", tools=[TOOL])
 
-    await session.commit_turn()
+    await caller_turn(session)
     tool, done = await collect(session, 2)
     await session.close()
     running.close()
@@ -179,7 +184,7 @@ async def test_a_bad_tool_call_still_comes_out_so_it_can_be_answered(arguments):
     running, voice = await serve(Server(reply))
     session = await voice.connect(instructions="", tools=[TOOL])
 
-    await session.commit_turn()
+    await caller_turn(session)
     tool, _ = await collect(session, 2)
     await session.close()
     running.close()
@@ -215,7 +220,7 @@ async def test_an_interrupt_replaces_the_session_with_heard_only_history():
     session = await voice.connect(instructions="You are Fern.", tools=[TOOL])
     session.record_user_text("My email is down.")
 
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 2)
     await session.interrupt(response_id="r1", played_ms=1000)
     await session.send_audio(b"\x01\x02")
@@ -242,7 +247,7 @@ async def test_a_reply_generated_in_full_keeps_only_its_heard_words_after_a_cut(
     running, voice = await serve(server)
     session = await voice.connect(instructions="You are Fern.", tools=[TOOL])
 
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 3)
     await session.interrupt(response_id="r1", played_ms=1000)
     await session.close()
@@ -264,7 +269,7 @@ async def test_a_cut_counts_played_time_across_the_replies_of_one_turn():
     running, voice = await serve(server)
     session = await voice.connect(instructions="", tools=[TOOL])
 
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 3)
     await session.send_tool_result("c1", '{"ok": true}')
     await session.continue_after_tools()
@@ -287,7 +292,7 @@ async def test_words_still_being_generated_are_not_credited_from_the_audio_so_fa
     running, voice = await serve(server)
     session = await voice.connect(instructions="", tools=[])
 
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 2)
     await session.interrupt(response_id="r1", played_ms=500)
     await session.close()
@@ -307,7 +312,7 @@ async def test_events_queued_before_a_cut_never_come_out_after_it():
     session = await voice.connect(instructions="", tools=[TOOL])
     stream = session.events()
 
-    await session.commit_turn()
+    await caller_turn(session)
     first = await asyncio.wait_for(anext(stream), 2)
     while session._events.qsize() < 3:
         await asyncio.sleep(0.01)
@@ -328,7 +333,7 @@ async def test_events_from_the_old_socket_never_reach_the_new_session():
     running, voice = await serve(Server(reply))
     session = await voice.connect(instructions="", tools=[])
 
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 2)
     await session.interrupt(response_id=None, played_ms=0)
     await asyncio.sleep(0.1)
@@ -363,9 +368,9 @@ async def test_a_finished_reply_joins_the_history_and_a_cancelled_one_does_not()
     running, voice = await serve(server)
     session = await voice.connect(instructions="Base.", tools=[])
 
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 3)
-    await session.commit_turn()
+    await caller_turn(session)
     await collect(session, 3)
     await session.interrupt(response_id=None, played_ms=0)
     await session.close()
@@ -414,7 +419,7 @@ async def test_a_dropped_connection_is_an_error_event():
     running, voice = await serve(Server(reply))
     session = await voice.connect(instructions="", tools=[])
 
-    await session.commit_turn()
+    await caller_turn(session)
     events = await collect(session, 1)
     await session.close()
     running.close()
@@ -429,7 +434,7 @@ async def test_server_errors_are_passed_on():
     running, voice = await serve(Server(reply))
     session = await voice.connect(instructions="", tools=[])
 
-    await session.commit_turn()
+    await caller_turn(session)
     events = await collect(session, 1)
     await session.close()
     running.close()
@@ -456,3 +461,19 @@ def test_heard_prefix_keeps_only_finished_words():
     assert heard_prefix(text, 1000, 2000) == "aaaa bbbb"
     assert heard_prefix(text, 2000, 2000) == text
     assert heard_prefix(text, 500, 0) == ""  # text with no audio was never heard
+
+
+async def test_a_turn_with_no_new_audio_asks_for_no_reply():
+    """The server answers that with an error, and it used to end the call."""
+    server = Server()
+    running, voice = await serve(server)
+    session = await voice.connect(instructions="", tools=[])
+
+    await session.send_audio(b"\x01\x02")
+    assert await session.commit_turn() is True
+    assert await session.commit_turn() is False
+    await session.close()
+    running.close()
+    await asyncio.sleep(0.01)
+
+    assert [m["type"] for m in server.connections[0]].count("response.create") == 1

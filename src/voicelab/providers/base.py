@@ -159,8 +159,9 @@ class RealtimeEvent(BaseModel):
 class RealtimeSession(Protocol):
     async def send_audio(self, pcm16: bytes) -> None: ...
 
-    async def commit_turn(self) -> None:
-        """The caller finished talking. A model with its own VAD ignores this."""
+    async def commit_turn(self) -> bool | None:
+        """The caller finished talking. A model with its own VAD ignores this. Returning False
+        means there was no new audio to answer, so no reply is coming."""
         ...
 
     def record_user_text(self, text: str) -> None:

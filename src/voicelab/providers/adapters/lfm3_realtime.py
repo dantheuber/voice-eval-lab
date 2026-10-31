@@ -147,6 +147,7 @@ class Lfm3RealtimeSession:
         self._ready = asyncio.Event()
         self._closed = False
         self._epoch = 0  # events from a replaced socket are stale
+        self._audio_waiting = False  # sent to this socket since the last response.create
 
     def _prompt(self) -> str:
         lines = [_history_line(entry) for entry in self._history]
@@ -159,6 +160,7 @@ class Lfm3RealtimeSession:
         """Open a socket and configure it. `session.created` means a slot was free."""
         self._epoch += 1
         epoch = self._epoch
+        self._audio_waiting = False
         socket = await asyncio.wait_for(
             websockets.connect(self._voice.url, max_size=None, ping_interval=None),
             self._voice.connect_timeout_s,
@@ -282,17 +284,24 @@ class Lfm3RealtimeSession:
             await self._socket.send(json.dumps(event))
 
     async def send_audio(self, pcm16: bytes) -> None:
+        self._audio_waiting = True
         await self._send(
             type="input_audio_buffer.append", audio=base64.b64encode(pcm16).decode("ascii")
         )
 
-    async def commit_turn(self) -> None:
+    async def commit_turn(self) -> bool:
         """The caller finished. `response.create` commits pending audio by itself.
 
-        Nothing cut the replies before this, so they played to the end.
+        Nothing cut the replies before this, so they played to the end. Returns False with nothing
+        to answer: the server treats that as an error, and it comes up when a caller's pause ended
+        a turn and a cut-in then replaced the session. It's no reason to end the call.
         """
+        if not self._audio_waiting:
+            return False
+        self._audio_waiting = False
         self._turn = []
         await self._send(type="response.create")
+        return True
 
     def record_user_text(self, text: str) -> None:
         if text.strip():

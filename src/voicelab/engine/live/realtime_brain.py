@@ -143,6 +143,9 @@ class RealtimeBrain(BotBrain):
         else:
             self._release_pre_roll()
 
+    async def _finish_far_side_turn(self) -> None:
+        await self.on_far_side_finished()  # the model heard the audio, so no transcript to wait for
+
     async def on_far_side_finished(self) -> None:
         """Local turn detection decided the caller is done, so ask for the reply now.
 
@@ -153,12 +156,13 @@ class RealtimeBrain(BotBrain):
         self.barged_at_s = None
         if self.call_over:
             return
+        if await self.session.commit_turn() is False:
+            return
         self.begin_turn()
         self._reply = self.ledger.start_segment("")
         self._reply_audio_started = False
         self._response_id = None
         self.turn_open = True
-        await self.session.commit_turn()
 
     def on_transcript(self, text: str) -> None:
         self.session.record_user_text(text)
