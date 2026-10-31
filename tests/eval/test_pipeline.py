@@ -336,7 +336,7 @@ async def test_upload_with_no_scenario_reports_what_it_could_not_check(store):
     artifact, paths = voiced_call(store, artifact)
     deps = EvalDeps(stt=stt(), judge=FakeLLM(), analyst=FakeAnalyst())
     result = await run_evaluation(artifact, paths, deps)
-    assert result.verdict == Verdict.PASS
+    assert result.verdict == Verdict.NEEDS_REVIEW  # no tool log, so a person decides
     assert {c.kind for c in result.criteria} == {"general"}
     assert "Not checked: scenario rules" in result.summary
     assert "tool result" in result.summary

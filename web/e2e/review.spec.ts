@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 test.describe("call review keyboard loop", () => {
   test("decides findings and moves to the next call without the mouse", async ({ page }) => {
     await page.goto("/calls/call_a3f2c1d0e9b7?theme=dark");
-    await expect(page.getByText("finding 1 of 7")).toBeVisible();
+    await expect(page.getByText("finding 1 of 6")).toBeVisible();
     // first open finding is selected and its clip is cued
     const first = page.locator("[data-finding='fnd_a1']");
     await expect(first).toHaveAttribute("aria-pressed", "true");
@@ -21,13 +21,13 @@ test.describe("call review keyboard loop", () => {
     // y confirms and advances to finding 2
     await page.keyboard.press("y");
     await expect(first.getByText("confirmed")).toBeVisible();
-    await expect(page.getByText("finding 2 of 7")).toBeVisible();
+    await expect(page.getByText("finding 2 of 6")).toBeVisible();
     await expect(page.getByText("4 open", { exact: true })).toBeVisible();
 
     // n dismisses finding 2 and advances
     await page.keyboard.press("n");
     await expect(page.locator("[data-finding='fnd_a2']").getByText("dismissed")).toBeVisible();
-    await expect(page.getByText("finding 3 of 7")).toBeVisible();
+    await expect(page.getByText("finding 3 of 6")).toBeVisible();
 
     // c opens a note on the selected finding, Ctrl+Enter saves it
     await page.keyboard.press("c");
@@ -39,9 +39,9 @@ test.describe("call review keyboard loop", () => {
 
     // j / k move the selection
     await page.keyboard.press("j");
-    await expect(page.getByText("finding 4 of 7")).toBeVisible();
+    await expect(page.getByText("finding 4 of 6")).toBeVisible();
     await page.keyboard.press("k");
-    await expect(page.getByText("finding 3 of 7")).toBeVisible();
+    await expect(page.getByText("finding 3 of 6")).toBeVisible();
 
     // 2 sets the human verdict to fail
     await page.keyboard.press("2");
@@ -65,7 +65,7 @@ test.describe("call review keyboard loop", () => {
 
   test("decisions persist across navigation in fixture mode", async ({ page }) => {
     await page.goto("/calls/call_a3f2c1d0e9b7?theme=dark");
-    await expect(page.getByText("finding 1 of 7")).toBeVisible();
+    await expect(page.getByText("finding 1 of 6")).toBeVisible();
     await page.keyboard.press("y");
     await expect(page.locator("[data-finding='fnd_a1']").getByText("confirmed")).toBeVisible();
     await page.waitForTimeout(800); // let the (mock-latency) save land before a hard navigation
