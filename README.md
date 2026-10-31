@@ -168,7 +168,7 @@ Nothing else grew, so there's no sign of a leak in that length of call. Longer c
 | --- | --- |
 | `./run.sh` to all models ready | 5.8 s, or 10.5 s with a dashboard rebuild. The models were in the page cache, so a load from a cold disk will be slower and wasn't measured |
 | Profile swap | 3 to 16 s, restarting only the servers that changed |
-| Ctrl-C | 2.3 s, no process left behind |
+| Ctrl-C | 2 to 12 s, no process left behind. llama-server can take about 9 s to exit |
 | Model server killed | Back within 2 to 3 s. A call between requests carries on. A request in flight fails the call, keeps the recording, and says why |
 | Restart during a run | 8 s. Calls in flight are marked failed with their recordings, and queued ones resume by themselves |
 | Closing the tab on a mic call | Finalized in 1 s |
