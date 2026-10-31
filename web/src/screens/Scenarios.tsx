@@ -74,7 +74,7 @@ function ScenarioEditor({ id }: { id: string | undefined }) {
   useHotkeys({ "Ctrl+s": () => save.mutate(), "Ctrl+Enter": () => addBeat(), "Ctrl+d": () => draft.mutate() });
 
   // AI draft
-  const [desc, setDesc] = useState("Customer whose website got suspended for non-payment but they actually paid two days ago. Angry, wants it back up now and wants to know if there's a reinstatement fee.");
+  const [desc, setDesc] = useState("");
   const [draftCustomer, setDraftCustomer] = useState<string>("");
   const [emptyOnly, setEmptyOnly] = useState(true);
   const draft = useMutation({ mutationFn: () => endpoints.draftScenario({ description: desc, customerId: draftCustomer || null, baseScenarioId: id ?? null }) });
@@ -199,7 +199,7 @@ function ScenarioEditor({ id }: { id: string | undefined }) {
               <div className="stack sticky-col">
                 <Panel title="Draft with AI" meta={draft.data?.model ?? ""}>
                   <div className="stack">
-                    <Field label="Describe the situation in plain words"><textarea className="in" style={{ minHeight: 90 }} value={desc} onChange={(e) => setDesc(e.target.value)} /></Field>
+                    <Field label="Describe the situation in plain words"><textarea className="in" style={{ minHeight: 90 }} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Customer whose website got suspended for non-payment but they paid two days ago. Angry, wants it back up now." /></Field>
                     <Field label="Customer (optional)"><select className="in" value={draftCustomer} onChange={(e) => setDraftCustomer(e.target.value)}><option value="">let the model pick from the seed</option>{customers.data?.items.map((c) => <option key={c.id} value={c.id}>{c.name}: {c.note}</option>)}</select></Field>
                     <div className="btn-row"><Button variant="primary" onClick={() => draft.mutate()} disabled={draft.isPending || !desc.trim()}>Draft scenario <Kbd>Ctrl</Kbd><Kbd>D</Kbd></Button><label className="check"><input type="checkbox" checked={emptyOnly} onChange={(e) => setEmptyOnly(e.target.checked)} /> replace empty fields only</label></div>
                     {draft.isPending && <div><Skeleton rows={3} /><div className="faint" style={{ marginTop: 6 }}>Drafting, usually 5 to 10 s.</div></div>}

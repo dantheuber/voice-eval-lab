@@ -55,7 +55,19 @@ def draft_schema() -> dict[str, Any]:
     schema = Scenario.model_json_schema()
     for assigned in ("id", "created_at", "updated_at"):
         schema["properties"].pop(assigned)
-    schema["required"] = ["title", "goal", "facts", "beats", "must", "must_not", "expected_state"]
+    # Constrained generation drops whatever isn't required. A draft with no customer_id still
+    # plays, but with nobody's account behind it, and an empty description shows as a blank field.
+    schema["required"] = [
+        "title",
+        "description",
+        "goal",
+        "customer_id",
+        "facts",
+        "beats",
+        "must",
+        "must_not",
+        "expected_state",
+    ]
     return schema
 
 

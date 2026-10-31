@@ -42,6 +42,12 @@ def draft(**overrides) -> str:
     return json.dumps(base | overrides)
 
 
+def test_draft_schema_requires_what_generation_would_otherwise_drop():
+    required = draft_schema()["required"]
+    assert "customer_id" in required
+    assert "description" in required
+
+
 async def test_returns_a_validated_scenario():
     llm = ScriptedLLM(draft())
     scenario = await draft_scenario(llm, "A caller forgot their email password")
