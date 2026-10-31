@@ -42,7 +42,9 @@ class Catalog:
         current = self.persona(persona.id)
         if current is None:
             return None
-        saved = persona.model_copy(update={"created_at": current.created_at, "updated_at": utcnow()})
+        saved = persona.model_copy(
+            update={"created_at": current.created_at, "updated_at": utcnow()}
+        )
         self.db.run(
             "UPDATE personas SET name = ?, data = ?, updated_at = ? WHERE id = ?",
             (saved.name, saved.model_dump_json(), timestamp(saved.updated_at), saved.id),

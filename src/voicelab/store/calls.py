@@ -153,9 +153,7 @@ class CallIndex:
 
     def update(self, call_id: str, **columns: Any) -> None:
         assignments = ", ".join(f"{name} = ?" for name in columns)
-        self.db.run(
-            f"UPDATE calls SET {assignments} WHERE id = ?", [*columns.values(), call_id]
-        )
+        self.db.run(f"UPDATE calls SET {assignments} WHERE id = ?", [*columns.values(), call_id])
 
     def get(self, call_id: str) -> dict[str, Any] | None:
         return self.db.row("SELECT * FROM calls WHERE id = ?", (call_id,))
@@ -218,9 +216,7 @@ class CallIndex:
         )
         return {row["verdict"]: row["n"] for row in rows}
 
-    def counts_by(
-        self, *columns: str, filters: CallFilters | None = None
-    ) -> list[dict[str, Any]]:
+    def counts_by(self, *columns: str, filters: CallFilters | None = None) -> list[dict[str, Any]]:
         """Verdict tallies per group. Rows hold the group columns plus a `counts` dict."""
         where, params = _where(filters or CallFilters())
         names = ", ".join(columns)
@@ -232,9 +228,7 @@ class CallIndex:
         grouped: dict[tuple, dict[str, Any]] = {}
         for row in rows:
             key = tuple(row[column] for column in columns)
-            group = grouped.setdefault(
-                key, {**{c: row[c] for c in columns}, "counts": {}}
-            )
+            group = grouped.setdefault(key, {**{c: row[c] for c in columns}, "counts": {}})
             group["counts"][row["verdict"]] = row["n"]
         return list(grouped.values())
 
@@ -420,9 +414,7 @@ class CallIndex:
     def top_open_findings(
         self, profile: str | None, since: str | None, limit: int = 5
     ) -> list[dict[str, Any]]:
-        where, params = _where(
-            CallFilters(profile=[profile] if profile else [], since=since)
-        )
+        where, params = _where(CallFilters(profile=[profile] if profile else [], since=since))
         return self.db.rows(
             "SELECT title, evaluator, count(*) AS count FROM call_findings "
             "WHERE advisory = 0 AND human_verdict IS NULL AND call_id IN "
