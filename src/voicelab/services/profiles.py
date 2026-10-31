@@ -25,6 +25,7 @@ from voicelab.core.profiles import (
 from voicelab.services.errors import Conflict, Invalid, ModelNotReady, NotFound
 from voicelab.services.settings import Settings
 from voicelab.services.supervisor import ServiceStatus, ServiceSupervisor
+from voicelab.services.system import aws_status
 from voicelab.store.catalog import Catalog
 from voicelab.store.sqlite import timestamp
 
@@ -186,6 +187,7 @@ class ProfileManager:
         """The stack, or `model_not_ready` naming the first role still loading. Doesn't wait, and
         asks for a lazy server to start so that a retry can succeed. With `hold`, the caller keeps
         these servers until it calls `release`."""
+        self.require_usable(profile)
         roles = list(roles)
         other = self._clashing(profile)
         if other is not None:
@@ -298,8 +300,18 @@ class ProfileManager:
 
     # Changes -------------------------------------------------------------------------------------
 
+    def require_usable(self, profile: Profile) -> None:
+        """Refuse a cloud profile with no credentials. It has no local server to report down, so
+        it would look ready, and activating it would stop every model server for nothing."""
+        if profile.untested and aws_status()["credentials"] != "found":
+            raise Invalid(
+                f"{profile.label} needs AWS credentials, and none were found. Set AWS_PROFILE or "
+                "AWS keys in the environment before starting."
+            )
+
     async def activate(self, profile_id: str) -> Profile:
         profile = self.require(profile_id)
+        self.require_usable(profile)
         self.catalog.set_setting("active_profile", profile.id)
         await self.supervisor.apply(profile.services, start=True)
         return profile

@@ -58,7 +58,9 @@ async def create_run(body: RunBody, svc: Svc) -> dict[str, Any]:
     if profile is None:
         raise Invalid("no model profile in config/profiles")
     personas = [svc.catalog.persona(pair.persona_id) for pair in body.pairs]
-    stack = svc.profiles.stack(svc.profiles.require(profile))
+    chosen = svc.profiles.require(profile)
+    svc.profiles.require_usable(chosen)
+    stack = svc.profiles.stack(chosen)
     voiceless = await authoring.voiceless_personas(stack, [p for p in personas if p is not None])
     if voiceless:
         names = ", ".join(sorted(set(voiceless)))

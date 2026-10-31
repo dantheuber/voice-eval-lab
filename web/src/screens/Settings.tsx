@@ -17,7 +17,7 @@ export function SettingsScreen() {
   const thresholds = useThresholds();
   const aws = useAws();
   const invalidate = useInvalidate();
-  const setProfile = useMutation({ mutationFn: (id: string) => endpoints.setActiveProfile(id), onSuccess: () => { invalidate(keys.profiles, keys.roles, keys.health); toast("Profile switched. Only changed servers restart."); } });
+  const setProfile = useMutation({ mutationFn: (id: string) => endpoints.setActiveProfile(id), onError: (e) => toast((e as Error).message, 7000), onSuccess: () => { invalidate(keys.profiles, keys.roles, keys.health); toast("Profile switched. Only changed servers restart."); } });
   const setRole = useMutation({ mutationFn: ({ role, adapter }: { role: string; adapter: string }) => endpoints.setRole(role, adapter), onSuccess: (r) => { invalidate(keys.roles, keys.health, keys.profiles); toast(`${r.label} now uses ${r.options.find((o) => o.id === r.adapter)?.label ?? r.adapter}`); }, onError: (e) => toast((e as Error).message, 3000) });
   const restart = useMutation({ mutationFn: (role: string) => endpoints.restartServer(role), onSuccess: () => { invalidate(keys.health, keys.roles); toast("Restarting"); } });
   const restartAll = useMutation({ mutationFn: () => endpoints.restartAll(), onSuccess: () => { invalidate(keys.health, keys.roles); toast("Restarting all servers"); } });

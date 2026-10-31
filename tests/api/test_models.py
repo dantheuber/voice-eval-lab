@@ -287,7 +287,8 @@ def _untested_profile(rig):
     return rig.services.profiles.require("live").model_copy(update={"untested": True})
 
 
-def test_run_and_calls_say_when_adapters_were_untested(client, rig, start_run, waiter):
+def test_run_and_calls_say_when_adapters_were_untested(client, rig, start_run, waiter, monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
     rig.services.profiles.items["live"] = _untested_profile(rig)
     run = start_run(profile="live")["run"]
     assert run["untested"] is True
@@ -305,7 +306,8 @@ def test_tested_runs_say_so(client, start_run):
     assert client.get("/api/calls").json()["items"][0]["untested"] is False
 
 
-def test_untested_survives_a_later_edit_of_the_profile(client, rig, start_run, waiter):
+def test_untested_survives_a_later_edit_of_the_profile(client, rig, start_run, waiter, monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
     rig.services.profiles.items["live"] = _untested_profile(rig)
     run = start_run(profile="live")["run"]
     waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
@@ -563,3 +565,29 @@ def test_malformed_json_is_invalid(client):
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid"
+
+
+def _no_aws(monkeypatch, tmp_path):
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "none"))
+
+
+def test_a_cloud_profile_with_no_credentials_is_refused(client, rig, monkeypatch, tmp_path):
+    _no_aws(monkeypatch, tmp_path)
+    rig.services.profiles.items["live"] = _untested_profile(rig)
+    response = client.put("/api/profiles/active", json={"id": "live"})
+    assert response.status_code == 400
+    assert "AWS credentials" in response.json()["error"]["message"]
+
+
+def test_a_run_on_a_cloud_profile_with_no_credentials_is_refused(
+    client, rig, monkeypatch, tmp_path
+):
+    _no_aws(monkeypatch, tmp_path)
+    rig.services.profiles.items["live"] = _untested_profile(rig)
+    pair = {"scenarioId": "scn_dns_mx_fix", "personaId": "per_impatient_owner"}
+    body = {"pairs": [pair], "reps": 1, "profile": "live", "mode": "auto", "concurrency": 1}
+    response = client.post("/api/runs", json={**body, "line": "persona", "label": None})
+    assert response.status_code == 400
+    assert "AWS credentials" in response.json()["error"]["message"]
