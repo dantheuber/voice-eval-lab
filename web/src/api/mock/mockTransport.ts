@@ -55,7 +55,7 @@ export function createMockTransport(): Transport {
   const healthListeners = new Set<(items: T.Health[]) => void>();
 
   // judge LLM finishes loading after 25 s of session time
-  const judge = health.find((h) => h.role === "judge_llm")!;
+  const judge = health.find((h) => h.role === "llm_judge")!;
   const t0 = Date.now();
   const tickHealth = () => {
     const el = Math.round((Date.now() - t0) / 1000) + 22;

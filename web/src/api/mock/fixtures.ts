@@ -115,11 +115,11 @@ export const profiles: T.Profile[] = [
 ];
 
 export const health: T.Health[] = [
-  { role: "support_bot_llm", name: "support bot LLM", model: "Qwen3.5-9B-Instruct (llama.cpp :8101)", state: "ok", detail: "ready, 38 tok/s", elapsedS: null, usualS: null },
-  { role: "caller_llm", name: "caller LLM", model: "Qwen3.5-4B (llama.cpp :8102)", state: "ok", detail: "ready", elapsedS: null, usualS: null },
-  { role: "stt", name: "STT", model: "faster-whisper large-v3 (:8110)", state: "ok", detail: "ready, RTF 0.21", elapsedS: null, usualS: null },
-  { role: "tts", name: "TTS", model: "Qwen3-TTS 1.7B CustomVoice (:8120)", state: "ok", detail: "ready, first byte 410 ms", elapsedS: null, usualS: null },
-  { role: "judge_llm", name: "judge LLM", model: "Qwen3.6-35B-A3B (llama.cpp :8103)", state: "loading", detail: "loading weights", elapsedS: 22, usualS: 40 },
+  { role: "llm_support", name: "support bot LLM", model: "Qwen3.5-9B-Instruct (llama.cpp :8101)", state: "ok", detail: "ready, 38 tok/s", elapsedS: null, usualS: null },
+  { role: "llm_caller", name: "caller LLM", model: "Qwen3.5-4B (llama.cpp :8102)", state: "ok", detail: "ready", elapsedS: null, usualS: null },
+  { role: "stt_live", name: "STT", model: "faster-whisper large-v3 (:8110)", state: "ok", detail: "ready, RTF 0.21", elapsedS: null, usualS: null },
+  { role: "tts_bot", name: "TTS", model: "Qwen3-TTS 1.7B CustomVoice (:8120)", state: "ok", detail: "ready, first byte 410 ms", elapsedS: null, usualS: null },
+  { role: "llm_judge", name: "judge LLM", model: "Qwen3.6-35B-A3B (llama.cpp :8103)", state: "loading", detail: "loading weights", elapsedS: 22, usualS: 40 },
   { role: "audio_analyst", name: "audio analyst", model: "LFM3-Audio-2B (:8130)", state: "ok", detail: "ready", elapsedS: null, usualS: null },
   { role: "mos", name: "MOS predictor", model: "NISQA (in-process)", state: "ok", detail: "ready", elapsedS: null, usualS: null },
 ];
@@ -210,12 +210,12 @@ export const voices: T.Voice[] = [
 ];
 
 export const roles: T.RoleItem[] = [
-  { role: "support_bot_llm", label: "support bot LLM", interface: "LLM", adapter: "llamacpp:qwen3.5-9b", options: [{ id: "llamacpp:qwen3.5-9b", label: "Qwen3.5-9B-Instruct · llama.cpp :8101", untested: false, license: "Apache-2.0" }, { id: "llamacpp:qwen3.6-35b", label: "Qwen3.6-35B-A3B · llama.cpp :8103", untested: false, license: "Apache-2.0" }, { id: "llamacpp:gpt-oss-20b", label: "gpt-oss-20b · llama.cpp", untested: false, license: "Apache-2.0" }, { id: "bedrock:claude-sonnet", label: "Bedrock · Claude Sonnet", untested: true, license: "Bedrock terms" }], health: health[0] },
-  { role: "support_bot_realtime", label: "support bot realtime voice", interface: "RealtimeVoice", adapter: "none", options: [{ id: "none", label: "none (STT + LLM + TTS)", untested: false, license: "" }, { id: "lfm3:audio-2b", label: "LFM3-Audio-2B · :8130", untested: false, license: "LFM licence, conditional" }, { id: "bedrock:nova-sonic", label: "Bedrock · Nova Sonic", untested: true, license: "Bedrock terms" }], health: { role: "support_bot_realtime", name: "support bot realtime voice", model: "", state: "off", detail: "off", elapsedS: null, usualS: null } },
-  { role: "caller_llm", label: "caller LLM", interface: "LLM", adapter: "llamacpp:qwen3.5-4b", options: [{ id: "llamacpp:qwen3.5-4b", label: "Qwen3.5-4B · llama.cpp :8102", untested: false, license: "Apache-2.0" }, { id: "llamacpp:qwen3.5-9b", label: "Qwen3.5-9B-Instruct · llama.cpp :8101", untested: false, license: "Apache-2.0" }], health: health[1] },
-  { role: "stt", label: "STT, live", interface: "STT", adapter: "whisper:large-v3", options: [{ id: "whisper:large-v3", label: "faster-whisper large-v3 · :8110", untested: false, license: "MIT" }, { id: "bedrock:transcribe", label: "Bedrock · Transcribe streaming", untested: true, license: "AWS terms" }], health: health[2] },
-  { role: "tts", label: "TTS, bot voice", interface: "TTS", adapter: "qwen3_tts:1.7b", options: [{ id: "qwen3_tts:1.7b", label: "Qwen3-TTS 1.7B CustomVoice · :8120", untested: false, license: "Apache-2.0" }, { id: "pocket_tts", label: "kyutai pocket-tts · :8121", untested: false, license: "CC-BY 4.0" }, { id: "bedrock:polly", label: "Bedrock · Polly", untested: true, license: "AWS terms" }], health: health[3] },
-  { role: "judge_llm", label: "judge LLM", interface: "LLM", adapter: "llamacpp:qwen3.6-35b", options: [{ id: "llamacpp:qwen3.6-35b", label: "Qwen3.6-35B-A3B · llama.cpp :8103", untested: false, license: "Apache-2.0" }, { id: "vllm:qwen3-32b-awq", label: "Qwen3-32B-AWQ · vLLM", untested: false, license: "Apache-2.0" }, { id: "bedrock:claude-sonnet", label: "Bedrock · Claude Sonnet", untested: true, license: "Bedrock terms" }], health: health[4] },
+  { role: "llm_support", label: "support bot LLM", interface: "LLM", adapter: "llamacpp:qwen3.5-9b", options: [{ id: "llamacpp:qwen3.5-9b", label: "Qwen3.5-9B-Instruct · llama.cpp :8101", untested: false, license: "Apache-2.0" }, { id: "llamacpp:qwen3.6-35b", label: "Qwen3.6-35B-A3B · llama.cpp :8103", untested: false, license: "Apache-2.0" }, { id: "llamacpp:gpt-oss-20b", label: "gpt-oss-20b · llama.cpp", untested: false, license: "Apache-2.0" }, { id: "bedrock:claude-sonnet", label: "Bedrock · Claude Sonnet", untested: true, license: "Bedrock terms" }], health: health[0] },
+  { role: "realtime", label: "support bot realtime voice", interface: "RealtimeVoice", adapter: "none", options: [{ id: "none", label: "none (STT + LLM + TTS)", untested: false, license: "" }, { id: "lfm3:audio-2b", label: "LFM3-Audio-2B · :8130", untested: false, license: "LFM licence, conditional" }, { id: "bedrock:nova-sonic", label: "Bedrock · Nova Sonic", untested: true, license: "Bedrock terms" }], health: { role: "realtime", name: "support bot realtime voice", model: "", state: "off", detail: "off", elapsedS: null, usualS: null } },
+  { role: "llm_caller", label: "caller LLM", interface: "LLM", adapter: "llamacpp:qwen3.5-4b", options: [{ id: "llamacpp:qwen3.5-4b", label: "Qwen3.5-4B · llama.cpp :8102", untested: false, license: "Apache-2.0" }, { id: "llamacpp:qwen3.5-9b", label: "Qwen3.5-9B-Instruct · llama.cpp :8101", untested: false, license: "Apache-2.0" }], health: health[1] },
+  { role: "stt_live", label: "STT, live", interface: "STT", adapter: "whisper:large-v3", options: [{ id: "whisper:large-v3", label: "faster-whisper large-v3 · :8110", untested: false, license: "MIT" }, { id: "bedrock:transcribe", label: "Bedrock · Transcribe streaming", untested: true, license: "AWS terms" }], health: health[2] },
+  { role: "tts_bot", label: "TTS, bot voice", interface: "TTS", adapter: "qwen3_tts:1.7b", options: [{ id: "qwen3_tts:1.7b", label: "Qwen3-TTS 1.7B CustomVoice · :8120", untested: false, license: "Apache-2.0" }, { id: "pocket_tts", label: "kyutai pocket-tts · :8121", untested: false, license: "CC-BY 4.0" }, { id: "bedrock:polly", label: "Bedrock · Polly", untested: true, license: "AWS terms" }], health: health[3] },
+  { role: "llm_judge", label: "judge LLM", interface: "LLM", adapter: "llamacpp:qwen3.6-35b", options: [{ id: "llamacpp:qwen3.6-35b", label: "Qwen3.6-35B-A3B · llama.cpp :8103", untested: false, license: "Apache-2.0" }, { id: "vllm:qwen3-32b-awq", label: "Qwen3-32B-AWQ · vLLM", untested: false, license: "Apache-2.0" }, { id: "bedrock:claude-sonnet", label: "Bedrock · Claude Sonnet", untested: true, license: "Bedrock terms" }], health: health[4] },
   { role: "pronunciation_asr", label: "pronunciation ASR", interface: "STT", adapter: "whisper:large-v3-noprompt", options: [{ id: "whisper:large-v3-noprompt", label: "faster-whisper large-v3, no prompt · :8110", untested: false, license: "MIT" }], health: { ...health[2], role: "pronunciation_asr" } },
   { role: "audio_analyst", label: "audio analyst", interface: "AudioAnalyst", adapter: "lfm3:audio-2b", options: [{ id: "lfm3:audio-2b", label: "LFM3-Audio-2B · :8130", untested: false, license: "LFM licence, conditional" }, { id: "bedrock:nova", label: "Bedrock · Nova", untested: true, license: "Bedrock terms" }], health: health[5] },
   { role: "mos", label: "MOS predictor", interface: "AudioQuality", adapter: "nisqa", options: [{ id: "nisqa", label: "NISQA, in-process", untested: false, license: "MIT" }], health: health[6] },
@@ -223,7 +223,7 @@ export const roles: T.RoleItem[] = [
 
 export const system: T.SystemInfo = {
   gpu: { device: "Radeon 8060S, gfx1151", memoryUsedGb: 41.2, memoryTotalGb: 122 },
-  servers: [{ role: "support_bot_llm", kind: "llama.cpp", port: 8101, pid: 41211 }, { role: "caller_llm", kind: "llama.cpp", port: 8102, pid: 41240 }, { role: "judge_llm", kind: "llama.cpp", port: 8103, pid: 41377 }, { role: "stt", kind: "faster-whisper", port: 8110, pid: 41402 }, { role: "tts", kind: "qwen3-tts", port: 8120, pid: 41455 }, { role: "audio_analyst", kind: "lfm3", port: 8130, pid: 41490 }],
+  servers: [{ role: "llm_support", kind: "llama.cpp", port: 8101, pid: 41211 }, { role: "llm_caller", kind: "llama.cpp", port: 8102, pid: 41240 }, { role: "llm_judge", kind: "llama.cpp", port: 8103, pid: 41377 }, { role: "stt_live", kind: "faster-whisper", port: 8110, pid: 41402 }, { role: "tts_bot", kind: "qwen3-tts", port: 8120, pid: 41455 }, { role: "audio_analyst", kind: "lfm3", port: 8130, pid: 41490 }],
   urls: { local: "https://localhost:8443", lan: "https://192.168.0.75:8443" }, cert: "self-signed",
 };
 
@@ -346,7 +346,7 @@ export const reviewA = ((): T.ReviewPayload => {
   const dbChanges: T.DbChange[] = [{ table: "tickets", key: { id: "tkt_2291" }, kind: "insert", before: null, after: { customer_id: "cus_1001", subject: "Duplicate charge FH-4419, refund requested" } }];
   const artifact: T.CallArtifact = {
     id, mode: "live_bots", status: "done", timingIsReal: true, batchId: "batch_0142", personaId: pe.id, scenarioId: sc.id, personaSnapshot: pe, scenarioSnapshot: sc,
-    profile: "local-default", providers: { support_bot_llm: "llamacpp/qwen3.5-9b", caller_llm: "llamacpp/qwen3.5-4b", stt: "faster-whisper/large-v3", tts: "qwen3-tts/1.7b" },
+    profile: "local-default", providers: { llm_support: "llamacpp/qwen3.5-9b", llm_caller: "llamacpp/qwen3.5-4b", stt: "faster-whisper/large-v3", tts: "qwen3-tts/1.7b" },
     startedAt: iso(43), endedAt: iso(40), durationS: 172, timeline: timeline(turns, events, id), dbChanges, hasToolLog: true, hasIntendedText: true, error: null,
   };
   return {
@@ -427,7 +427,7 @@ export const reviewB = ((): T.ReviewPayload => {
   ];
   const artifact: T.CallArtifact = {
     id, mode: "turn_based", status: "done", timingIsReal: false, batchId: "batch_0141", personaId: pe.id, scenarioId: sc.id, personaSnapshot: pe, scenarioSnapshot: sc,
-    profile: "local-35b", providers: { support_bot_llm: "llamacpp/qwen3.6-35b" }, startedAt: iso(110), endedAt: iso(103), durationS: 164,
+    profile: "local-35b", providers: { llm_support: "llamacpp/qwen3.6-35b" }, startedAt: iso(110), endedAt: iso(103), durationS: 164,
     timeline: timeline(turns, events, id),
     dbChanges: [{ table: "refunds", key: { id: "FH-R-2304" }, kind: "insert", before: null, after: { invoice_id: "FH-4419", amount_cents: 4999 } }],
     hasToolLog: true, hasIntendedText: true, error: null,

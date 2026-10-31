@@ -41,7 +41,7 @@ export function RunLauncherScreen() {
   const effectiveMode: CallMode = mode === "auto" ? (prof?.liveCapable ? "live_bots" : "turn_based") : mode;
   const perCall = effectiveMode === "live_bots" ? 210 : 420;
   const est = Math.round((calls * perCall) / 60 / Math.max(1, concurrency));
-  const judge = health.data?.items.find((h) => h.role === "judge_llm");
+  const judge = health.data?.items.find((h) => h.role === "llm_judge");
   const launch = useMutation({
     mutationFn: () => { const body: RunRequest = { pairs, reps, profile: prof!.id, mode, line: line === "persona" ? "persona" : LINES[line], concurrency, label: label || null }; return endpoints.createRun(body); },
     onSuccess: (r) => { invalidate(keys.runs, keys.overview()); nav(`/runs/${r.run.id}`); },

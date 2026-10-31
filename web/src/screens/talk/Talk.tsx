@@ -16,6 +16,9 @@ import { useMic } from "./useMic";
 import { useBotCall } from "./useBotCall";
 import s from "./talk.module.css";
 
+// What a mic call needs. A realtime profile has "realtime" instead of an LLM, and "off" means the profile doesn't use that role.
+const TALK_ROLES = ["llm_support", "stt_live", "tts_bot", "realtime"];
+
 const LINES: Record<string, LineConditions | null> = {
   none: null,
   phone: { codec: "mulaw_8k", noise: "none", snrDb: 22, packetLossPct: 0, oneWayLatencyMs: 80 },
@@ -41,7 +44,7 @@ export function TalkScreen() {
   levelRef.current = mic.level;
   const botAudio = useRef<HTMLAudioElement | null>(null);
   const call = useBotCall(botAudio, levelRef);
-  const notReady = health.data?.items.filter((h) => ["support_bot_llm", "stt", "tts"].includes(h.role) && h.state !== "ok") ?? [];
+  const notReady = health.data?.items.filter((h) => TALK_ROLES.includes(h.role) && (h.state === "loading" || h.state === "down")) ?? [];
 
   const create = useMutation({
     mutationFn: () => endpoints.createTalkSession({ scenarioId: scenarioId || null, personaId: personaId || null, line: LINES[line], record, profile: profiles.data?.activeId ?? null }),
@@ -95,7 +98,7 @@ export function TalkScreen() {
               </div>
               <div className="ph" style={{ borderTop: "1px solid var(--line-1)", borderBottom: 0, justifyContent: "flex-end", gap: 12 }}>
                 {create.isError && <span style={{ color: "var(--fail)", fontSize: 12 }}>{(create.error as Error).message}</span>}
-                <span className="faint">Profile <span className="mono">{profiles.data?.activeId ?? "…"}</span>{notReady.length ? <>, <HealthDot state="loading">{notReady.map((h) => h.name).join(", ")} loading{notReady[0].elapsedS != null ? `, ${notReady[0].elapsedS} s` : ""}</HealthDot></> : ", bot models ready"}{health.data?.items.find((h) => h.role === "judge_llm")?.state === "loading" ? " (judge loading, evals queue)" : ""}</span>
+                <span className="faint">Profile <span className="mono">{profiles.data?.activeId ?? "…"}</span>{notReady.length ? <>, <HealthDot state={notReady[0].state}>{notReady.map((h) => h.name).join(", ")} {notReady[0].state === "down" ? "down" : "loading"}{notReady[0].elapsedS != null ? `, ${notReady[0].elapsedS} s` : ""}</HealthDot></> : ", bot models ready"}{health.data?.items.find((h) => h.role === "llm_judge")?.state === "loading" ? " (judge loading, evals queue)" : ""}</span>
                 <Button variant="primary" size="lg" onClick={() => create.mutate()} disabled={create.isPending || notReady.length > 0 || !!mic.error}>{create.isPending ? "Connecting…" : <>Start call <Kbd>↵</Kbd></>}</Button>
               </div>
             </div>
