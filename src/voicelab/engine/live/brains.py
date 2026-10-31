@@ -8,6 +8,7 @@ brain how far the speech got through its `PlayoutLedger`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -94,6 +95,7 @@ class Brain(FrameProcessor):
         self.fail = fail
         self.spoken = SpokenTurn()
         self.heard_parts: list[str] = []
+        self.words_arrived = asyncio.Event()
         self.far_side_started_s: float | None = None
         self.far_side_ended_s: float | None = None
         self.task: asyncio.Task | None = None  # the model work for the turn in progress
@@ -200,9 +202,10 @@ class Brain(FrameProcessor):
         That happens whenever STT is what the turn was waiting for, which on a real call meant a
         6 s sentence with the GPU busy. The turn looked empty, and the bot never answered it.
         """
-        deadline = asyncio.get_running_loop().time() + _TRANSCRIPT_IN_FLIGHT_S
-        while not self.heard_parts and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.01)
+        if not self.heard_parts:
+            self.words_arrived.clear()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self.words_arrived.wait(), _TRANSCRIPT_IN_FLIGHT_S)
         await self.on_far_side_finished()
 
     def begin_turn(self) -> None:
@@ -224,6 +227,7 @@ class Brain(FrameProcessor):
 
     def on_transcript(self, text: str) -> None:
         self.heard_parts.append(text)
+        self.words_arrived.set()
         self.note_heard(text)
 
     def note_heard(self, text: str) -> None:

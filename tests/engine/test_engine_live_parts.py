@@ -431,6 +431,7 @@ def test_an_unsure_turn_does_not_sit_through_pipecats_three_seconds():
 
 class _RecordingBrain(Brain):
     speaker = Speaker.BOT
+    far_side = None
 
     def __init__(self) -> None:
         super().__init__(log=None, ledger=PlayoutLedger(), settings=LiveSettings(), fail=None)
@@ -445,7 +446,7 @@ async def test_a_turn_end_that_overtakes_its_transcript_still_gets_the_words():
     brain = _RecordingBrain()
     finishing = asyncio.ensure_future(brain._finish_far_side_turn())
     await asyncio.sleep(0.02)
-    brain.heard_parts.append("Can you explain how refunds work?")
+    brain.on_transcript("Can you explain how refunds work?")
     await finishing
     assert brain.turns == ["Can you explain how refunds work?"]
 
