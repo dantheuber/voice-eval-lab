@@ -59,12 +59,20 @@ async def _transcribe(ctx: EvalContext, stt: STT, speaker: Speaker) -> tuple[Tra
 
 
 def _scripted_turns(ctx: EvalContext, speaker: Speaker) -> list[Region]:
-    """When a side with a script was talking. A human's side has none, so nothing narrows it."""
-    return [
-        Region(event.start_s, event.end_s)
+    """Every turn of a side that spoke from a script, so its whole speech is on the timeline.
+
+    One turn with no script means the timeline can't be trusted to have all of that side's speech,
+    as with a person on the line. Then nothing narrows it, because leaving a stretch out would
+    silently lose what they said.
+    """
+    turns = [
+        event
         for event in ctx.artifact.timeline
-        if isinstance(event, Utterance) and event.speaker == speaker and event.intended_text
+        if isinstance(event, Utterance) and event.speaker == speaker
     ]
+    if not all(turn.intended_text for turn in turns):
+        return []
+    return [Region(turn.start_s, turn.end_s) for turn in turns]
 
 
 def _heard_in(chunk: Region, turns: list[Region]) -> bool:

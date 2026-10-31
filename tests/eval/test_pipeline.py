@@ -607,3 +607,36 @@ async def test_a_human_has_no_script_to_narrow_their_speech_by(store):
         EvalContext(artifact, paths, EvalDeps(stt=stt)), EvaluatorOutput()
     )
     assert len(stt.durations) == 2
+
+
+async def test_a_turn_with_no_script_keeps_all_of_that_sides_speech(store):
+    """Coverage is partial here, so nothing says the second stretch is noise."""
+    artifact = CallArtifact(mode=CallMode.HUMAN)
+    artifact.timeline += [
+        Utterance(speaker=Speaker.CALLER, start_s=1.5, end_s=3.0, intended_text="hello there"),
+        Utterance(speaker=Speaker.CALLER, start_s=19.5, end_s=21.5),
+    ]
+    artifact, paths = write_call(
+        store, artifact, caller=[(2.0, 3.0), (20.0, 21.0)], duration_s=30.0
+    )
+    stt = ChunkHearingSTT()
+    await TranscribeEvaluator().run(
+        EvalContext(artifact, paths, EvalDeps(stt=stt)), EvaluatorOutput()
+    )
+    assert len(stt.durations) == 2
+
+
+async def test_speech_the_timeline_never_recorded_survives_partial_coverage(store):
+    artifact = CallArtifact(mode=CallMode.HUMAN)
+    artifact.timeline += [
+        Utterance(speaker=Speaker.CALLER, start_s=1.5, end_s=3.0, intended_text="hello there"),
+        Utterance(speaker=Speaker.CALLER, start_s=10.5, end_s=11.5),
+    ]
+    artifact, paths = write_call(
+        store, artifact, caller=[(2.0, 3.0), (11.0, 11.4), (20.0, 21.0)], duration_s=30.0
+    )
+    stt = ChunkHearingSTT()
+    await TranscribeEvaluator().run(
+        EvalContext(artifact, paths, EvalDeps(stt=stt)), EvaluatorOutput()
+    )
+    assert len(stt.durations) == 3
