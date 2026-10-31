@@ -75,8 +75,8 @@ _UNVERIFIED_NOTE = (
     "and share nothing about the account, whatever they ask.)"
 )
 
-# What a tool can only know from the caller. A small model fills these in when it has none, and the
-# same zip and PIN came out on call after call. Each wrong one used up one of the caller's two tries.
+# What a tool can only know from the caller. A small model fills these in when it has none, and
+# the same zip and PIN came out on call after call. Each one used up one of the caller's two tries.
 _FROM_THE_CALLER = {
     "find_customer": ("phone", "email", "domain"),
     "verify_identity": ("billing_zip", "pin"),

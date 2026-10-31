@@ -219,7 +219,11 @@ class Traced(Scripted):
 async def test_the_two_brains_never_run_at_the_same_time(store):
     log: list[str] = []
     caller = Traced(
-        "caller", log, says("Hello there."), says("And then this."), says("Bye.", beat="only", hang_up=True)
+        "caller",
+        log,
+        says("Hello there."),
+        says("And then this."),
+        says("Bye.", beat="only", hang_up=True),
     )
     support = Traced("support", log, "First answer.", "Second answer.")
 
