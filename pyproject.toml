@@ -56,6 +56,10 @@ addopts = "-m 'not models'"
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+extend-exclude = ["scripts/bench"]  # one-off research code, kept as it ran for the benchmark doc
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ASYNC110"]  # a test polling a fake has no event to wait on
