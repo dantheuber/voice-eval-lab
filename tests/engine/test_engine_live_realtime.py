@@ -142,6 +142,12 @@ async def run(store: ArtifactStore, voice: ScriptedVoice, **adapters: Any):
     return await asyncio.wait_for(call, 40)
 
 
+async def test_a_realtime_call_claims_no_guard_setting_because_it_has_no_guard(store):
+    voice = ScriptedVoice(says_aloud("Sure thing."), says_aloud("Goodbye then."))
+    artifact = await run(store, voice)
+    assert "argument_guard" not in artifact.metadata
+
+
 async def test_the_model_gets_audio_and_a_commit_and_the_transcript_comes_from_our_stt(store):
     voice = ScriptedVoice(says_aloud("Sure thing."), says_aloud("Goodbye then."))
 

@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import date
 from typing import Any
 
+from voicelab.agents import argument_guard
 from voicelab.agents.reminders import next_step
 from voicelab.agents.speech import (
     Lexicon,
@@ -25,7 +26,7 @@ from voicelab.agents.speech import (
 )
 from voicelab.company.policy import load_policy
 from voicelab.company.tools import ToolDispatcher
-from voicelab.core.models import RowRef, SystemEvent, ToolCallEvent, new_id
+from voicelab.core.models import GuardObjection, RowRef, SystemEvent, ToolCallEvent, new_id
 from voicelab.providers.base import LLM, ChatMessage, LLMResponse, ToolCall
 
 SYSTEM_PROMPT = """\
@@ -76,20 +77,6 @@ _UNVERIFIED_NOTE = (
     "new digits they just said.)"
 )
 
-# What a tool can only know from the caller. A small model fills these in when it has none, and
-# the same zip and PIN came out on call after call. Each one used up one of the caller's two tries.
-_FROM_THE_CALLER = {
-    "find_customer": ("phone", "email", "domain"),
-    "verify_identity": ("billing_zip", "pin"),
-}
-_NOT_SAID = "The caller hasn't said that. Ask them for it."
-_ZIP_DIGITS, _PIN_DIGITS = 5, 4
-# Speech recognition drops digits on a noisy line. A check on three digits can't pass, and it cost a
-# real caller both tries on a PIN they gave correctly.
-_MISSED_DIGITS = (
-    "That's not a full zip and PIN, so speech recognition missed some digits. This try doesn't "
-    "count. Ask them to say both again, slowly."
-)
 # Asking for a renewal up front isn't a yes to its price, but on real calls the charge went through
 # in the same breath as the check, with the price still unsaid.
 _JUST_VERIFIED_NOTE = (
@@ -99,11 +86,6 @@ _JUST_VERIFIED_NOTE = (
     "get_account_summary. Then say what you found, what you would do, and what it costs, and ask "
     "if you should go ahead.)"
 )
-_DIGIT_WORDS = {
-    word: str(value)
-    for value, word in enumerate("zero one two three four five six seven eight nine".split())
-} | {"oh": "0"}
-_LONG_NUMBER_WORDS = re.compile(r"\b(?:\w+teen|\w+ty|hundred|thousand)\b", re.IGNORECASE)
 
 _THINK = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
 _CUT_OFF_MARKUP = re.compile(r"[<{\[][^>}\]]*$")  # a reply that hit max_tokens inside a tag
@@ -169,23 +151,6 @@ def _sentences(text: str) -> list[str]:
     return [*sentences, tail] if tail else sentences
 
 
-def _caller_said(value: str, heard: str) -> bool:
-    """Whether a value could have come from the caller. Generous, since speech varies.
-
-    Numbers can arrive as digits or digit words, and a number said like "nineteen fifty eight" is
-    taken on trust. An address only has to match by its name, which is what tells them apart.
-    """
-    digits = re.sub(r"\D", "", value)
-    if digits and "@" not in value:
-        said = "".join(
-            word if word.isdigit() else _DIGIT_WORDS.get(word, "")
-            for word in re.findall(r"\d+|[a-z]+", heard.lower())
-        )
-        return digits in said or bool(_LONG_NUMBER_WORDS.search(heard))
-    name = re.split(r"[.@]", value.lower().removeprefix("www."))[0]
-    return re.sub(r"[^a-z0-9]", "", name) in re.sub(r"[^a-z0-9]", "", heard.lower())
-
-
 def support_instructions(today: date, policy: str | None = None) -> str:
     """The system prompt. Speech-to-speech sessions take this as their instructions."""
     day = f"{today:%B} {today.day}, {today.year}"
@@ -208,6 +173,7 @@ class SupportBot:
         max_tokens: int = 256,
         max_tool_rounds: int = 6,
         filler_after_s: float | None = None,
+        argument_guard: bool = True,
     ) -> None:
         self.llm = llm
         self.dispatcher = dispatcher
@@ -222,6 +188,7 @@ class SupportBot:
         # A tool turn needs a second LLM round, so one that was slow to reach its tool call will
         # leave the caller in silence for twice as long. Live calls set this, and None means never.
         self.filler_after_s = filler_after_s
+        self.argument_guard = argument_guard
         self.ended = False
         self.end_reason = ""
         self._turn = 0  # bumped by each new turn and each interrupt, which stops the running turn
@@ -230,6 +197,7 @@ class SupportBot:
         self._verified = False
         self._verified_on = -1  # the turn it happened
         self._corrected: dict[str, str] = {}  # misheard addresses and the right ones
+        self._heard: list[str] = []  # the caller's turns, without the notes history wraps them in
         system = support_instructions(dispatcher.db.today, policy)
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system)]
 
@@ -366,6 +334,7 @@ class SupportBot:
         self.messages[start:] = kept
 
     def _add_caller_text(self, text: str) -> None:
+        self._heard.append(text)
         if self._cut_off:
             text = f"{_CUT_OFF_NOTE.format(words=self._cut_off)} {text}"
             self._cut_off = ""
@@ -419,6 +388,7 @@ class SupportBot:
         a cancelled turn can't leave a tool call unanswered, which backends reject on the next
         request. A crash stops the batch, since later calls may depend on the failed one.
         """
+        written = [unicode_safe(call.arguments) for call in calls]
         calls = [
             call.model_copy(update={"arguments": self._with_corrections(call.arguments)})
             for call in calls
@@ -426,16 +396,16 @@ class SupportBot:
         results: list[ChatMessage] = []
         events: list[ToolCallEvent | SystemEvent] = []
         crashed = False
-        for call in calls:
+        for call, model_wrote in zip(calls, written, strict=True):
             at_s = self.clock()
             started = time.perf_counter()
             changed: list[RowRef] = []
+            objection = None if crashed else self._objection(call)
+            stopped = objection is not None and objection.stopped
             if crashed:
                 result = {"error": "not run because an earlier tool failed"}
-            elif problem := self._bad_arguments(call):
-                self._report("bad_arguments", f"{call.name} {json.dumps(call.arguments)}")
-                results.append(self._tool_message(call, {"error": problem}))
-                continue
+            elif stopped:
+                result = {"error": argument_guard.told_the_model(objection)}
             else:
                 try:
                     result = self.dispatcher.dispatch(call.name, call.arguments)
@@ -448,11 +418,14 @@ class SupportBot:
                 ToolCallEvent(
                     at_s=at_s,
                     name=call.name,
-                    arguments=call.arguments,
+                    arguments=model_wrote if stopped else call.arguments,
                     result=result,
-                    error=result.get("error"),
+                    error=argument_guard.blocked_error(objection)
+                    if stopped
+                    else result.get("error"),
                     duration_ms=(time.perf_counter() - started) * 1000,
                     changed=changed,
+                    guard=objection,
                 )
             )
             if call.name == "verify_identity":
@@ -495,22 +468,9 @@ class SupportBot:
 
         return {name: fixed(value) for name, value in unicode_safe(arguments).items()}
 
-    def _bad_arguments(self, call: ToolCall) -> str:
-        """Why a call can't be worth running, or nothing if it can.
-
-        This isn't policy, and the tool never sees the call. Like a reply that won't parse, it's
-        bad output from the model, which gets told and tries again. It doesn't cost a try.
-        """
-        said = [m.content for m in self.messages if m.role == "user"]
-        heard = " ".join([*said, *self._corrected.values()])
-        values = [str(call.arguments.get(k) or "") for k in _FROM_THE_CALLER.get(call.name, ())]
-        if any(value and not _caller_said(value, heard) for value in values):
-            return _NOT_SAID
-        if call.name == "verify_identity":
-            zip_code, pin = (re.sub(r"\D", "", value) for value in values)
-            if (len(zip_code), len(pin)) != (_ZIP_DIGITS, _PIN_DIGITS):
-                return _MISSED_DIGITS
-        return ""
+    def _objection(self, call: ToolCall) -> GuardObjection | None:
+        heard = " ".join([*self._heard, *self._corrected.values()])
+        return argument_guard.check(call.name, call.arguments, heard, stop=self.argument_guard)
 
     def _tool_message(self, call: ToolCall, result: dict[str, Any]) -> ChatMessage:
         hint = next_step(call.name, result, self.dispatcher.db.today, self._failed_checks)

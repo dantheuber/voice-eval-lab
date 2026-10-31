@@ -10,6 +10,8 @@ id: local-default
 label: "Local: Qwen stack"
 description: "Qwen3-ASR, Qwen3.5-4B, Phonon. 833 ms plain turn and 2.0 s tool turn, 12 of 12 tool sessions from speech."
 live_capable: true
+support_bot:
+  argument_guard: true
 roles:
   stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18101", name: qwen3-asr-0.6b, word_timing: false}
   # Whisper, not the live STT: Parakeet reports confidence 1.0 on every word, Qwen3-ASR reports none,

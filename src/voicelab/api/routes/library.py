@@ -211,7 +211,13 @@ async def dry_run(scenario_id: str, body: DryRunBody, svc: Svc) -> dict[str, Any
     persona = _persona(svc, body.persona_id) if body.persona_id else authoring.neutral_persona()
     profile = svc.profiles.resolve(None)
     stack = await svc.profiles.require_ready(profile, ("llm_support", "llm_caller"))
-    result = await authoring.dry_run(stack.llm_support, stack.llm_caller, scenario, persona)
+    result = await authoring.dry_run(
+        stack.llm_support,
+        stack.llm_caller,
+        scenario,
+        persona,
+        argument_guard=profile.support_bot.argument_guard,
+    )
     return {
         "turns": authoring.dry_run_turns(result),
         "reachedCheckpoints": result.completed_beats,

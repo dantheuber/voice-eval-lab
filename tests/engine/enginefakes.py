@@ -16,7 +16,7 @@ from voicelab.core.models import (
     Scenario,
     VoiceRef,
 )
-from voicelab.core.profiles import Profile, ProviderStack, build_stack
+from voicelab.core.profiles import Profile, ProviderStack, SupportBotConfig, build_stack
 from voicelab.engine.contract import BotCallRequest
 from voicelab.providers.adapters.fake import FakeLLM, FakeSTT, FakeTTS
 from voicelab.providers.base import (
@@ -85,6 +85,13 @@ def stack(**replacements: Any) -> ProviderStack:
     built = build_stack(fake_profile())
     for role, adapter in replacements.items():
         setattr(built, role, adapter)
+    return built
+
+
+def unguarded(built: ProviderStack) -> ProviderStack:
+    """The same stack with `support_bot.argument_guard: false`, as a profile would set it."""
+    update = {"support_bot": SupportBotConfig(argument_guard=False)}
+    built.profile = built.profile.model_copy(update=update)
     return built
 
 

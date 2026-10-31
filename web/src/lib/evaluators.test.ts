@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categoryLabel, deliveryAt, isAdvisoryEvaluator, orderedEvaluators, parseDelivery, summarizeEvaluator } from "./evaluators";
+import { categoryLabel, categoryNote, deliveryAt, evalName, isAdvisoryEvaluator, orderedEvaluators, parseDelivery, summarizeEvaluator } from "./evaluators";
 import type { EvaluatorRun, Finding } from "@/api/types";
 
 const run = (name: string, metrics: Record<string, unknown> = {}): EvaluatorRun => ({ name, status: "ok", reason: "", durationS: 1, model: null, metrics });
@@ -10,7 +10,7 @@ describe("orderedEvaluators", () => {
     expect(orderedEvaluators([run("delivery"), run("timing"), run("brand_new")])).toEqual(["delivery", "timing", "brand_new"]);
   });
   it("adds the expected set only while pending, and drops transcribe", () => {
-    expect(orderedEvaluators([run("transcribe"), run("timing")], [], true)).toEqual(["timing", "transcript_judge", "caller_validity", "state", "pronunciation", "delivery", "audio_quality", "audio_listening"]);
+    expect(orderedEvaluators([run("transcribe"), run("timing")], [], true)).toEqual(["timing", "transcript_judge", "caller_validity", "state", "tool_attempts", "pronunciation", "delivery", "audio_quality", "audio_listening"]);
     expect(orderedEvaluators([run("timing")], [], false)).toEqual(["timing"]);
   });
   it("includes evaluators known only from findings", () => {
@@ -29,6 +29,16 @@ describe("advisory and category labels", () => {
     expect(categoryLabel({ category: "critical_token_asr_only" })).toBe("critical token, heard by one engine");
     expect(categoryLabel({ category: "unanswered_turn" })).toBe("unanswered turn");
     expect(categoryLabel({ category: "something_else" })).toBe("something else");
+  });
+  it("names blocked attempts and says what they do to a verdict", () => {
+    expect(categoryLabel({ category: "blocked_tool_call" })).toBe("blocked tool call");
+    expect(categoryNote({ category: "blocked_tool_call" })).toContain("never reached a tool");
+    expect(categoryLabel({ category: "unguarded_tool_call" })).toBe("tool call the guard would have blocked");
+    expect(evalName("tool_attempts")).toBe("tool attempts");
+  });
+  it("sums up blocked attempts", () => {
+    expect(summarizeEvaluator("tool_attempts", { attempts: 3, mistakes: 2, stopped: 3 })).toBe("3 tool calls the guard objected to, 2 made up by the bot, 3 stopped");
+    expect(summarizeEvaluator("tool_attempts", { attempts: 0, mistakes: 0, stopped: 0 })).toBe("no tool calls the guard objected to");
   });
 });
 

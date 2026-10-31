@@ -36,6 +36,7 @@ from voicelab.eval.evaluators.delivery import DeliveryEvaluator
 from voicelab.eval.evaluators.pronunciation import PronunciationEvaluator
 from voicelab.eval.evaluators.state import StateEvaluator
 from voicelab.eval.evaluators.timing import TimingEvaluator
+from voicelab.eval.evaluators.tool_attempts import ToolAttemptsEvaluator
 from voicelab.eval.evaluators.transcribe import TranscribeEvaluator
 from voicelab.eval.evaluators.transcript_judge import TranscriptJudgeEvaluator
 from voicelab.eval.verdict import decide_verdict, write_summary
@@ -65,6 +66,7 @@ def default_evaluators() -> list[Evaluator]:
         TranscribeEvaluator(),
         TimingEvaluator(),
         StateEvaluator(),
+        ToolAttemptsEvaluator(),  # after transcribe, to check a guess against what was really said
         TranscriptJudgeEvaluator(),
         CallerValidityEvaluator(),
         PronunciationEvaluator(),

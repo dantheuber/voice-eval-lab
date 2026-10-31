@@ -141,7 +141,7 @@ function startMock(ctx: {
     const dur = 900 + turn.text.length * 45;
     later(t, () => {
       if (turn.who === "bot") {
-        if (turn.tool) onServer({ type: "event", event: { type: "tool_call", id: nid(), atS: 0, name: turn.tool.split("(")[0], arguments: { note: turn.tool.slice(turn.tool.indexOf("(") + 1, turn.tool.indexOf(")")) }, result: turn.tool.split("->")[1]?.trim() ?? "ok", error: null, durationMs: 80 } });
+        if (turn.tool) onServer({ type: "event", event: { type: "tool_call", id: nid(), atS: 0, name: turn.tool.split("(")[0], arguments: { note: turn.tool.slice(turn.tool.indexOf("(") + 1, turn.tool.indexOf(")")) }, result: turn.tool.split("->")[1]?.trim() ?? "ok", error: null, durationMs: 80, guard: null } });
         botSpeaking = true; up({ botSpeaking: true });
         let n = 0; const step = () => { if (!alive || !botSpeaking) { addLine("bot", turn.text, true); return; } n = Math.min(turn.text.length, n + 3); addLine("bot", turn.text.slice(0, n), n >= turn.text.length); if (n < turn.text.length) later(45, step); else { botSpeaking = false; up({ botSpeaking: false }); replies.push(1.0 + Math.random() * 0.6); onServer({ type: "metrics", replyP50S: +(replies.reduce((a, b) => a + b, 0) / replies.length).toFixed(2), lastReplyS: replies[replies.length - 1] }); } };
         step();

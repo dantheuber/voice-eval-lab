@@ -168,6 +168,14 @@ class RowRef(BaseModel):
     key: dict[str, Any]
 
 
+class GuardObjection(BaseModel):
+    """What the support bot's argument guard had against a tool call, in `agents/argument_guard`."""
+
+    rule: str  # not_heard or digit_count
+    fields: list[str] = Field(default_factory=list)  # the arguments it objected to
+    stopped: bool = True  # False when the guard is off, so the call ran anyway
+
+
 class ToolCallEvent(BaseModel):
     type: Literal["tool_call"] = "tool_call"
     id: str = Field(default_factory=lambda: new_id("tc"))
@@ -180,6 +188,9 @@ class ToolCallEvent(BaseModel):
     # The rows this call changed, which is the only link between a database change and a time.
     # None means it wasn't recorded, as on older calls and uploads.
     changed: list[RowRef] | None = None
+    # Set on any call the guard objected to. Stopped, `arguments` are what the model wrote and
+    # `error` names the rule. On older calls this was only a `bad_arguments` system event.
+    guard: GuardObjection | None = None
 
 
 class BargeInEvent(BaseModel):

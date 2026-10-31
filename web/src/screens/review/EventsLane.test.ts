@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { layoutEvents } from "./EventsLane";
+import { describeEvent, layoutEvents } from "./EventsLane";
 
 const WIDTH = 1170;
+
+describe("describeEvent", () => {
+  it("marks a blocked attempt apart from a call that ran, and says why in the tooltip", () => {
+    const error = "blocked before reaching the tool by argument_guard rule not_heard: pin not in anything the bot heard from the caller";
+    const d = describeEvent({ type: "tool_call", id: "t", atS: 1, name: "verify_identity", arguments: { pin: "1234" }, result: { error: "x" }, error, durationMs: 1, guard: { rule: "not_heard", fields: ["pin"], stopped: true } });
+    expect(d.kind).toBe("blocked");
+    expect(d.label).toBe("blocked verify_identity");
+    expect(d.title).toContain('"pin":"1234"');
+    expect(d.title).toContain("argument_guard rule not_heard");
+  });
+});
 
 describe("layoutEvents", () => {
   it("stacks labels that would cover each other", () => {

@@ -304,6 +304,12 @@ async def test_the_api_hears_when_the_browser_goes_away(store):
     assert store.read_artifact("call_talk").status == CallStatus.EVALUATING
 
 
+async def test_a_mic_call_records_the_guard_setting(store):
+    session, _ = await open_call(store)
+    artifact = await session.end()
+    assert artifact.metadata["argument_guard"] is True
+
+
 async def test_ending_twice_returns_the_same_artifact(store):
     session, browser = await open_call(store, llm_support=Scripted(default="Okay."))
 

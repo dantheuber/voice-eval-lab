@@ -329,6 +329,20 @@ def test_dry_run_is_text_only_with_reached_checkpoints(client, rig):
     assert body["model"] == "support-llm"
 
 
+def test_dry_run_follows_the_profiles_guard_setting(client, rig, monkeypatch):
+    seen: list[dict] = []
+    real = authoring.SupportBot
+
+    def recording(*args, **options):
+        seen.append(options)
+        return real(*args, **options)
+
+    monkeypatch.setattr(authoring, "SupportBot", recording)
+    rig.services.profiles.require("local-default").support_bot.argument_guard = False
+    client.post("/api/scenarios/scn_dns_mx_fix/dry-run", json={"personaId": "per_sysadmin"})
+    assert seen[0]["argument_guard"] is False
+
+
 def test_dry_run_without_a_persona_uses_a_neutral_caller(client, rig):
     stack = rig.services.profiles.stack(rig.services.profiles.require("local-default"))
     stack.llm_caller.reply = {

@@ -167,11 +167,16 @@ def neutral_persona() -> Persona:
 
 
 async def dry_run(
-    support_llm: LLM, caller_llm: LLM, scenario: Scenario, persona: Persona
+    support_llm: LLM,
+    caller_llm: LLM,
+    scenario: Scenario,
+    persona: Persona,
+    *,
+    argument_guard: bool = True,
 ) -> TextCallResult:
     db = create_call_db()
     try:
-        support = SupportBot(support_llm, ToolDispatcher(db))
+        support = SupportBot(support_llm, ToolDispatcher(db), argument_guard=argument_guard)
         return await run_text_call(support, CallerBot(caller_llm, persona, scenario))
     finally:
         db.close()

@@ -6,7 +6,7 @@ import type { EvaluatorRun, Finding } from "@/api/types";
 export const evaluatorLabels: Record<string, string> = {
   transcript_judge: "transcript judge", caller_validity: "caller validity", state: "state assertions", timing: "timing",
   pronunciation: "pronunciation", audio_quality: "audio quality", audio_listening: "audio listening", delivery: "delivery (measured)",
-  transcribe: "transcription",
+  transcribe: "transcription", tool_attempts: "tool attempts",
 };
 export const evalName = (e: string) => evaluatorLabels[e] ?? e.replace(/_/g, " ");
 
@@ -20,7 +20,7 @@ export function isAdvisoryEvaluator(name: string, findings: Finding[] = []): boo
 }
 
 /* The order the dashboard shows while results are still arriving. Server-provided evaluators keep their own order. */
-export const EXPECTED_EVALUATORS = ["transcript_judge", "caller_validity", "state", "timing", "pronunciation", "delivery", "audio_quality", "audio_listening"];
+export const EXPECTED_EVALUATORS = ["transcript_judge", "caller_validity", "state", "tool_attempts", "timing", "pronunciation", "delivery", "audio_quality", "audio_listening"];
 
 export function orderedEvaluators(runs: EvaluatorRun[], findings: Finding[] = [], pending = false): string[] {
   const out: string[] = [];
@@ -42,6 +42,8 @@ export const categoryLabels: Record<string, { label: string; note?: string }> = 
   dead_air: { label: "dead air" }, barge_in_stop: { label: "slow stop after barge-in" }, overlap: { label: "overlap" }, slow_response: { label: "slow response" },
   rushed: { label: "speech too fast" }, dragging: { label: "speech too slow" }, halting: { label: "halting speech" }, chopped: { label: "chopped audio" },
   flat: { label: "flat pitch" }, noisy: { label: "noisy speech" }, abrupt_onset: { label: "abrupt start" }, abrupt_offset: { label: "abrupt stop" }, abrupt_cut: { label: "abrupt cut" },
+  blocked_tool_call: { label: "blocked tool call", note: "The bot's argument guard stopped this call, so it never reached a tool and nothing changed. Advisory: it counts toward review and can't fail a call." },
+  unguarded_tool_call: { label: "tool call the guard would have blocked", note: "The guard was off, so this call reached the tool. A made-up value here fails the call." },
   missing_change: { label: "expected change missing" }, unexpected_change: { label: "unexpected change" }, rule: { label: "rule" }, delivery: { label: "delivery impression", note: "A listening model's impression. Where the measured delivery row disagrees, the measurement wins." },
 };
 export function categoryLabel(f: Pick<Finding, "category">): string {
@@ -116,6 +118,7 @@ export function summarizeEvaluator(name: string, m: Record<string, unknown>): st
       if (total == null && mism == null) return "done";
       return `${mism ?? 0} critical token mismatch${mism === 1 ? "" : "es"}${total != null ? ` of ${total}` : ""}${corr != null ? `, ${corr} corroborated by both engines` : ""}`;
     }
+    case "tool_attempts": return g("attempts") ? `${g("attempts")} tool call${g("attempts") === 1 ? "" : "s"} the guard objected to, ${g("mistakes") ?? 0} made up by the bot, ${g("stopped") ?? 0} stopped` : "no tool calls the guard objected to";
     case "audio_quality": return g("mos") != null ? `MOS ${g("mos")}${g("baseline") != null ? ` (baseline ${g("baseline")})` : ""}${m.clipping ? ", clipping" : ""}` : "done";
     case "audio_listening": return g("notes") != null ? `${g("notes")} advisory note${g("notes") === 1 ? "" : "s"}` : "done";
     case "delivery": {

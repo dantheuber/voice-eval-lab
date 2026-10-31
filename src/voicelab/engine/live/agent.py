@@ -19,6 +19,15 @@ def bot_voice(stack: ProviderStack) -> str:
     return stack.profile.roles["tts_bot"].get("voice_id", "default")
 
 
+def guard_setting(stack: ProviderStack) -> dict[str, bool]:
+    """What a call records about the argument guard. A realtime model doesn't go through
+    `SupportBot`, so it has no guard and claims no setting."""
+    profile = stack.profile
+    if profile.support_engine == "realtime":
+        return {}
+    return {"argument_guard": profile.support_bot.argument_guard}
+
+
 def support_side(
     stack: ProviderStack,
     *,
@@ -66,6 +75,7 @@ def support_side(
         on_event=log.event,
         clock=log.now,
         filler_after_s=settings.filler_after_s,
+        argument_guard=stack.profile.support_bot.argument_guard,
     )
     tts = WrappedTTS(
         stack.tts_bot, voice_id=bot_voice(stack), ledger=ledger, fail=fail, role="tts_bot"

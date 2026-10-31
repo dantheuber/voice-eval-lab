@@ -227,7 +227,10 @@ class _Call:
                 "llm_support": stack.llm_support.name,
                 "llm_caller": stack.llm_caller.name,
             },
-            metadata=dict(request.metadata),
+            metadata={
+                **request.metadata,
+                "argument_guard": stack.profile.support_bot.argument_guard,
+            },
         )
         self.clock = _VirtualClock()
         self.recorder = CallRecorder(self.artifact, store, clock=self.clock.read)
@@ -279,6 +282,7 @@ class _Call:
             ToolDispatcher(db),
             on_event=self._queue,
             clock=self.clock.read,
+            argument_guard=self.stack.profile.support_bot.argument_guard,
         )
         # The caller's thinking is already inside `react_s`.
         self.caller = CallerBot(

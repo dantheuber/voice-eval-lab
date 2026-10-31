@@ -141,7 +141,7 @@ async def test_full_pipeline_on_a_synthetic_call_passes(store):
     assert result.call_id == artifact.id
     assert result.verdict == Verdict.PASS, result.summary
     assert [r.name for r in result.evaluators] == [e.name for e in default_evaluators()]
-    assert [r.status for r in result.evaluators] == ["ok"] * 9
+    assert [r.status for r in result.evaluators] == ["ok"] * 10
     assert {c.kind for c in result.criteria} == {"must", "must_not", "general", "beat", "state"}
     assert result.summary.startswith("Verdict: pass.")
     assert all(r.duration_s >= 0 for r in result.evaluators)
@@ -259,6 +259,7 @@ async def test_no_models_at_all_still_gives_a_result(store):
         "transcribe": "skipped",
         "timing": "ok",
         "state": "ok",
+        "tool_attempts": "ok",
         "transcript_judge": "skipped",
         "caller_validity": "skipped",
         "pronunciation": "skipped",

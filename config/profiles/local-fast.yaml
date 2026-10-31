@@ -7,6 +7,8 @@ id: local-fast
 label: "Local: fastest cascade"
 description: "Parakeet, LFM3-1.7B, Phonon. 681 ms plain turn and 1.1 s tool turn, but 9 of 12 tool sessions, and Parakeet can loop on repeated digits."
 live_capable: true
+support_bot:
+  argument_guard: true
 roles:
   stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18108", name: parakeet-tdt-0.6b-v3, trust_confidence: false}
   # Whisper, not the live STT: Parakeet reports confidence 1.0 on every word, Qwen3-ASR reports none,

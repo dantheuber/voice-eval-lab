@@ -24,7 +24,7 @@ from voicelab.core.audio import AudioClip
 from voicelab.core.models import CallArtifact, CallMode, CallStatus, Speaker, Utterance
 from voicelab.core.profiles import ProviderStack
 from voicelab.engine.contract import Emit, TalkRequest
-from voicelab.engine.live.agent import support_side
+from voicelab.engine.live.agent import guard_setting, support_side
 from voicelab.engine.live.log import LiveLog
 from voicelab.engine.live.parts import (
     EchoGate,
@@ -89,6 +89,7 @@ class LiveTalkSession:
             scenario_snapshot=request.scenario,
             profile=stack.profile.id,
             providers=providers,
+            metadata=guard_setting(stack),
         )
         self.log = LiveLog(self.artifact, store, self._to_browser)
         self.connection: SmallWebRTCConnection | None = None

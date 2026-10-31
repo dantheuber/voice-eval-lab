@@ -233,13 +233,13 @@ export const thresholds: T.Thresholds = { deadAirS: 2.0, bargeStopTargetS: 0.5, 
 
 type Seg = [number, number];
 type TurnSpec = { who: T.Speaker; t: number; end: number; heard: string; intended?: string; interrupted?: boolean };
-type EvSpec = { kind: "tool" | "db" | "barge" | "system"; t: number; name?: string; args?: Record<string, unknown>; result?: unknown; detail?: string; stoppedAt?: number };
+type EvSpec = { kind: "tool" | "db" | "barge" | "system"; t: number; name?: string; args?: Record<string, unknown>; result?: unknown; detail?: string; stoppedAt?: number; error?: string; guard?: T.GuardObjection };
 
 function timeline(turns: TurnSpec[], events: EvSpec[], callId: string): T.TimelineEvent[] {
   const out: T.TimelineEvent[] = [];
   turns.forEach((u, i) => out.push({ type: "utterance", id: `utt_${callId.slice(5, 9)}_${i}`, speaker: u.who, startS: u.t, endS: u.end, intendedText: u.who === "bot" ? (u.intended ?? u.heard) : null, spokenText: u.who === "bot" ? u.heard : null, heardText: u.heard, interrupted: !!u.interrupted, ttfbMs: null }));
   events.forEach((e, i) => {
-    if (e.kind === "tool") out.push({ type: "tool_call", id: `tc_${i}`, atS: e.t, name: e.name!, arguments: e.args ?? {}, result: e.result ?? null, error: null, durationMs: 120 });
+    if (e.kind === "tool") out.push({ type: "tool_call", id: `tc_${i}`, atS: e.t, name: e.name!, arguments: e.args ?? {}, result: e.result ?? null, error: e.error ?? null, durationMs: 120, guard: e.guard ?? null });
     else if (e.kind === "barge") out.push({ type: "barge_in", id: `bi_${i}`, atS: e.t, botStoppedAtS: e.stoppedAt ?? null, interruptedUtteranceId: null });
     else out.push({ type: "system", id: `sys_${i}`, atS: e.t, kind: e.kind === "db" ? "db_change" : "note", detail: e.detail ?? "" });
   });
@@ -308,6 +308,7 @@ export const reviewA = ((): T.ReviewPayload => {
   ];
   const events: EvSpec[] = [
     { kind: "tool", t: 7.9, name: "lookup_customer", args: { phone: "(503) 555-0101" }, result: { id: "cus_1001", name: "Dana Whitfield", status: "active" } },
+    { kind: "tool", t: 15.2, name: "verify_customer", args: { customerId: "cus_1001", billingZip: "90210", pin: "1234" }, result: { error: "The caller hasn't said that. Ask them for it." }, error: "blocked before reaching the tool by argument_guard rule not_heard: billingZip, pin not in anything the bot heard from the caller", guard: { rule: "not_heard", fields: ["billingZip", "pin"], stopped: true } },
     { kind: "tool", t: 21.6, name: "verify_customer", args: { customerId: "cus_1001", billingZip: "97214", pin: "4821" }, result: { verified: true } },
     { kind: "tool", t: 31.6, name: "list_invoices", args: { customerId: "cus_1001", months: 3 }, result: [{ id: "FH-4310", amount: 49.99, status: "paid" }, { id: "FH-4419", amount: 49.99, status: "paid", payments: 2 }] },
     { kind: "barge", t: 68.1, stoppedAt: 69.6 },
@@ -347,7 +348,7 @@ export const reviewA = ((): T.ReviewPayload => {
   const artifact: T.CallArtifact = {
     id, mode: "live_bots", status: "done", timingIsReal: true, batchId: "batch_0142", personaId: pe.id, scenarioId: sc.id, personaSnapshot: pe, scenarioSnapshot: sc,
     profile: "local-default", providers: { llm_support: "llamacpp/qwen3.5-9b", llm_caller: "llamacpp/qwen3.5-4b", stt: "faster-whisper/large-v3", tts: "qwen3-tts/1.7b" },
-    startedAt: iso(43), endedAt: iso(40), durationS: 172, timeline: timeline(turns, events, id), dbChanges, hasToolLog: true, hasIntendedText: true, error: null,
+    startedAt: iso(43), endedAt: iso(40), durationS: 172, timeline: timeline(turns, events, id), dbChanges, hasToolLog: true, hasIntendedText: true, error: null, metadata: { argument_guard: true },
   };
   return {
     call: artifact, summary: calls[0],
@@ -430,7 +431,7 @@ export const reviewB = ((): T.ReviewPayload => {
     profile: "local-35b", providers: { llm_support: "llamacpp/qwen3.6-35b" }, startedAt: iso(110), endedAt: iso(103), durationS: 164,
     timeline: timeline(turns, events, id),
     dbChanges: [{ table: "refunds", key: { id: "FH-R-2304" }, kind: "insert", before: null, after: { invoice_id: "FH-4419", amount_cents: 4999 } }],
-    hasToolLog: true, hasIntendedText: true, error: null,
+    hasToolLog: true, hasIntendedText: true, error: null, metadata: {},
   };
   return {
     call: artifact, summary: calls[6],
@@ -466,7 +467,7 @@ export function genericReview(summary: T.CallSummary): T.ReviewPayload {
     id, mode: summary.mode, status: summary.status, timingIsReal: summary.timingIsReal, batchId: summary.batchId, personaId: summary.personaId, scenarioId: summary.scenarioId,
     personaSnapshot: pe, scenarioSnapshot: sc, profile: summary.profile, providers: {}, startedAt: summary.startedAt, endedAt: summary.startedAt, durationS: D,
     timeline: timeline(turns, isUpload ? [] : [{ kind: "tool", t: 8, name: "lookup_customer", args: { phone: sc?.facts.phone ?? "unknown" }, result: { id: sc?.customerId ?? null } }], id),
-    dbChanges: [], hasToolLog: !isUpload, hasIntendedText: !isUpload && summary.mode !== "human", error: null,
+    dbChanges: [], hasToolLog: !isUpload, hasIntendedText: !isUpload && summary.mode !== "human", error: null, metadata: {},
   };
   const criteria: T.CriterionResult[] = sc ? [...sc.must.map((r) => ({ criterionId: r.id, kind: "must" as const, text: r.text, status: "pass" as const, reason: "", evidence: [] })), ...sc.mustNot.map((r) => ({ criterionId: r.id, kind: "must_not" as const, text: r.text, status: "pass" as const, reason: "", evidence: [] }))] : [];
   if (criteria.length && summary.verdict === "fail") criteria[criteria.length - 1 - sc!.mustNot.length].status = "fail";

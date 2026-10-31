@@ -26,10 +26,11 @@ export function layoutEvents(items: { atS: number; label: string }[], durationS:
   });
 }
 
-function describe(e: LaneEvent) {
-  const kind = e.type === "tool_call" ? "tool" : e.type === "barge_in" ? "barge" : "db";
-  const label = e.type === "tool_call" ? e.name : e.type === "barge_in" ? "barge-in" : e.detail.split(" ").slice(0, 2).join(" ");
-  const title = e.type === "tool_call" ? `${e.name}(${JSON.stringify(e.arguments)}) -> ${JSON.stringify(e.result)}` : e.type === "barge_in" ? `Caller started speaking at ${fmtClock(e.atS)}${e.botStoppedAtS != null ? `; bot stopped after ${(e.botStoppedAtS - e.atS).toFixed(1)} s` : ""}` : e.detail;
+export function describeEvent(e: LaneEvent) {
+  const blocked = e.type === "tool_call" && !!e.guard?.stopped;
+  const kind = blocked ? "blocked" : e.type === "tool_call" ? "tool" : e.type === "barge_in" ? "barge" : "db";
+  const label = e.type === "tool_call" ? `${blocked ? "blocked " : ""}${e.name}` : e.type === "barge_in" ? "barge-in" : e.detail.split(" ").slice(0, 2).join(" ");
+  const title = e.type === "tool_call" ? `${e.name}(${JSON.stringify(e.arguments)}) -> ${blocked ? e.error : JSON.stringify(e.result)}` : e.type === "barge_in" ? `Caller started speaking at ${fmtClock(e.atS)}${e.botStoppedAtS != null ? `; bot stopped after ${(e.botStoppedAtS - e.atS).toFixed(1)} s` : ""}` : e.detail;
   return { kind, label, title };
 }
 
@@ -44,14 +45,14 @@ export function EventsLane({ timeline, durationS, onSeek }: { timeline: Timeline
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const events = timeline.filter((e): e is LaneEvent => e.type !== "utterance" && !(e.type === "system" && e.kind !== "db_change")).map((e) => ({ e, ...describe(e), atS: e.atS }));
+  const events = timeline.filter((e): e is LaneEvent => e.type !== "utterance" && !(e.type === "system" && e.kind !== "db_change")).map((e) => ({ e, ...describeEvent(e), atS: e.atS }));
   const places = layoutEvents(events, durationS, width);
   const rows = Math.max(1, ...places.map((p) => p.row + 1));
   return (
     <div className={s.events} ref={ref} style={{ height: rows * ROW_PX + 3 }}>
       {width > 0 && events.map(({ e, kind, label, title }, i) => (
         <button key={e.id} type="button" className={`${s.ev} ${s[kind]}`} style={{ left: places[i].x, top: 3 + places[i].row * ROW_PX }} title={title} onClick={() => onSeek(Math.max(0, e.atS - 0.5))}>
-          <Icon name={kind === "tool" ? "tool" : kind === "db" ? "db" : "warn"} size={10} />{label}
+          <Icon name={kind === "tool" || kind === "blocked" ? "tool" : kind === "db" ? "db" : "warn"} size={10} />{label}
         </button>
       ))}
     </div>

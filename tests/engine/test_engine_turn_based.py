@@ -19,6 +19,7 @@ from enginefakes import (
     says,
     scenario,
     stack,
+    unguarded,
     uses,
 )
 
@@ -188,6 +189,41 @@ async def test_request_metadata_is_carried_onto_the_artifact(store):
     artifact = await call(store, req=request(metadata={"run_label": "nightly"}))
 
     assert artifact.metadata["run_label"] == "nightly"
+
+
+# The argument guard ------------------------------------------------------------------------------
+
+
+GUESS = {"customer_id": "cus_1001", "billing_zip": "90210", "pin": "1234"}
+
+
+async def test_a_blocked_attempt_is_on_the_timeline_of_a_call(store):
+    guess = uses("verify_identity", **GUESS)
+    artifact = await call(store, llm_support=Scripted(guess, default="What's your zip?"))
+    attempt = events(artifact, ToolCallEvent)[0]
+    assert attempt.arguments == GUESS
+    assert attempt.guard.stopped
+    assert "argument_guard rule not_heard" in attempt.error
+    assert "bad_arguments" not in kinds(artifact)
+    assert artifact.metadata["argument_guard"] is True
+
+
+async def test_a_blocked_attempt_leaves_heard_text_as_stt_gave_it(store):
+    guess = uses("verify_identity", **GUESS)
+    artifact = await call(store, llm_support=Scripted(guess, default="What's your zip?"))
+    heard = " ".join(u.heard_text or "" for u in utterances(artifact, Speaker.CALLER))
+    assert "90210" not in heard
+    assert "1234" not in heard
+
+
+async def test_a_profile_can_run_the_raw_model_with_no_guard(store):
+    guess = uses("verify_identity", **GUESS)
+    built = unguarded(stack(llm_support=Scripted(guess, default="Sorry about that.")))
+    artifact = await run_turn_based_call(request(), stack=built, store=store, emit=Messages())
+    attempt = events(artifact, ToolCallEvent)[0]
+    assert attempt.result["verified"] is False
+    assert not attempt.guard.stopped
+    assert artifact.metadata["argument_guard"] is False
 
 
 # Turn order --------------------------------------------------------------------------------------

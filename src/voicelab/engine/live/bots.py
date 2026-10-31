@@ -21,7 +21,7 @@ from voicelab.core.models import CallArtifact, CallMode, CallStatus, Speaker, Ut
 from voicelab.core.profiles import ProviderStack
 from voicelab.engine import progress
 from voicelab.engine.contract import BotCallRequest, Emit
-from voicelab.engine.live.agent import support_side
+from voicelab.engine.live.agent import guard_setting, support_side
 from voicelab.engine.live.brains import BotBrain, Brain, CallerBrain
 from voicelab.engine.live.link import LinkEnd, Wire
 from voicelab.engine.live.log import LiveLog
@@ -95,7 +95,7 @@ class _LiveBotCall:
             scenario_snapshot=scenario,
             profile=stack.profile.id,
             providers=providers,
-            metadata=dict(request.metadata),
+            metadata={**request.metadata, **guard_setting(stack)},
         )
         self.log = LiveLog(self.artifact, store, emit)
         self.done = asyncio.Event()

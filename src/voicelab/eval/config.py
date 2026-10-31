@@ -175,6 +175,9 @@ class EvalConfig(BaseModel):
     judge_max_tokens: int = 200  # per item in a request, enough for its quotes and reason
     judge_batch_size: int = 0  # items per request, and 0 asks about them all at once
     ignored_state_tables: list[str] = Field(default_factory=list)
+    # Three minor findings reach the review score. Rolled up, a bot's blocked guesses are one
+    # finding, so this many of them count as a major one to get to the same place.
+    blocked_attempts_major: int = 3
     transcribe: TranscribeConfig = Field(default_factory=TranscribeConfig)
     timing: TimingConfig = Field(default_factory=TimingConfig)
     pronunciation: PronunciationConfig = Field(default_factory=PronunciationConfig)

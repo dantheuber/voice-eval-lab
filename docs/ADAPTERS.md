@@ -15,6 +15,8 @@ description: One line shown in the run launcher.
 live_capable: true              # false makes "auto" choose turn-based calls
 untested: false                 # true puts an "untested" mark on every call that uses it
 support_engine: cascade         # or realtime, which uses the realtime role for the bot
+support_bot:
+  argument_guard: true          # false runs the raw model, see "The argument guard" in the README
 roles:
   stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18101", name: my-stt}
   stt_eval: {type: whisper_cpp, base_url: "http://127.0.0.1:18104", name: whisper-large-v3-q5}

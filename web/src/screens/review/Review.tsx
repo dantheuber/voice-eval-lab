@@ -60,6 +60,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
   const pe = payload.call.personaSnapshot;
   const profiles = useProfiles();
   const untested = isUntested({ untested: payload.summary.untested, profile: payload.call.profile, providers: payload.call.providers }, profiles.data?.items);
+  const guardOn = payload.call.metadata.argument_guard; // absent on realtime calls, which have no guard, and on older calls
   useScope("review");
 
   // live eval progress. Streamed messages patch the cache for immediacy; the final `eval` and any reconnect
@@ -157,6 +158,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
           <span>{sc ? <><b>{sc.title}</b></> : <span className="faint">no scenario</span>}</span>
           <span>persona <b>{pe?.name ?? (payload.call.mode === "human" ? "you" : "unknown")}</b></span>
           <span>profile <b className="mono">{payload.call.profile ?? "?"}</b> {untested && <Untested />}</span>
+          {typeof guardOn === "boolean" && <span title="The support bot's check on tool arguments. Off runs the raw model, so a made-up value reaches the tool.">argument guard <b>{guardOn ? "on" : "off"}</b></span>}
           {payload.call.batchId && <span>{payload.call.batchId}{payload.summary.rep ? <>, rep <b>{payload.summary.rep}</b></> : null}</span>}
           <span><b>{fmtClock(D)}</b> call time{isTurn && payload.call.endedAt && payload.call.startedAt ? <>, <b>{fmtDuration((new Date(payload.call.endedAt).getTime() - new Date(payload.call.startedAt).getTime()) / 1000)}</b> wall clock</> : null}</span>
           {sc && <span title="caller turns used of the scenario's limit">{payload.call.timeline.filter((e) => e.type === "utterance" && e.speaker === "caller").length}/{sc.maxTurns} turns</span>}

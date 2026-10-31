@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { diffWords, findingsByUtterance, sameWords } from "./Transcript";
+import { diffWords, findingsByUtterance, sameWords, toolLine } from "./Transcript";
 import { reviewA } from "@/api/mock/fixtures";
+import type { ToolCallEvent } from "@/api/types";
+
+const tool = (over: Partial<ToolCallEvent>): ToolCallEvent => ({ type: "tool_call", id: "tc", atS: 1, name: "verify_identity", arguments: { pin: "1234" }, result: { verified: true }, error: null, durationMs: 1, guard: null, ...over });
+
+describe("toolLine", () => {
+  it("shows a blocked attempt with what the model wrote and the rule, not as a tool that failed", () => {
+    const error = "blocked before reaching the tool by argument_guard rule not_heard: pin not in anything the bot heard from the caller";
+    const line = toolLine(tool({ error, result: { error: "The caller hasn't said that." }, guard: { rule: "not_heard", fields: ["pin"], stopped: true } }));
+    expect(line).toBe(`verify_identity(pin="1234") -> ${error}`);
+  });
+  it("says so when the guard was off and a call it objected to ran", () => {
+    expect(toolLine(tool({ guard: { rule: "not_heard", fields: ["pin"], stopped: false } }))).toBe('verify_identity(pin="1234") -> {"verified":true} (guard off, rule not_heard would have blocked pin)');
+  });
+  it("leaves ordinary calls and ordinary errors as they were", () => {
+    expect(toolLine(tool({}))).toBe('verify_identity(pin="1234") -> {"verified":true}');
+    expect(toolLine(tool({ error: "boom" }))).toBe('verify_identity(pin="1234") -> error: boom');
+  });
+});
 
 describe("diffWords", () => {
   it("highlights a substituted token", () => {

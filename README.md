@@ -75,6 +75,7 @@ Every call, however it was made, ends as the same artifact: a stereo recording w
 | `transcribe` | Makes an independent Whisper transcript with no domain hints | Feeds the others |
 | `timing` | Reply latency, dead air, overlap, and barge-in reaction | A major finding fails the call. Skipped when timing isn't real |
 | `state` | Fernhill database changes against the scenario's expected changes | Fails the call, see below |
+| `tool_attempts` | Tool calls the bot's argument guard objected to, and whether the bot made the value up | Advisory when stopped. Fails the call when a made-up value reached a tool. See [the argument guard](#the-argument-guard-and-how-it-changes-results) |
 | `transcript_judge` | Each rule, with a pass or fail and evidence that has to exist: a quote from the transcript or a cited tool call | Fails the call, or sends it to review when undecided |
 | `caller_validity` | Whether the caller reached its checkpoints and kept to its fact sheet | Can make the call invalid, see below |
 | `pronunciation` | Intended text against what the independent STT heard, weighted to names, numbers, amounts, URLs, and acronyms | Fails the call only when a second check agrees. Otherwise advisory |
@@ -102,6 +103,41 @@ The rules apply in this order, and the first match wins:
 | `pass` | None of the above, and at least one rule was confirmed |
 
 A major advisory finding scores 3 and a minor one scores 1, so one major or three minor findings send a call to review. `info` findings score nothing and stay out of the default list, behind a details button on the review screen. Repeats of one kind of problem roll up into one finding that lists every occurrence and plays the worst. People confirm or dismiss findings on the review screen, and their verdict is stored beside the machine's, never over it.
+
+## The argument guard and how it changes results
+
+The bot checks two tools before it calls them. `find_customer` and `verify_identity` take values only the caller can supply, and a small model fills those in when it has none, usually `90210`, `1234`, or `example.com`. The guard refuses a call on either of two rules:
+
+| Rule | Stops the call when |
+| --- | --- |
+| `not_heard` | A phone, email, domain, zip, or PIN isn't in anything the bot heard from the caller |
+| `digit_count` | A zip isn't 5 digits or a PIN isn't 4. Live STT drops digits on noisy lines, and a short check can't pass |
+
+The guard belongs to the bot under test, the way a real product might validate tool input. It reads the caller's turns as live STT gave them, plus any address a tool corrected, and never scenario data. The model gets told why and tries again. A stopped check doesn't use up one of the caller's two tries.
+
+A stopped call stays on the record. It's a failed `ToolCallEvent` on the timeline, with the arguments the model wrote, an `error` naming the rule, and its time. The judge reads it in the tool log, marked as never having run. The review screen shows it in the Tools and db view and on the events lane.
+
+"Not heard" only means live STT never gave the bot that value, and the caller may still have said it. So the `tool_attempts` evaluator checks each value against the caller's script and the independent transcript, up to the moment of the attempt. A value said later doesn't count.
+
+| What the call shows | Guard on, the call stopped | Guard off, the call ran |
+| --- | --- | --- |
+| A value in neither source, so the bot made it up | `blocked_tool_call`, minor and advisory | `unguarded_tool_call`, major, fails the call |
+| Three or more of those in one call | One major advisory finding, which sends the call to review | One major finding, which fails the call |
+| The caller said it and live STT lost it | `info` | `info` |
+| A wrong digit count | `info` | `info` |
+
+A stopped mistake is advisory because nothing reached a tool and the caller lost nothing. It stays minor because of how often it happens: 13 of the 16 calls passing on the 36-call set hold one. Made major, it would leave 3 passes and 18 reviews. Made non-advisory, 3 passes and 28 fails. Either way the verdict would stop saying anything else about the call. A minor finding still shows on the review screen and adds 1 toward review.
+
+To run the raw model, put this in a profile:
+
+```yaml
+support_bot:
+  argument_guard: false
+```
+
+It defaults to `true`, and `local-default` and `local-fast` spell that out. A misspelled key stops the profile from loading, since a typo would quietly test the wrong bot. With the guard off, a wrong guess uses up a try and a right one verifies the caller, so expect more failures. The bot still records what the guard would have done, which is how the same mistake shows up on both settings. Each call stores its setting in `CallArtifact.metadata["argument_guard"]`, and the review screen shows it beside the profile. Realtime profiles don't use `SupportBot`, so they have no guard and store no setting.
+
+**The 36-call live numbers in this README were produced with the guard on.** It stopped 31 attempts across 25 of those calls, and 30 were made-up values. At the time a stopped attempt left only a `bad_arguments` system event, so the judge and the hand labels never saw them. Those stored calls still hold that old event, and re-evaluating one gives no `tool_attempts` finding. A one-off script converted the events and scored them with the new findings: 15 pass, 13 fail, 6 needs review, and 2 invalid, with 25 of 36 matching the hand labels. That's one call moved from pass to review. Nobody has run these calls with the guard off, so the raw model's pass rate isn't known.
 
 ## Known limits
 
@@ -205,7 +241,7 @@ What changed the numbers:
 
 ### Bot tuning results
 
-Measured on 2026-10-31 on `local-default`. After tuning both bots, 36 live bot calls ran through the app, 3 for each seed scenario. Each scenario had 3 different personas on their own lines, so all 9 personas and their noise are in the mix. The earlier 12 calls used 2 personas. [The tuning doc](docs/research/bot-tuning-2026-10.md) has why the first calls failed and what changed.
+Measured on 2026-10-31 on `local-default`. After tuning both bots, 36 live bot calls ran through the app, 3 for each seed scenario. Each scenario had 3 different personas on their own lines, so all 9 personas and their noise are in the mix. The earlier 12 calls used 2 personas. [The tuning doc](docs/research/bot-tuning-2026-10.md) has why the first calls failed and what changed. The 36 calls ran with [the argument guard](#the-argument-guard-and-how-it-changes-results) on.
 
 | Measure | Before, 12 calls | After, 36 calls |
 | --- | --- | --- |

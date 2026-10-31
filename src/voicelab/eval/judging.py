@@ -244,7 +244,7 @@ class ToolLog:
         first_seen: dict[str, int] = {}
         lines: list[tuple[float, str]] = []
         for number, event in enumerate(self._events, start=1):
-            detail = _describe(event)
+            detail = describe_call(event)
             start = f"[{event.at_s:.1f}s] TOOL T{number}"
             if detail in first_seen:
                 lines.append(
@@ -262,10 +262,25 @@ class ToolLog:
         if not 1 <= number <= len(self._events):
             return None
         event = self._events[number - 1]
-        return Evidence(quote=_describe(event), start_s=event.at_s)
+        return Evidence(quote=describe_call(event), start_s=event.at_s)
+
+    def stopped_note(self) -> str:
+        """Which calls never ran, in words. Most calls have none, so their prompt doesn't change."""
+        stopped = [
+            f"T{number}"
+            for number, event in enumerate(self._events, start=1)
+            if event.guard is not None and event.guard.stopped
+        ]
+        if not stopped:
+            return ""
+        it = "it" if len(stopped) == 1 else "they"
+        return (
+            f"The bot's own argument guard stopped {', '.join(stopped)} before {it} reached a "
+            f"tool, so {it} changed nothing.\n"
+        )
 
 
-def _describe(event: ToolCallEvent) -> str:
+def describe_call(event: ToolCallEvent) -> str:
     outcome = f"error: {event.error}" if event.error else json.dumps(event.result)
     return f"{event.name}({json.dumps(event.arguments)}) -> {outcome}"
 
@@ -372,6 +387,7 @@ def call_record(
     note = order_of_events(artifact) if tools else "The bot made no tool calls.\n"
     if not artifact.has_tool_log:
         note = "No tool log was recorded for this call.\n"
+    note += tools.stopped_note()
     return render_prompt(
         "call_record",
         context=context,

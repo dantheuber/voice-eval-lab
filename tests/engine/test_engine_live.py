@@ -24,6 +24,7 @@ from enginefakes import (
     says,
     scenario,
     stack,
+    unguarded,
     uses,
 )
 
@@ -149,6 +150,40 @@ async def test_a_tool_lands_on_the_timeline_between_the_turns_around_it(store):
     question = utterances(artifact, Speaker.CALLER)[0]
     reply = utterances(artifact, Speaker.BOT)[1]
     assert question.start_s < tool.at_s < reply.start_s
+
+
+async def test_a_live_call_records_a_blocked_attempt_and_the_guard_setting(store):
+    guess = uses("find_customer", domain="example.com")
+    artifact = await live_call(
+        store,
+        llm_caller=quick_caller(says("My site is down.")),
+        llm_support=Scripted(guess, default="What's your domain?"),
+    )
+    attempt = next(e for e in artifact.timeline if isinstance(e, ToolCallEvent))
+    assert attempt.guard.stopped
+    assert attempt.at_s > 0
+    assert artifact.metadata["argument_guard"] is True
+
+
+async def test_a_live_call_with_the_guard_off_sends_the_guess_to_the_tool(store):
+    call = run_live_bot_call(
+        request(mode=CallMode.LIVE_BOTS, persona=persona(line=LIVE)),
+        stack=unguarded(
+            stack(
+                llm_caller=quick_caller(says("My site is down.")),
+                llm_support=Scripted(
+                    uses("find_customer", domain="example.com"), default="Who are you?"
+                ),
+            )
+        ),
+        store=store,
+        emit=Messages(),
+        settings=simple_settings(),
+    )
+    artifact = await asyncio.wait_for(call, 45)
+    attempt = next(e for e in artifact.timeline if isinstance(e, ToolCallEvent))
+    assert not attempt.guard.stopped
+    assert artifact.metadata["argument_guard"] is False
 
 
 async def test_a_live_barge_in_cuts_the_bot_and_memory_keeps_only_what_went_out(store):

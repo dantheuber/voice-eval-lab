@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { Finding, ReviewPayload, TimelineEvent, Utterance } from "@/api/types";
+import type { Finding, ReviewPayload, TimelineEvent, ToolCallEvent, Utterance } from "@/api/types";
 import { useReview } from "@/store/review";
 import { evalName, fmtClock, sevClass } from "@/lib/format";
 import { Icon } from "@/components/ui";
@@ -8,6 +8,16 @@ import s from "./review.module.css";
 /* ASR picks its own punctuation, case, and hyphens, so nearly every real line differs in those. They aren't words the bot got wrong. */
 const bare = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 export const sameWords = (a: string, b: string) => bare(a) === bare(b);
+
+/* A stopped call never ran, so its error is the guard's reason and not a tool that failed. With the guard off the call ran,
+   and the line keeps what the guard would have done, because a right guess otherwise reads as a clean check. */
+export function toolLine(e: ToolCallEvent): string {
+  const args = Object.entries(e.arguments).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ");
+  const result = typeof e.result === "string" ? e.result : JSON.stringify(e.result);
+  const outcome = e.guard?.stopped ? ` -> ${e.error}` : e.error ? ` -> error: ${e.error}` : e.result != null ? ` -> ${result}` : "";
+  const note = e.guard && !e.guard.stopped ? ` (guard off, rule ${e.guard.rule} would have blocked ${e.guard.fields.join(", ")})` : "";
+  return `${e.name}(${args})${outcome}${note}`;
+}
 
 /* Word-level diff good enough to highlight a substituted token. The pronunciation evaluator's alignment is used when present. */
 export function diffWords(intended: string, heard: string): { pre: string; del: string; ins: string; post: string } {
@@ -83,11 +93,12 @@ export function Transcript({ payload, onSeek, onSelectFinding }: { payload: Revi
         if (!isUtt(e)) {
           if (e.type === "system" && e.kind !== "db_change") return null;
           const isDb = e.type === "system";
-          const text = e.type === "tool_call" ? `${e.name}(${Object.entries(e.arguments).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})${e.error ? ` -> error: ${e.error}` : e.result != null ? ` -> ${typeof e.result === "string" ? e.result : JSON.stringify(e.result)}` : ""}` : e.type === "barge_in" ? `caller interrupted${e.botStoppedAtS != null ? `, bot stopped in ${(e.botStoppedAtS - e.atS).toFixed(1)} s` : ""}` : e.detail;
+          const blocked = e.type === "tool_call" && !!e.guard?.stopped;
+          const text = e.type === "tool_call" ? toolLine(e) : e.type === "barge_in" ? `caller interrupted${e.botStoppedAtS != null ? `, bot stopped in ${(e.botStoppedAtS - e.atS).toFixed(1)} s` : ""}` : e.detail;
           return (
             <div key={e.id} ref={active ? activeRef : undefined} className={`${s.turn} ${s.event} ${active ? s.active : ""}`} onClick={() => onSeek(Math.max(0, e.atS - 0.5))}>
-              <div className={s.who}>{e.type === "tool_call" ? "tool" : e.type === "barge_in" ? "barge" : "db"}<small>{fmtClock(e.atS)}</small></div>
-              <div className={`${s.txt} ${isDb ? s.dbc : ""}`} style={e.type === "barge_in" ? { color: "var(--fail)" } : undefined}><Icon name={e.type === "tool_call" ? "tool" : isDb ? "db" : "warn"} size={12} /> {text}</div>
+              <div className={s.who}>{blocked ? "blocked" : e.type === "tool_call" ? "tool" : e.type === "barge_in" ? "barge" : "db"}<small>{fmtClock(e.atS)}</small></div>
+              <div className={`${s.txt} ${isDb ? s.dbc : ""} ${blocked ? s.blockedCall : ""}`} style={e.type === "barge_in" ? { color: "var(--fail)" } : undefined}><Icon name={e.type === "tool_call" ? "tool" : isDb ? "db" : "warn"} size={12} /> {text}</div>
             </div>
           );
         }

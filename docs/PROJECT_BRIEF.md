@@ -29,6 +29,7 @@ Treat this as a prototype someone will actually use, not a demo. It must start w
 | AWS | No Bedrock access exists on this machine. Build Bedrock adapters anyway, unit test them against mocks, and label them clearly as untested against live AWS. |
 | Mock company | **Fernhill Internet**, a fictional company selling email hosting, website hosting, domains, and SSL. Backed by a SQLite database with real tool calls, so evals can assert on what the bot actually did. |
 | Repo | `dantheuber/voice-eval-lab`, private, at `~/projects/voice-eval-lab`. Work on branch `prototype`. |
+| Argument guard | Keep the bot-side check on tool arguments, on by default, with `support_bot.argument_guard` to turn it off. It uses only what the bot heard. It must hide nothing: every stopped call is a failed `ToolCallEvent`, and evals report it. |
 | Scope | English only, single user, no login. No real phone calls: a simulated phone line (8 kHz mu-law, band-limit, noise, packet loss) sits behind a transport interface so real SIP can be added later. Outside recordings can be uploaded for post-call eval. |
 
 ## This machine
@@ -92,6 +93,7 @@ Evaluators produce findings with a timestamp, severity, evidence, and clip. Plan
 - **Transcript judge:** pass or fail on each criterion from the scenario rubric, with evidence that has to exist: a quote from the independent transcript, or a cited tool call
 - **Caller validity:** did the caller reach the scenario and stay within its facts? A failure is a test problem, not a bot failure, under the verdict rules below
 - **State assertions:** diff of the Fernhill database against expected changes
+- **Tool attempts:** every tool call the argument guard objected to, checked against what the caller really said. A made-up value that was stopped is advisory, and one that reached a tool fails the call. The README has the measured reason.
 - **Timing:** response latency, overlap, dead air, barge-in reaction time
 - **Pronunciation:** intended text vs independent ASR of the audio, weighted to critical tokens (names, numbers, amounts, URLs, acronyms), plus a lexicon. Run ASR without domain hints, which can hide mispronunciation.
 - **Audio quality:** clipping, loudness, silence, a MOS predictor, compared against a baseline

@@ -6,6 +6,7 @@ import json
 import pytest
 from scripted_llm import ScriptedLLM, call, uses
 
+from voicelab.agents.argument_guard import caller_said, said_exactly
 from voicelab.agents.support import (
     FILLER_LINE,
     GOODBYE,
@@ -13,7 +14,6 @@ from voicelab.agents.support import (
     SYSTEM_PROMPT,
     TROUBLE_LINE,
     SupportBot,
-    _caller_said,
     parse_text_tool_calls,
     speakable_text,
     support_instructions,
@@ -928,9 +928,103 @@ async def test_a_made_up_argument_never_reaches_the_tool(db, tool):
     bot, llm, events = make_bot(db, uses(tool), "What's your domain?")
     segments = await turn(bot, "I'd like to renew my domain.")
     assert [s.display for s in segments] == ["What's your domain?"]
-    assert tool_events(events) == []
-    assert [e.kind for e in events] == ["bad_arguments"]
     assert "hasn't said" in next(m for m in bot.messages if m.role == "tool").content
+    attempt = tool_events(events)[0]
+    assert attempt.changed == []
+    assert attempt.result == {"error": "The caller hasn't said that. Ask them for it."}
+
+
+async def test_a_blocked_attempt_is_a_failed_tool_call_with_its_rule_and_timing(db):
+    tool = call("find_customer", domain="example.com")
+    bot, _, events = make_bot(db, uses(tool), "What's your domain?", clock=lambda: 12.5)
+    await turn(bot, "I'd like to renew my domain.")
+    assert len(events) == 1  # one fact, one record, and no system event beside it
+    attempt = events[0]
+    assert isinstance(attempt, ToolCallEvent)
+    assert attempt.name == "find_customer"
+    assert attempt.arguments == {"domain": "example.com"}
+    assert attempt.guard.rule == "not_heard"
+    assert attempt.guard.fields == ["domain"]
+    assert attempt.guard.stopped
+    assert "argument_guard rule not_heard" in attempt.error
+    assert "domain" in attempt.error
+    assert attempt.at_s == 12.5
+    assert attempt.duration_ms is not None
+
+
+async def test_a_guessed_right_zip_and_pin_is_blocked_and_on_the_record(db):
+    """Dana's real zip and PIN. Run directly this verifies, and it left no tool event at all."""
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip="97214", pin="4821")
+    bot, _, events = make_bot(db, uses(tool), "What's your zip?")
+    await turn(bot, "Hi, this is Dana.")
+    attempt = tool_events(events)[0]
+    assert attempt.arguments["pin"] == "4821"
+    assert attempt.guard.fields == ["billing_zip", "pin"]
+    assert "verified" not in attempt.result
+    assert not bot._verified
+
+
+async def test_a_blocked_attempt_keeps_the_arguments_the_model_wrote(db):
+    bot, _, events = make_bot(
+        db,
+        uses(call("find_customer", email="evelyn@heartfamily.example")),
+        "Thanks. What's your zip and PIN?",
+        uses(call("find_customer", email="evelyn@heartfamily.example", phone="555-123-4567")),
+        "Could you repeat that?",
+    )
+    await turn(bot, "It's evelyn at heartfamily dot example.")
+    await turn(bot, "Yes.")
+    attempt = tool_events(events)[-1]
+    assert attempt.guard.fields == ["phone"]
+    assert attempt.arguments["email"] == "evelyn@heartfamily.example"
+
+
+async def test_words_the_bot_said_itself_dont_count_as_heard(db):
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip="97214", pin="4821")
+    bot, _, events = make_bot(db, uses(tool), "What's your zip?")
+    bot.on_interrupted("Your zip on file is 97214 and your PIN is 4821 and")
+    await turn(bot, "Hold on.")
+    assert tool_events(events)[0].guard.rule == "not_heard"
+
+
+# With the guard off ------------------------------------------------------------------------------
+
+
+async def test_with_the_guard_off_a_guess_reaches_the_tool(db):
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip="90210", pin="1234")
+    bot, _, events = make_bot(db, uses(tool), "Could you say that again?", argument_guard=False)
+    await turn(bot, "Hello.")
+    attempt = tool_events(events)[0]
+    assert attempt.result["verified"] is False
+    assert attempt.error is None
+    assert bot._failed_checks == 1
+
+
+async def test_with_the_guard_off_the_rule_it_would_have_used_stays_on_the_record(db):
+    """A right guess verifies here, so the event is all that shows where the digits came from."""
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip="97214", pin="4821")
+    bot, _, events = make_bot(db, uses(tool), "Thanks, Dana.", argument_guard=False)
+    await turn(bot, "Hello.")
+    attempt = tool_events(events)[0]
+    assert attempt.result["verified"] is True
+    assert attempt.guard.rule == "not_heard"
+    assert not attempt.guard.stopped
+    assert bot._verified
+
+
+async def test_with_the_guard_off_a_short_pin_uses_up_a_try(db):
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip="97214", pin="482")
+    bot, _, events = make_bot(db, uses(tool), "Sorry.", argument_guard=False)
+    await turn(bot, "My zip is 97214 and my pin is 482.")
+    assert tool_events(events)[0].guard.rule == "digit_count"
+    assert bot._failed_checks == 1
+
+
+async def test_a_call_the_guard_has_nothing_against_carries_no_objection(db):
+    tool = call("find_customer", domain="bellhardware.example")
+    bot, _, events = make_bot(db, uses(tool), "Found it.")
+    await turn(bot, "My domain is bell hardware dot example.")
+    assert tool_events(events)[0].guard is None
 
 
 async def test_a_made_up_check_doesnt_use_up_a_try(db):
@@ -947,7 +1041,9 @@ async def test_a_check_with_digits_missing_doesnt_use_up_a_try(db, zip_code, pin
     tool = call("verify_identity", customer_id="cus_1001", billing_zip=zip_code, pin=pin)
     bot, _, events = make_bot(db, uses(tool), "Could you say those again?")
     await turn(bot, f"My zip is {zip_code} and my pin is {pin}.")
-    assert tool_events(events) == []
+    attempt = tool_events(events)[0]
+    assert attempt.guard.rule == "digit_count"
+    assert "argument_guard rule digit_count" in attempt.error
     assert bot._failed_checks == 0
     assert "missed some digits" in next(m for m in bot.messages if m.role == "tool").content
 
@@ -967,7 +1063,7 @@ async def test_a_check_with_digits_missing_doesnt_use_up_a_try(db, zip_code, pin
     ],
 )
 def test_what_a_caller_can_say_counts_as_said(value, heard):
-    assert _caller_said(value, heard)
+    assert caller_said(value, heard)
 
 
 @pytest.mark.parametrize(
@@ -979,7 +1075,16 @@ def test_what_a_caller_can_say_counts_as_said(value, heard):
     ],
 )
 def test_what_a_caller_never_said_doesnt(value, heard):
-    assert not _caller_said(value, heard)
+    assert not caller_said(value, heard)
+
+
+def test_exact_matching_takes_no_number_on_trust():
+    """The guard lets "nineteen fifty eight" through. An evaluator asking if a guess was really
+    said can't, or a caller saying "thirty" would clear any digits."""
+    assert caller_said("1234", "it's about thirty dollars")
+    assert not said_exactly("1234", "it's about thirty dollars")
+    assert said_exactly("4821", "four eight two one")
+    assert said_exactly("bellhardware.example", "bell hardware dot example")
 
 
 # Misheard addresses -----------------------------------------------------------------------------

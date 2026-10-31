@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from voicelab.providers.base import LLM, STT, TTS, AudioAnalyst, RealtimeVoice, build
 
@@ -40,6 +40,15 @@ class LocalService(BaseModel):
     startup_timeout_s: float = 180.0
 
 
+class SupportBotConfig(BaseModel):
+    """Settings for the bot under test. A misspelled one would quietly test the wrong bot, so
+    unknown keys are refused."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    argument_guard: bool = True  # see `agents/argument_guard.py` and the README
+
+
 class Profile(BaseModel):
     id: str
     label: str
@@ -48,6 +57,7 @@ class Profile(BaseModel):
     untested: bool = False  # adapters here have never run against the real service
     support_engine: Literal["cascade", "realtime"] = "cascade"  # what plays the bot in live calls
     max_calls: int | None = None  # at once. Set when a server here has only so many sessions
+    support_bot: SupportBotConfig = Field(default_factory=SupportBotConfig)
     roles: dict[str, dict[str, Any]]
     services: list[LocalService] = Field(default_factory=list)
     benchmark: dict[str, Any] = Field(default_factory=dict)

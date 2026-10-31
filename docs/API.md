@@ -49,7 +49,8 @@ interface Scenario {
 
 interface Word { text: string; startS: number; endS: number; confidence: number | null; }
 interface Utterance { type: "utterance"; id: string; speaker: Speaker; startS: number; endS: number; intendedText: string | null; spokenText: string | null; heardText: string | null; interrupted: boolean; ttfbMs: number | null; words?: Word[]; }
-interface ToolCallEvent { type: "tool_call"; id: string; atS: number; name: string; arguments: Record<string, unknown>; result: unknown; error: string | null; durationMs: number | null; }
+interface GuardObjection { rule: string; fields: string[]; stopped: boolean; } // rule is not_heard or digit_count. stopped is false when the guard was off and the call ran
+interface ToolCallEvent { type: "tool_call"; id: string; atS: number; name: string; arguments: Record<string, unknown>; result: unknown; error: string | null; durationMs: number | null; guard: GuardObjection | null; }
 interface BargeInEvent { type: "barge_in"; id: string; atS: number; botStoppedAtS: number | null; interruptedUtteranceId: string | null; }
 interface SystemEvent { type: "system"; id: string; atS: number; kind: string; detail: string; }
 type TimelineEvent = Utterance | ToolCallEvent | BargeInEvent | SystemEvent;
@@ -60,6 +61,7 @@ interface CallArtifact {
   personaId: string | null; scenarioId: string | null; personaSnapshot: Persona | null; scenarioSnapshot: Scenario | null;
   profile: string | null; providers: Record<string, string>; startedAt: string | null; endedAt: string | null; durationS: number;
   timeline: TimelineEvent[]; dbChanges: DbChange[]; hasToolLog: boolean; hasIntendedText: boolean; error: string | null;
+  metadata: Record<string, unknown>; // keys keep their spelling. `argument_guard` is the setting a call ran with, absent on realtime calls and older ones
 }
 
 interface Evidence { quote: string; speaker: Speaker | null; startS: number | null; endS: number | null; }

@@ -75,6 +75,15 @@ test.describe("call review keyboard loop", () => {
     await expect(page.locator("[data-finding='fnd_a1']").getByText("confirmed")).toBeVisible();
   });
 
+  test("a blocked tool call shows in the Tools view, and the header says the guard was on", async ({ page }) => {
+    await page.goto("/calls/call_a3f2c1d0e9b7?theme=dark");
+    await expect(page.getByText("argument guard", { exact: false })).toContainText("on");
+    await page.getByRole("button", { name: "Tools and db" }).click();
+    const row = page.getByText(/verify_customer\(.*"1234".*argument_guard rule not_heard/);
+    await expect(row).toBeVisible();
+    await expect(page.locator("div", { hasText: /^blocked/ }).first()).toBeVisible();
+  });
+
   test("overview and calls list render with filters in the URL", async ({ page }) => {
     await page.goto("/?theme=dark");
     await expect(page.getByText("Needs a human").first()).toBeVisible();

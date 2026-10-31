@@ -10,6 +10,8 @@ from voicelab.core.models import (
     EvaluatorRun,
     Evidence,
     Finding,
+    GuardObjection,
+    ToolCallEvent,
     Verdict,
 )
 from voicelab.store.calls import CallFilters
@@ -100,6 +102,39 @@ def test_facets_ignore_the_verdict_filter_but_keep_the_others(client, many):
 
 def test_limit_is_bounded(client):
     assert client.get("/api/calls?limit=0").status_code == 400
+
+
+def test_a_blocked_attempt_and_the_guard_setting_reach_the_review_payload(
+    client, rig, finished_call
+):
+    call = finished_call()
+    artifact = rig.services.store.read_artifact(call["id"])
+    artifact.metadata["argument_guard"] = True
+    artifact.timeline.append(
+        ToolCallEvent(
+            at_s=3.0,
+            name="verify_identity",
+            arguments={"billing_zip": "90210", "pin": "1234"},
+            result={"error": "The caller hasn't said that. Ask them for it."},
+            error="blocked before reaching the tool by argument_guard rule not_heard",
+            duration_ms=0.2,
+            guard=GuardObjection(rule="not_heard", fields=["billing_zip", "pin"]),
+        )
+    )
+    rig.services.store.write_artifact(artifact)
+
+    body = client.get(f"/api/calls/{call['id']}").json()
+
+    event = next(e for e in body["call"]["timeline"] if e["type"] == "tool_call" and e["guard"])
+    assert event["guard"] == {
+        "rule": "not_heard",
+        "fields": ["billing_zip", "pin"],
+        "stopped": True,
+    }
+    assert event["arguments"] == {"billing_zip": "90210", "pin": "1234"}
+    assert event["error"].startswith("blocked before reaching the tool")
+    assert event["durationMs"] == 0.2
+    assert body["call"]["metadata"]["argument_guard"] is True
 
 
 def test_review_payload_shape(client, rig, finished_call):
