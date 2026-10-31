@@ -2,7 +2,9 @@
 
 import pytest
 import yaml
+from scripted_llm import ScriptedLLM, call, caller_says, uses
 
+from voicelab.agents.caller import CallerBot, run_text_call
 from voicelab.agents.seeds import (
     PERSONAS_DIR,
     SCENARIOS_DIR,
@@ -12,11 +14,11 @@ from voicelab.agents.seeds import (
     validate_seeds,
 )
 from voicelab.agents.speech import load_lexicon, normalize
+from voicelab.agents.support import SupportBot
 from voicelab.company import ToolDispatcher, create_call_db, diff_against_seed
 from voicelab.core.models import Persona, Scenario, StateExpectation
 
 PERSONAS, SCENARIOS = validate_seeds()
-VERIFIED = "(billing zip and PIN checked)"
 
 
 def row_matches(where, row):
@@ -268,6 +270,45 @@ def test_doing_nothing_fails_every_scenario_that_needs_an_action():
         assert not all(
             state_holds(expectation, []) for expectation in SCENARIOS[scenario_id].expected_state
         ), scenario_id
+
+
+async def test_a_scripted_call_meets_a_seeded_scenario():
+    scenario = SCENARIOS["scn_double_charge_refund"]
+    support_llm = ScriptedLLM(
+        "I'm sorry about that. What's your domain?",
+        uses(call("find_customer", domain="whitfieldlandscaping.example")),
+        "Thanks. What's your billing zip and PIN?",
+        uses(call("verify_identity", customer_id="cus_1001", billing_zip="97214", pin="4821")),
+        uses(call("get_invoice", invoice_id="FH-4419")),
+        "I see two charges of $49.99 on FH-4419. Shall I refund one?",
+        uses(
+            call(
+                "issue_refund",
+                invoice_id="FH-4419",
+                reason="Duplicate charge",
+                payment_id="pay_0003",
+            )
+        ),
+        "Done. The $49.99 is on its way back to your card.",
+    )
+    caller_llm = ScriptedLLM(
+        caller_says("Yeah, I got charged twice for the same invoice.", "state_problem"),
+        caller_says("It's whitfieldlandscaping.example."),
+        caller_says("Zip is 97214, PIN 4821.", "identify"),
+        caller_says("Yes, please do.", "confirm_refund"),
+        caller_says("Great, thanks. Bye.", hang_up=True, reason="got what I called for"),
+    )
+    db = create_call_db()
+    support = SupportBot(support_llm, ToolDispatcher(db))
+    caller = CallerBot(caller_llm, PERSONAS["per_angry_customer"], scenario, seed=1)
+
+    result = await run_text_call(support, caller)
+    db.close()
+
+    assert result.end_reason == "caller_hung_up"
+    assert result.completed_beats == ["state_problem", "identify", "confirm_refund"]
+    for expectation in scenario.expected_state:
+        assert state_holds(expectation, result.db_changes), expectation.id
 
 
 def test_load_scenarios_returns_models():
