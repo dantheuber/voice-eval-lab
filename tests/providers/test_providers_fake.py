@@ -206,7 +206,7 @@ async def test_the_fake_bots_reach_every_seeded_scenarios_outcome(scenario_id):
 
     result = await run_text_call(support, caller)
 
-    assert result.end_reason == "caller_hung_up"
+    assert result.end_reason in ("caller_hung_up", "bot_ended")
     assert result.completed_beats == [beat.id for beat in scenario.beats]
     for expectation in scenario.expected_state:
         hits = satisfying_changes(expectation, result.db_changes)

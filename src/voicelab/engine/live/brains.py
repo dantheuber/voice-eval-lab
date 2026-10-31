@@ -45,7 +45,10 @@ from voicelab.providers.base import STT
 logger = logging.getLogger(__name__)
 
 _END_SLACK_S = 0.1  # the output drops a partial last chunk
-_HOLD_ON = re.compile(r"(?:one moment|let me check that)[.!,]?\s*$", re.IGNORECASE)
+_HOLD_ON = re.compile(
+    r"(?:one moment|just a moment|let me (?:check|look)[\w\s]{0,30}|hold on)[.!,]?\s*$",
+    re.IGNORECASE,
+)
 
 
 async def _one(segment: SpeechText) -> AsyncIterator[SpeechText]:
@@ -498,6 +501,10 @@ class CallerBrain(Brain):
     async def on_far_side_started(self) -> None:
         await self._stop_patience()
         self.holding = False
+        if self.working and not self.turn_open:
+            # The bot wasn't finished after all, so a reply to its first half would talk over the
+            # rest. On real calls that barge-in cost the bot its turn. What was heard stays heard.
+            await self.stop_work()
         self.bot_turn += 1
         self.cut_in_this_turn = False
         self.hearing = True

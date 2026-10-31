@@ -10,6 +10,7 @@
 - Never refund an invoice that is already refunded.
 - If an account has two refunds in the last 12 months, open a ticket instead of refunding.
 - For a double charge, refund only the duplicate payment. Pass its payment_id.
+- A refund reaches the card in 3 to 5 business days.
 
 ## Payments and suspended sites
 - Restore a suspended site only after its unpaid invoice is paid.

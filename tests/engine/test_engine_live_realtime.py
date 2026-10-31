@@ -126,7 +126,11 @@ def realtime_stack(voice: ScriptedVoice, **adapters: Any) -> Any:
 async def run(store: ArtifactStore, voice: ScriptedVoice, **adapters: Any):
     caller = adapters.pop(
         "llm_caller",
-        Scripted(says("Hello."), says("Thanks."), says("Bye.", hang_up=True, reason="finished")),
+        Scripted(
+            says("Hello."),
+            says("Thanks."),
+            says("Bye.", beat="only", hang_up=True, reason="finished"),
+        ),
     )
     call = run_live_bot_call(
         request(mode=CallMode.LIVE_BOTS, persona=adapters.pop("who", persona(line=LIVE))),

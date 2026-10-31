@@ -37,8 +37,12 @@ MAX_TURNS_REASON = "max_turns"
 MAX_TURNS_LINE = "Look, I have to go. I'll call back later."
 REDIRECT_LINE = "Sorry, um, can we get back to why I called?"
 OPTIONAL_BEAT_TURNS = 2  # an optional beat that goes nowhere for this long gets dropped
+REPLY_TRIES = 3  # a rejected reply gets this many goes in all before the safe line
+LAST_QUESTIONS = 2  # lines after the last beat that can still be a question
 TRANSCRIPT_LINES = 20  # keeps the prompt small enough for a little local model
 TYPICAL_TURN_WORDS = 20  # one or two short sentences, as the support prompt asks for
+BASE_TURN_WORDS = 18  # a caller's most words in a turn, with `WORDS_PER_VERBOSITY` for each step
+WORDS_PER_VERBOSITY = 6  # 24 for the terse, 48 for a rambler. Past that a line ran over 30 s
 
 _PATIENCE = {
     1: "You have no patience and it shows fast.",
@@ -64,7 +68,24 @@ _TECH = {
 
 _ASSISTANT_TALK = re.compile(
     r"how (?:can|may) i (?:help|assist)|anything else i can|happy to help|let me know if you"
-    r"|i can help you with|as an ai",
+    r"|i can help you with|as an ai"
+    r"|let me (?:check|look|walk you|verify|pull|get (?:you|that))|i'?ll take care of"
+    r"|your (?:pin|billing zip|customer id)\b",
+    re.IGNORECASE,
+)
+# The script showing through. A person on the phone has no sheet, and nobody calls them the agent.
+_SCRIPT_TALK = re.compile(
+    r"\b(?:fact )?sheet\b|\bthe agent\b|\bmy (?:current )?step\b", re.IGNORECASE
+)
+_WANTS_A_YES = re.compile(r"\bsay yes\b|\bagree\b", re.IGNORECASE)
+_A_YES = re.compile(
+    r"\b(?:yes|yeah|yep|yup|sure|okay|ok|alright|fine|go ahead|please do|do it|charge it"
+    r"|sounds good)\b",
+    re.IGNORECASE,
+)
+_LEAVING = re.compile(
+    r"\b(?:good ?bye|bye|hang(?:ing)? up|i'?m (?:all set|done here)|that'?s all i need"
+    r"|have a (?:good|great|nice|lovely|wonderful) (?:day|one|afternoon|evening))\b",
     re.IGNORECASE,
 )
 _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.\w+")
@@ -135,6 +156,18 @@ def _squash(text: str) -> str:
     return _SEPARATORS.sub("", text.lower())
 
 
+def _shorten(text: str, limit: int) -> str:
+    """Whole sentences up to about `limit` words. A long-winded persona still gets a word in."""
+    kept: list[str] = []
+    words = 0
+    for sentence in _SENTENCE_END.split(text):
+        words += len(sentence.split())
+        if kept and words > limit:
+            break
+        kept.append(sentence)
+    return " ".join(kept)
+
+
 def _numerals(text: str) -> str:
     """Turn "four eight two one" into digits, so a number in words can't dodge the guard."""
 
@@ -180,6 +213,7 @@ class CallerBot:
         self.hung_up = False
         self._beat_index = 0
         self._stalled_turns = 0  # consecutive turns where no beat got done
+        self._last_questions = 0  # lines since the beats ran out
 
     @property
     def current_beat(self) -> Beat | None:
@@ -214,10 +248,11 @@ class CallerBot:
         self.turns += 1
         was_finished = self.finished_beats
         reply = await self._ask()
-        line = CallerLine(reply.say.strip(), completed_beat=self._track_beat(reply))
-        if reply.hang_up:
+        text = _shorten(reply.say.strip(), self._word_limit)
+        line = CallerLine(text, completed_beat=self._track_beat(reply, text))
+        if reply.hang_up and self._may_leave(was_finished, text):
             return self._conclude(line, reply.hang_up_reason or "caller decided to hang up")
-        if was_finished:
+        if was_finished and not self._still_asking(text):
             return self._conclude(line, "finished")
         if self._stalled_turns >= self.patience_limit:
             return self._conclude(line, "out of patience")
@@ -231,10 +266,31 @@ class CallerBot:
             self.transcript.append(("You", line.text))
         return CallerLine(line.text, line.completed_beat, True, reason)
 
-    def _track_beat(self, reply: _Reply) -> str | None:
+    @property
+    def _required_beats_left(self) -> bool:
+        return any(beat.required for beat in self.scenario.beats[self._beat_index :])
+
+    @property
+    def _word_limit(self) -> int:
+        return BASE_TURN_WORDS + WORDS_PER_VERBOSITY * self.persona.verbosity
+
+    @property
+    def _out_of_patience(self) -> bool:
+        return self._stalled_turns + 1 >= self.patience_limit
+
+    def _may_leave(self, was_finished: bool, text: str) -> bool:
+        """The script ends a call, not the model. On real calls it left mid-task, thanking a bot
+        for help it hadn't given, and it asked its last question and hung up on the answer.
+        """
+        if self.scenario.beats and self._required_beats_left:
+            return self._stalled_turns >= self.patience_limit
+        return was_finished or "?" not in text
+
+    def _track_beat(self, reply: _Reply, text: str) -> str | None:
         """Advance on the current beat only, so a confused model can't skip ahead."""
         beat = self.current_beat
-        if beat and reply.completed_beat == beat.id:
+        said_done = beat is not None and reply.completed_beat == beat.id
+        if beat and (said_done or self._beat_shows(beat, text)) and self._did_the_beat(beat, text):
             self.completed_beats.append(beat.id)
             self._beat_index += 1
             self._stalled_turns = 0
@@ -245,9 +301,38 @@ class CallerBot:
             self._stalled_turns = 0
         return None
 
+    def _still_asking(self, text: str) -> bool:
+        """A cut-in can eat the answer to the last question. It gets one more go, then it's over."""
+        self._last_questions += 1
+        return "?" in text and self._last_questions <= LAST_QUESTIONS
+
+    def _beat_shows(self, beat: Beat, text: str) -> bool:
+        """The model also forgets to call a step done, and then it replays that step for ever.
+
+        These steps can be read off the words: the zip and PIN got said, or the agent asked
+        something and the answer opens with a yes.
+        """
+        if "PIN" in beat.instruction:
+            return True
+        asked = bool(self.transcript) and "?" in self.transcript[-1][1]
+        return asked and _WANTS_A_YES.search(beat.instruction) and _A_YES.match(text.strip())
+
+    def _did_the_beat(self, beat: Beat, text: str) -> bool:
+        """The model calls a step done at its first half. Two kinds can be checked from the words:
+        one that asks for a yes needs a yes, and one that asks for the zip and PIN needs both.
+        """
+        if _WANTS_A_YES.search(beat.instruction) and not _A_YES.search(text):
+            return False
+        if "PIN" not in beat.instruction:
+            return True
+        said = " ".join(line for who, line in self.transcript if who == "You")
+        said = _squash(_numerals(f"{said} {text}"))
+        facts = self.scenario.facts
+        return all(_squash(facts[key]) in said for key in ("billing_zip", "pin") if key in facts)
+
     async def _ask(self) -> _Reply:
         correction = ""
-        for _ in range(2):
+        for _ in range(REPLY_TRIES):
             response = await self.llm.chat(
                 self._messages(correction),
                 temperature=self.temperature,
@@ -258,16 +343,23 @@ class CallerBot:
             if reply is None:
                 correction = "Your last reply was not valid JSON with a non-empty say field."
                 continue
-            problem = self._problem_with(reply.say)
+            problem = self._problem_with(reply)
             if problem is None:
                 return reply
             correction = problem
         return _Reply(say=REDIRECT_LINE)
 
-    def _problem_with(self, say: str) -> str | None:
-        """Catch the two failures that ruin a test run: acting like an agent, inventing facts."""
+    def _problem_with(self, reply: _Reply) -> str | None:
+        """Catch what ruins a test run: acting like an agent, inventing facts, leaving early."""
+        say = reply.say
         if _ASSISTANT_TALK.search(say):
             return "You sounded like a support agent. You are the customer, so don't offer help."
+        if _SCRIPT_TALK.search(say):
+            return "Talk like a person on a phone. Say 'you', and never mention a sheet or a step."
+        if self._leaving_early(reply):
+            beat = self.current_beat
+            step = beat.instruction if beat else "Finish why you called."
+            return f"You are not done, so don't say goodbye or hang up. Do this now: {step}"
         invented = self._invented_details(say)
         if invented:
             return (
@@ -275,6 +367,19 @@ class CallerBot:
                 "Use the value on your sheet, or say you don't have it."
             )
         return None
+
+    def _leaving_early(self, reply: _Reply) -> bool:
+        beat = self.current_beat
+        if beat is None or self._out_of_patience:
+            return False
+        last = reply.completed_beat == beat.id and not any(
+            later.required for later in self.scenario.beats[self._beat_index + 1 :]
+        )
+        return (
+            not last
+            and self._required_beats_left
+            and (reply.hang_up or bool(_LEAVING.search(reply.say)))
+        )
 
     def _invented_details(self, say: str) -> list[str]:
         """Details the caller has no right to state.
@@ -364,13 +469,20 @@ right, so don't agree with it.
 
 Rules:
 - You are the customer. Never help the agent, summarize for it, or offer to do its job.
+- If the agent asks for something on your sheet, give it right away, before anything else.
+- If the agent is checking something, say okay and wait. A short wait is normal.
+- If the agent doesn't get to your step, ask for it directly.
 - If the agent goes off topic, don't follow. Bring it back to your current step.
+- A name or address can sound different on the phone. Don't argue about how it's said.
+- Don't say goodbye until your last step is done.
 - Talk like a real person on a phone. Fragments and fillers are fine. No lists.
-- Usually one or two sentences.
+- Never mention your sheet or your steps. They are only in your head.
+- Usually one or two sentences, and at most one short aside.
 
 Reply as JSON with these fields:
 - say: your next words
-- completed_beat: the current step id if this turn finishes that step, otherwise null
+- completed_beat: the current step id only if what you say now does everything the step asks, \
+otherwise null
 - hang_up: true only if you are done or giving up
 - hang_up_reason: why you are hanging up, or an empty string"""
 
@@ -381,7 +493,7 @@ Reply as JSON with these fields:
                 return "You got through everything. Say a short goodbye and hang up."
             return "Your step: explain why you called and get it sorted out."
         step = f"Your current step (id {beat.id}): {beat.instruction}"
-        if self._stalled_turns + 1 >= self.patience_limit:
+        if self._out_of_patience:
             return f"{step}\nYou have had enough. Say so and hang up."
         if self._stalled_turns > self.persona.patience:
             return f"{step}\nThis is going nowhere and you are getting annoyed. Let it show."

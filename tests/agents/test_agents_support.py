@@ -7,6 +7,7 @@ import pytest
 from scripted_llm import ScriptedLLM, call, uses
 
 from voicelab.agents.support import (
+    _caller_said,
     FILLER_LINE,
     GOODBYE,
     GREETING,
@@ -93,13 +94,13 @@ async def test_yields_sentence_by_sentence(db):
     ]
 
 
-async def test_first_sentence_arrives_before_the_stream_ends(db):
+async def test_no_words_go_out_until_the_round_has_no_tool_call(db):
     text = "Short one. " + " ".join(["word"] * 50)
     bot, llm, _ = make_bot(db, text)
     stream = bot.respond("Hi")
     first = await anext(stream)
     assert first.display == "Short one."
-    assert llm.chunks_sent < 5
+    assert llm.chunks_sent >= 5
     await stream.aclose()
 
 
@@ -164,7 +165,7 @@ async def test_runs_tools_until_it_has_something_to_say(db):
         uses(call("verify_identity", customer_id="cus_1001", billing_zip="97214", pin="4821")),
         "Thanks Dana, you're verified.",
     )
-    segments = await turn(bot)
+    segments = await turn(bot, "It's 503-555-0101, zip 97214, pin 4821.")
     assert [s.display for s in segments] == ["Thanks Dana, you're verified."]
     assert [event.name for event in events] == ["find_customer", "verify_identity"]
     assert len(llm.requests) == 3
@@ -227,11 +228,12 @@ async def test_several_tool_calls_in_one_reply_all_run(db):
     assert [event.name for event in events] == ["list_plans", "get_invoice"]
 
 
-async def test_text_before_a_tool_call_is_spoken(db):
-    bot, _, _ = make_bot(db, uses(call("list_plans"), text="One moment."), "Here you go.")
+async def test_words_beside_a_tool_call_are_never_spoken(db):
+    claim = uses(call("list_plans"), text="Your identity is verified.")
+    bot, _, _ = make_bot(db, claim, "Here you go.")
     segments = await turn(bot)
-    assert [s.display for s in segments] == ["One moment.", "Here you go."]
-    assert bot.messages[-3].content == "One moment."
+    assert [s.display for s in segments] == ["Here you go."]
+    assert bot.messages[-3].content == ""
     assert bot.messages[-3].tool_calls
 
 
@@ -410,12 +412,12 @@ async def test_arguments_in_text_tool_calls_are_kept(db):
     assert events[0].error is None
 
 
-async def test_speech_before_a_text_tool_call_is_kept(db):
+async def test_speech_before_a_text_tool_call_is_not_spoken(db):
     bot, _, _ = make_bot(
         db, 'Let me check. {"name": "list_plans", "arguments": {}}', "We have six plans."
     )
     segments = await turn(bot)
-    assert [s.display for s in segments] == ["Let me check.", "We have six plans."]
+    assert [s.display for s in segments] == ["We have six plans."]
 
 
 @pytest.mark.parametrize(
@@ -456,9 +458,9 @@ async def test_retry_note_after_a_tool_result_stays_valid(db):
 async def test_speech_then_malformed_call_keeps_alternating_roles(db):
     bot, llm, _ = make_bot(db, "Let me look. <tool_call>{broken", "Here it is.")
     segments = await turn(bot)
-    assert [s.display for s in segments] == ["Let me look.", "Here it is."]
+    assert [s.display for s in segments] == ["Here it is."]
     assert roles(bot.messages)[-2:] == ["user", "assistant"]
-    assert bot.messages[-1].content == "Let me look. Here it is."
+    assert bot.messages[-1].content == "Here it is."
 
 
 async def test_model_that_never_recovers_gets_a_fixed_line(db):
@@ -507,7 +509,7 @@ async def test_retried_speech_then_tool_call_keeps_one_assistant_message(db):
     )
     await turn(bot)
     assert roles(bot.messages)[-3:] == ["assistant", "tool", "assistant"]
-    assert bot.messages[-3].content == "Let me look."
+    assert bot.messages[-3].content == ""
     assert bot.messages[-3].tool_calls
 
 
@@ -676,31 +678,6 @@ async def test_resuming_after_an_interrupt_ends_the_turn(db):
     assert llm.closed_streams == 1
 
 
-async def test_tools_never_run_after_an_interrupt(db):
-    unlock = call("unlock_mailbox", address="evelyn@hartfamily.example")
-    bot, llm, events = make_bot(db, uses(unlock, text="One moment. Let me unlock that."))
-    stream = bot.respond("Hi")
-    await anext(stream)
-    bot.on_interrupted("One")
-    with pytest.raises(StopAsyncIteration):
-        await anext(stream)
-    assert events == []
-    assert diff_against_seed(db) == []
-    assert all(not message.tool_calls for message in bot.messages)
-
-
-async def test_tools_after_the_last_sentence_never_run_after_an_interrupt(db):
-    unlock = call("unlock_mailbox", address="evelyn@hartfamily.example")
-    bot, _, events = make_bot(db, uses(unlock, text="One moment."))
-    stream = bot.respond("Hi")
-    await anext(stream)
-    bot.on_interrupted("One")
-    with pytest.raises(StopAsyncIteration):
-        await anext(stream)
-    assert events == []
-    assert diff_against_seed(db) == []
-
-
 async def test_an_interrupt_during_a_slow_generation_adds_nothing_later(db):
     class SlowLLM(ScriptedLLM):
         def __init__(self):
@@ -716,14 +693,13 @@ async def test_an_interrupt_during_a_slow_generation_adds_nothing_later(db):
     bot = SupportBot(llm, ToolDispatcher(db))
     bot.greet()
     stream = bot.respond("Hi")
-    await anext(stream)
     pending = asyncio.create_task(anext(stream))
     await asyncio.sleep(0)
-    bot.on_interrupted("First.")
+    bot.on_interrupted("")
     llm.release.set()
     with pytest.raises(StopAsyncIteration):
         await pending
-    assert bot.messages[-1].content == "First."
+    assert (bot.messages[-1].role, bot.messages[-1].content) == ("user", "Hi")
 
 
 async def test_a_new_turn_stops_an_abandoned_generator(db):
@@ -813,8 +789,8 @@ async def test_silent_end_call_still_says_goodbye(db):
     assert bot.ended is True
 
 
-async def test_goodbye_said_before_end_call_is_not_repeated(db):
-    bot, _, _ = make_bot(db, uses(call("list_plans"), text="Bye."), uses(call("end_call")))
+async def test_goodbye_said_beside_end_call_is_not_repeated(db):
+    bot, _, _ = make_bot(db, uses(call("end_call"), text="Bye."))
     assert [s.display for s in await turn(bot)] == ["Bye."]
 
 
@@ -881,14 +857,14 @@ async def test_a_slow_tool_turn_says_something_while_the_caller_waits(db):
     assert said == [FILLER_LINE, "We have three plans."]
 
 
-async def test_the_filler_is_in_the_history_as_speech_beside_its_tool_call(db):
+async def test_the_filler_stays_out_of_the_history_so_the_model_cant_copy_it(db):
     llm = SlowFirstRound(uses(call("list_plans")), "We have three plans.", delay_s=0.02)
     bot = filler_bot(db, llm)
 
     await spoken_by(bot, "What plans do you have?")
 
     turn = next(m for m in bot.messages if m.tool_calls)
-    assert turn.content == FILLER_LINE
+    assert turn.content == ""
 
 
 async def test_a_fast_tool_turn_stays_quiet(db):
@@ -899,14 +875,14 @@ async def test_a_fast_tool_turn_stays_quiet(db):
     assert said == ["We have three plans."]
 
 
-async def test_no_filler_once_the_bot_has_said_something_this_turn(db):
+async def test_the_filler_is_said_once_however_many_rounds_a_turn_takes(db):
     llm = SlowFirstRound(
-        uses(call("list_plans"), text="Sure, let me look."), "We have three plans.", delay_s=0.02
+        uses(call("list_plans")), uses(call("list_plans")), "We have three plans.", delay_s=0.02
     )
 
     said = await spoken_by(filler_bot(db, llm), "What plans?")
 
-    assert FILLER_LINE not in said
+    assert said == [FILLER_LINE, "We have three plans."]
 
 
 async def test_no_filler_unless_asked_for(db):
@@ -935,3 +911,60 @@ async def test_cutting_in_on_the_filler_stops_the_tool(db):
     await reply.aclose()
 
     assert db.row("SELECT COUNT(*) AS n FROM tickets WHERE subject = 's'")["n"] == 0
+
+
+# Arguments the caller never said ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        call("verify_identity", customer_id="cus_1001", billing_zip="90210", pin="1234"),
+        call("find_customer", domain="example.com"),
+        call("find_customer", phone="555-123-4567"),
+    ],
+)
+async def test_a_made_up_argument_never_reaches_the_tool(db, tool):
+    bot, llm, events = make_bot(db, uses(tool), "What's your domain?")
+    segments = await turn(bot, "I'd like to renew my domain.")
+    assert [s.display for s in segments] == ["What's your domain?"]
+    assert tool_events(events) == []
+    assert [e.kind for e in events] == ["made_up_arguments"]
+    assert "hasn't said" in next(m for m in bot.messages if m.role == "tool").content
+
+
+async def test_a_made_up_check_doesnt_use_up_a_try(db):
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip="90210", pin="1234")
+    bot, _, _ = make_bot(db, uses(tool), "What's your zip?")
+    await turn(bot, "Hello.")
+    assert bot._failed_checks == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "heard"),
+    [
+        ("97214", "my zip is 97214"),
+        ("97214", "it's nine, seven, two, one, four"),
+        ("0264", "zero two six four"),
+        ("1958", "nineteen fifty eight"),
+        ("8073", "eight thousand seventy three"),
+        ("(503) 555-0101", "five oh three, five five five, oh one oh one"),
+        ("bellhardware.example", "bell hardware dot example"),
+        ("www.bellhardware.example", "it's bell hardware"),
+        ("dana@whitfield.example", "dana at whitfield dot example"),
+    ],
+)
+def test_what_a_caller_can_say_counts_as_said(value, heard):
+    assert _caller_said(value, heard)
+
+
+@pytest.mark.parametrize(
+    ("value", "heard"),
+    [
+        ("90210", "I want to renew my domain"),
+        ("example.com", "My site is down"),
+        ("555-123-4567", "my pin is 4821"),
+    ],
+)
+def test_what_a_caller_never_said_doesnt(value, heard):
+    assert not _caller_said(value, heard)

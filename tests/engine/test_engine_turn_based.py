@@ -107,7 +107,8 @@ async def test_a_fake_call_runs_end_to_end_and_writes_its_artifact(store):
     assert set(artifact.providers) == {
         "stt_live", "tts_bot", "tts_caller", "llm_support", "llm_caller",
     }  # fmt: skip
-    assert "caller_hung_up" in kinds(artifact) and kinds(artifact)[-1] == "call_ended"
+    assert {"caller_hung_up", "bot_ended"} & set(kinds(artifact))
+    assert kinds(artifact)[-1] == "call_ended"
     assert artifact.duration_s > 10
     paths = store.paths(artifact.id)
     for path in (paths.recording, paths.caller, paths.bot, paths.peaks, paths.call_json):
@@ -218,7 +219,7 @@ class Traced(Scripted):
 async def test_the_two_brains_never_run_at_the_same_time(store):
     log: list[str] = []
     caller = Traced(
-        "caller", log, says("Hello there."), says("And then this."), says("Bye.", hang_up=True)
+        "caller", log, says("Hello there."), says("And then this."), says("Bye.", beat="only", hang_up=True)
     )
     support = Traced("support", log, "First answer.", "Second answer.")
 
@@ -234,7 +235,7 @@ async def test_the_two_brains_never_run_at_the_same_time(store):
 
 
 async def test_the_bot_greets_first_and_turns_alternate(store):
-    caller = Scripted(says("One."), says("Two."), says("Bye.", hang_up=True))
+    caller = Scripted(says("One."), says("Two."), says("Bye.", beat="only", hang_up=True))
     artifact = await call(store, llm_caller=caller, llm_support=Scripted(default="Noted."))
 
     order = [u.speaker for u in utterances(artifact)]
@@ -252,7 +253,7 @@ async def test_the_bot_greets_first_and_turns_alternate(store):
 
 
 async def test_each_brain_gets_the_heard_text_and_never_the_intended_text(store):
-    caller = Scripted(says("My name is Dana."), says("Bye.", hang_up=True))
+    caller = Scripted(says("My name is Dana."), says("Bye.", beat="only", hang_up=True))
     support = Scripted("Your balance is fine.")
     hearing = Rewriting({"Dana": "Diana", "fine": "nine", "Fernhill": "Fern Hill"})
 
@@ -275,7 +276,7 @@ async def test_each_brain_gets_the_heard_text_and_never_the_intended_text(store)
 
 async def test_spelled_ids_are_repaired_for_the_brain_but_stay_raw_in_the_artifact(store):
     raw = "My account is a C nine zero seven seven."
-    caller = Scripted(says("My account is AC9077."), says("Bye.", hang_up=True))
+    caller = Scripted(says("My account is AC9077."), says("Bye.", beat="only", hang_up=True))
     support = Scripted("Got it.")
     hearing = Rewriting(
         {"A, as in apple. C, as in cat. Nine, zero, seven, seven.": "a C nine zero seven seven."}
@@ -294,7 +295,7 @@ async def test_spelled_ids_are_repaired_for_the_brain_but_stay_raw_in_the_artifa
 
 
 async def test_a_caller_line_is_spoken_in_its_tts_form(store):
-    caller = Scripted(says("It's invoice FH-4419."), says("Bye.", hang_up=True))
+    caller = Scripted(says("It's invoice FH-4419."), says("Bye.", beat="only", hang_up=True))
     support = Scripted("Thanks.")
 
     artifact = await call(
@@ -329,7 +330,7 @@ async def test_request_line_overrides_the_persona_line(store):
 
 async def test_each_turn_arrives_one_line_delay_after_the_sender_acted(store):
     line = CLEAN.model_copy(update={"one_way_latency_ms": 500})
-    caller = Scripted(says("Hello."), says("Bye.", hang_up=True))
+    caller = Scripted(says("Hello."), says("Bye.", beat="only", hang_up=True))
     config = TurnConfig(think_s=(0.3, 0.3), react_s=(0.7, 0.7), answer_s=0.2)
 
     artifact = await call(
@@ -350,7 +351,7 @@ async def test_each_turn_arrives_one_line_delay_after_the_sender_acted(store):
 
 
 def cutting_caller(*lines: str) -> Scripted:
-    return Scripted(*lines, says("Bye.", hang_up=True))
+    return Scripted(*lines, says("Bye.", beat="only", hang_up=True))
 
 
 async def test_a_cut_turn_is_cut_on_disk_at_the_words_recorded_as_spoken(store):
@@ -428,9 +429,9 @@ async def test_the_bots_memory_holds_only_what_was_played_before_the_cut(store):
     )
 
 
-async def test_later_tool_rounds_never_run_once_the_caller_cuts_in(store):
+async def test_a_caller_cutting_in_cant_stop_a_tool_that_ran_before_any_words(store):
     speech_then_tool = uses(
-        "create_ticket", text=f"{LONG_REPLY} {LONG_REPLY}", subject="never", summary="never"
+        "create_ticket", text=f"{LONG_REPLY} {LONG_REPLY}", subject="Help", summary="Help"
     )
     support = Scripted(speech_then_tool, default="Done.")
 
@@ -441,8 +442,8 @@ async def test_later_tool_rounds_never_run_once_the_caller_cuts_in(store):
         llm_support=support,
     )
 
-    assert not [e for e in events(artifact, ToolCallEvent) if e.name == "create_ticket"]
-    assert not artifact.db_changes
+    assert [e.name for e in events(artifact, ToolCallEvent)] == ["create_ticket"]
+    assert all(LONG_REPLY not in u.intended_text for u in utterances(artifact, Speaker.BOT))
 
 
 async def test_a_short_reply_is_still_cut(store):
@@ -486,7 +487,7 @@ async def test_a_tool_before_any_speech_lands_between_the_caller_and_the_reply(s
 
     artifact = await call(
         store,
-        llm_caller=Scripted(says("What plans?"), says("Bye.", hang_up=True)),
+        llm_caller=Scripted(says("What plans?"), says("Bye.", beat="only", hang_up=True)),
         llm_support=support,
         config=config,
     )
@@ -499,20 +500,17 @@ async def test_a_tool_before_any_speech_lands_between_the_caller_and_the_reply(s
     assert reply.start_s == pytest.approx(tool.at_s + 0.5 + 0.08)
 
 
-async def test_a_tool_after_a_spoken_preamble_runs_while_that_preamble_plays(store):
+async def test_a_preamble_beside_a_tool_is_never_spoken(store):
     preamble = uses("list_plans", text="Let me pull those up for you right now.")
     support = Scripted(preamble, "We have several plans.")
 
     artifact = await call(
         store,
-        llm_caller=Scripted(says("What plans?"), says("Bye.", hang_up=True)),
+        llm_caller=Scripted(says("What plans?"), says("Bye.", beat="only", hang_up=True)),
         llm_support=support,
     )
 
-    reply = utterances(artifact, Speaker.BOT)[1]
-    tool = events(artifact, ToolCallEvent)[0]
-    assert reply.start_s - 0.08 <= tool.at_s < reply.end_s
-    assert "Let me pull" in reply.intended_text and "several plans" in reply.intended_text
+    assert utterances(artifact, Speaker.BOT)[1].intended_text == "We have several plans."
 
 
 async def test_the_timeline_comes_out_in_time_order(store):
@@ -532,7 +530,7 @@ async def test_changes_land_in_db_changes_and_each_call_gets_its_own_database(st
     quiet = chatty.model_copy(update={"line": CLEAN})
     refunding = request("call_refund", persona=quiet, scenario=double_charge)
 
-    idle_caller = Scripted(says("Never mind."), says("Bye.", hang_up=True))
+    idle_caller = Scripted(says("Never mind."), says("Bye.", beat="only", hang_up=True))
     idle = request("call_idle", persona=quiet)
     refunded, untouched = await asyncio.gather(
         call(store, req=refunding),
@@ -551,7 +549,7 @@ async def test_changes_land_in_db_changes_and_each_call_gets_its_own_database(st
 
 
 async def test_the_call_ends_when_the_caller_hangs_up(store):
-    caller = Scripted(says("I'm done here.", hang_up=True, reason="finished"))
+    caller = Scripted(says("I'm done here.", beat="only", hang_up=True, reason="finished"))
     artifact = await call(store, llm_caller=caller, llm_support=Scripted())
 
     assert kinds(artifact)[-2:] == ["caller_hung_up", "call_ended"]
@@ -585,7 +583,7 @@ async def test_the_call_ends_at_max_turns(store):
 
 async def test_a_hang_up_with_no_words_leaves_no_empty_utterance(store):
     silent = json.dumps(
-        {"say": "", "completed_beat": None, "hang_up": True, "hang_up_reason": "gave up"}
+        {"say": "", "completed_beat": "only", "hang_up": True, "hang_up_reason": "gave up"}
     )
     artifact = await call(store, llm_caller=Scripted(silent), llm_support=Scripted())
 
@@ -626,7 +624,7 @@ async def test_the_bot_gets_no_turn_when_it_hears_nothing(store):
 async def test_a_caller_who_hears_nothing_carries_on(store):
     artifact = await call(
         store,
-        llm_caller=Scripted(says("Hello?"), says("Bye.", hang_up=True)),
+        llm_caller=Scripted(says("Hello?"), says("Bye.", beat="only", hang_up=True)),
         llm_support=Scripted(default="Fine."),
         stt_live=DeafSTT(deaf_from=0),
     )
@@ -817,7 +815,7 @@ async def test_tool_arguments_keep_their_own_keys_in_messages(store):
     await call(
         store,
         emit=messages,
-        llm_caller=Scripted(says("Hello."), says("Bye.", hang_up=True)),
+        llm_caller=Scripted(says("Hello."), says("Bye.", beat="only", hang_up=True)),
         llm_support=Scripted(plan, "Noted."),
     )
 

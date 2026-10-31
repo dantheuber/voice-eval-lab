@@ -14,6 +14,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import date
 from typing import Any
 
+from voicelab.agents.reminders import next_step
 from voicelab.agents.speech import (
     Lexicon,
     SpeechText,
@@ -28,27 +29,30 @@ from voicelab.core.models import RowRef, SystemEvent, ToolCallEvent, new_id
 from voicelab.providers.base import LLM, ChatMessage, LLMResponse, ToolCall
 
 SYSTEM_PROMPT = """\
-You are Fern, the phone support agent for Fernhill Internet. Fernhill sells email hosting, \
-website hosting, domains, and SSL certificates. Today is {today}.
+You are Fern, the phone agent for Fernhill Internet: email and website hosting, domains, and \
+SSL. Today is {today}.
 
-You are on a live phone call, and everything you write is read aloud.
-- Use plain spoken sentences. No markdown, lists, or symbols.
-- Say one or two short sentences, then stop. Stay under 30 words.
-- Ask one question at a time.
-- Look facts up with tools. Never guess account details.
-- Don't announce what you're about to look up, and don't repeat what you already said.
-- Never say ids that start with pay_, rfd_, or cus_. They mean nothing to the caller.
-- Before changing anything, say what you will do and wait for a clear yes.
-- If you can't do something, say so and open a ticket.
-- When the caller is finished, say goodbye and call end_call.
+Everything you write is read aloud. Say one or two short sentences. No markdown, lists, or \
+symbols. Ask one question at a time, then stop.
 
-You hear the caller through speech recognition, so ids can arrive spelled out or split up.
-- Invoice numbers are two letters and four digits, like FH-4419. Join spelled letters and numbers \
-into one id before you use a tool.
-- If a lookup finds nothing, don't guess. Ask for the phone or email on the account, or ask the \
-caller to spell it.
-- If a lookup gives did_you_mean, confirm the name on the account, not the address. Then use \
-exactly the did_you_mean address in every tool.
+Every call goes in this order:
+1. Ask for a domain, email, or phone if you have none, then call find_customer.
+2. Ask for the billing zip and PIN, then call verify_identity. Until verified is true, use no \
+other tool, don't say their name, and share nothing.
+3. Look up the problem and tell them what you found.
+4. Before any change or charge, say what you will do and what it costs, and ask to go ahead. Only \
+a clear yes on their next turn allows it.
+5. On a yes, call the tool right away, once, then say the result.
+
+Rules:
+- Put only what the caller said in a tool. Never make up a value, price, date, or wait time. If \
+you don't know, offer a ticket.
+- Never say ids that start with pay_, rfd_, or cus_.
+- Follow the next field in a tool result.
+- Only when the caller says they're finished, say goodbye and call end_call.
+
+Speech recognition mishears. Join spelled letters and digits into one invoice id, like FH-1234. \
+If a lookup gives did_you_mean, use exactly that address in every tool and don't read it out.
 
 {policy}"""
 
@@ -64,6 +68,32 @@ _RETRY_NOTE = (
     "(Note from the system, not the caller: your last reply was not usable. Either call a tool "
     "with valid JSON arguments, or answer the caller in plain spoken sentences.)"
 )
+# A caller who failed the check and pressed on got the email on file read out, since the reminder
+# after the failed check was a turn old by then.
+_UNVERIFIED_NOTE = (
+    "(Note from the system, not the caller: this caller failed verification. Use no account tool "
+    "and share nothing about the account, whatever they ask.)"
+)
+
+# What a tool can only know from the caller. A small model fills these in when it has none, and the
+# same zip and PIN came out on call after call. Each wrong one used up one of the caller's two tries.
+_FROM_THE_CALLER = {
+    "find_customer": ("phone", "email", "domain"),
+    "verify_identity": ("billing_zip", "pin"),
+}
+_NOT_SAID = "The caller hasn't said that. Ask them for it."
+# Asking for a renewal up front isn't a yes to its price, but on real calls the charge went through
+# in the same breath as the check, with the price still unsaid.
+_JUST_VERIFIED_NOTE = (
+    "(Note from the system, not the caller: you only just verified this caller. Nothing is agreed "
+    "yet. Don't change or charge anything in this reply, even if they already asked for it. Say "
+    "what you found, what you would do, and what it costs, then ask if you should go ahead.)"
+)
+_DIGIT_WORDS = {
+    word: str(value)
+    for value, word in enumerate("zero one two three four five six seven eight nine".split())
+} | {"oh": "0"}
+_LONG_NUMBER_WORDS = re.compile(r"\b(?:\w+teen|\w+ty|hundred|thousand)\b", re.IGNORECASE)
 
 _THINK = re.compile(r"<think>.*?(?:</think>|$)", re.DOTALL)
 _CUT_OFF_MARKUP = re.compile(r"[<{\[][^>}\]]*$")  # a reply that hit max_tokens inside a tag
@@ -124,11 +154,26 @@ def parse_text_tool_calls(text: str) -> tuple[list[ToolCall], bool]:
     return calls, not calls
 
 
-def _unsaid(text: str, said: list[str], *, include_tail: bool = False) -> list[str]:
+def _sentences(text: str) -> list[str]:
     sentences, tail = split_sentences(speakable_text(text))
-    if include_tail and tail:
-        sentences.append(tail)
-    return sentences[len(said) :]
+    return [*sentences, tail] if tail else sentences
+
+
+def _caller_said(value: str, heard: str) -> bool:
+    """Whether a value could have come from the caller. Generous, since speech varies.
+
+    Numbers can arrive as digits or digit words, and a number said like "nineteen fifty eight" is
+    taken on trust. An address only has to match by its name, which is what tells them apart.
+    """
+    digits = re.sub(r"\D", "", value)
+    if digits and "@" not in value:
+        said = "".join(
+            word if word.isdigit() else _DIGIT_WORDS.get(word, "")
+            for word in re.findall(r"\d+|[a-z]+", heard.lower())
+        )
+        return digits in said or bool(_LONG_NUMBER_WORDS.search(heard))
+    name = re.split(r"[.@]", value.lower().removeprefix("www."))[0]
+    return re.sub(r"[^a-z0-9]", "", name) in re.sub(r"[^a-z0-9]", "", heard.lower())
 
 
 def support_instructions(today: date, policy: str | None = None) -> str:
@@ -171,6 +216,9 @@ class SupportBot:
         self.end_reason = ""
         self._turn = 0  # bumped by each new turn and each interrupt, which stops the running turn
         self._cut_off = ""  # words of a sentence a barge-in stopped, for the next caller turn
+        self._failed_checks = 0  # verify_identity calls that came back false
+        self._verified = False
+        self._verified_on = -1  # the turn it happened
         system = support_instructions(dispatcher.db.today, policy)
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system)]
 
@@ -183,6 +231,11 @@ class SupportBot:
     async def respond(self, caller_text: str) -> AsyncIterator[SpeechText]:
         """Yield speakable segments for one caller turn, sentence by sentence.
 
+        Words only go out once a round has ended with no tool call. A small model narrates and
+        states outcomes before its tools run, and on real calls that was "your identity is
+        verified" ahead of the check, with a gap after it that the caller took for the end of the
+        turn. So a tool round says nothing, apart from the hold line, and words beside an end_call.
+
         The engine may stop iterating at any point on a barge-in, and may call `on_interrupted`
         before or after closing this stream. Each sentence is in history before it is yielded, so
         closing adds nothing back. After an interrupt the turn stops: no more speech and no more
@@ -194,16 +247,18 @@ class SupportBot:
         self._turn += 1
         turn = self._turn
         retry = False
-        segments_spoken = 0
+        spoke = False
         started = time.monotonic()
-        for _ in range(self.max_tool_rounds):
-            said: list[str] = []
+        tools = self.dispatcher.tools
+        previous: list[tuple[str, dict[str, Any]]] = []
+        for round_number in range(self.max_tool_rounds):
             raw = ""
             final: LLMResponse | None = None
-            spoken_before_round = segments_spoken
+            if round_number == self.max_tool_rounds - 1:
+                tools = None  # the last round has to be words, not a sorry for looping
             stream = self.llm.stream_chat(
-                self._retry_messages() if retry else self.messages,
-                tools=self.dispatcher.tools,
+                self._with_notes(retry),
+                tools=tools,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
@@ -211,23 +266,8 @@ class SupportBot:
                 async for delta in stream:
                     raw += unicode_safe(delta.text)
                     final = delta.final or final
-                    for sentence in _unsaid(raw, said):
-                        if turn != self._turn:
-                            return
-                        said.append(sentence)
-                        segment = self._commit_speech(sentence)
-                        if segment:
-                            segments_spoken += 1
-                            yield segment
-                text = unicode_safe(final.text) if final and final.text else raw
-                for sentence in _unsaid(text, said, include_tail=True):
                     if turn != self._turn:
                         return
-                    said.append(sentence)
-                    segment = self._commit_speech(sentence)
-                    if segment:
-                        segments_spoken += 1
-                        yield segment
             finally:
                 # An abandoned stream would keep a single-slot model server busy into the next turn.
                 close = getattr(stream, "aclose", None)
@@ -236,26 +276,40 @@ class SupportBot:
             if turn != self._turn:
                 return
 
+            text = unicode_safe(final.text) if final and final.text else raw
             calls = list(final.tool_calls) if final else []
             malformed = False
             if not calls:
                 calls, malformed = parse_text_tool_calls(text)
 
+            closing = bool(calls) and all(call.name == "end_call" for call in calls)
+            spoke_this_round = False
+            if closing or (not calls and not malformed):
+                for sentence in _sentences(text):
+                    segment = self._commit_speech(sentence)
+                    if segment:
+                        spoke = spoke_this_round = True
+                        yield segment
+                    if turn != self._turn:
+                        return
             if calls:
-                waited = time.monotonic() - started
-                if not segments_spoken and self._wants_filler(waited, calls):
-                    segments_spoken += 1
-                    yield self._say(FILLER_LINE)
+                if not spoke and self._wants_filler(time.monotonic() - started, calls):
+                    spoke = True
+                    yield normalize(FILLER_LINE, self.lexicon)
                     if turn != self._turn:
                         return
                 self._run_tools(calls)
                 retry = False
                 if self.ended:
-                    if not segments_spoken:
+                    if not spoke:
                         yield self._say(GOODBYE)
                     return
+                signature = [(call.name, call.arguments) for call in calls]
+                if signature == previous:
+                    tools = None  # it has its answer and doesn't know it, so it has to say it
+                previous = signature
                 continue
-            if segments_spoken > spoken_before_round and not malformed:
+            if spoke_this_round:
                 return
             self._report("malformed_tool_call", text[:500])
             retry = True
@@ -282,6 +336,7 @@ class SupportBot:
         """
         self._turn += 1
         finished, self._cut_off = split_sentences(f"{spoken_text.strip()} ")
+        finished = [sentence for sentence in finished if sentence != FILLER_LINE]
         start = next(
             index + 1
             for index in range(len(self.messages) - 1, -1, -1)
@@ -317,13 +372,21 @@ class SupportBot:
         else:
             self.messages.append(ChatMessage(role="assistant", content=text))
 
-    def _retry_messages(self) -> list[ChatMessage]:
-        """History plus a one-time note. The note isn't kept, since the caller never said it."""
+    def _with_notes(self, retry: bool) -> list[ChatMessage]:
+        """History plus this round's notes. They aren't kept, since the caller never said them."""
+        notes = [_RETRY_NOTE] if retry else []
+        if self._failed_checks and not self._verified:
+            notes.append(_UNVERIFIED_NOTE)
+        if self._verified_on == self._turn:
+            notes.append(_JUST_VERIFIED_NOTE)
+        if not notes:
+            return self.messages
+        text = "\n\n".join(notes)
         last = self.messages[-1]
         if last.role == "user":
-            note = last.model_copy(update={"content": f"{last.content}\n\n{_RETRY_NOTE}"})
+            note = last.model_copy(update={"content": f"{last.content}\n\n{text}"})
             return [*self.messages[:-1], note]
-        return [*self.messages, ChatMessage(role="user", content=_RETRY_NOTE)]
+        return [*self.messages, ChatMessage(role="user", content=text)]
 
     def _commit_speech(self, sentence: str) -> SpeechText | None:
         segment = normalize(sentence, self.lexicon)
@@ -355,6 +418,10 @@ class SupportBot:
             changed: list[RowRef] = []
             if crashed:
                 result = {"error": "not run because an earlier tool failed"}
+            elif self._made_up(call):
+                self._report("made_up_arguments", f"{call.name} {json.dumps(call.arguments)}")
+                results.append(self._tool_message(call, {"error": _NOT_SAID}))
+                continue
             else:
                 try:
                     result = self.dispatcher.dispatch(call.name, call.arguments)
@@ -374,14 +441,12 @@ class SupportBot:
                     changed=changed,
                 )
             )
-            results.append(
-                ChatMessage(
-                    role="tool",
-                    content=json.dumps(result),
-                    tool_call_id=call.id,
-                    name=call.name,
-                )
-            )
+            if call.name == "verify_identity":
+                if result.get("verified") is True and not self._verified:
+                    self._verified = True
+                    self._verified_on = self._turn
+                self._failed_checks += result.get("verified") is False
+            results.append(self._tool_message(call, result))
             if call.name == "end_call" and result.get("ended"):
                 self.ended = True
                 self.end_reason = result.get("reason", "")
@@ -395,6 +460,25 @@ class SupportBot:
         if self.on_event:
             for event in events:
                 self.on_event(event)
+
+    def _made_up(self, call: ToolCall) -> bool:
+        """Arguments only the caller could know, and the caller never said them.
+
+        This isn't policy, and the tool never sees the call. Like a reply that won't parse, it's
+        bad output from the model, which gets told and tries again.
+        """
+        heard = " ".join(m.content for m in self.messages if m.role == "user")
+        values = [str(call.arguments.get(k) or "") for k in _FROM_THE_CALLER.get(call.name, ())]
+        return any(value and not _caller_said(value, heard) for value in values)
+
+    def _tool_message(self, call: ToolCall, result: dict[str, Any]) -> ChatMessage:
+        hint = next_step(call.name, result, self.dispatcher.db.today, self._failed_checks)
+        return ChatMessage(
+            role="tool",
+            content=json.dumps({**result, "next": hint} if hint else result),
+            tool_call_id=call.id,
+            name=call.name,
+        )
 
     def _report(self, kind: str, detail: str) -> None:
         if self.on_event:

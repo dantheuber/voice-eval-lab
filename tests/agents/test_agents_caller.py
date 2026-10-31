@@ -243,8 +243,14 @@ async def test_a_required_beat_is_never_dropped():
 # Hanging up -------------------------------------------------------------------------------------
 
 
+def no_script():
+    return scenario(beats=[])
+
+
 async def test_reports_a_hang_up_and_why():
-    bot, _ = caller(caller_says("Forget it.", hang_up=True, reason="the agent refused"))
+    bot, _ = caller(
+        caller_says("Forget it.", hang_up=True, reason="the agent refused"), what=no_script()
+    )
     line = await bot.next_line("No.")
     assert line.hang_up is True
     assert line.hang_up_reason == "the agent refused"
@@ -254,7 +260,7 @@ async def test_reports_a_hang_up_and_why():
 
 
 async def test_hang_up_without_a_reason_still_has_one():
-    bot, _ = caller(caller_says("Bye.", hang_up=True))
+    bot, _ = caller(caller_says("Bye.", hang_up=True), what=no_script())
     assert (await bot.next_line("No.")).hang_up_reason
 
 
@@ -267,8 +273,149 @@ async def test_a_beat_can_complete_on_the_hang_up_turn():
 
 
 async def test_silent_hang_up_is_allowed():
-    bot, _ = caller(caller_says("", hang_up=True, reason="gave up"))
+    bot, _ = caller(caller_says("", hang_up=True, reason="gave up"), what=no_script())
     assert (await bot.next_line("Hello")).text == ""
+
+
+async def test_it_stays_on_the_line_until_the_script_is_done():
+    bot, llm = caller(
+        caller_says("Thanks, bye.", hang_up=True, reason="all sorted"),
+        caller_says("Thanks, bye."),
+        caller_says("I was charged twice.", "say_problem"),
+    )
+    line = await bot.next_line("Hello?")
+    assert (line.text, line.hang_up) == ("I was charged twice.", False)
+    assert "don't say goodbye" in request_text(llm)
+    assert "Say you were charged twice." in request_text(llm)
+
+
+async def test_a_caller_that_wont_stay_gets_the_safe_line_and_stays():
+    bot, _ = caller(default=caller_says("Bye.", hang_up=True, reason="done"))
+    line = await bot.next_line("Hello?")
+    assert (line.text, line.hang_up) == (REDIRECT_LINE, False)
+
+
+async def test_out_of_patience_it_can_hang_up_with_beats_left():
+    impatient = persona(patience=1)
+    bot, _ = caller(
+        *[caller_says("Hm.") for _ in range(4)],
+        caller_says("Forget it, bye.", hang_up=True, reason="fed up"),
+        who=impatient,
+    )
+    for _ in range(4):
+        assert not (await bot.next_line("Sorry?")).hang_up
+    line = await bot.next_line("Sorry?")
+    assert (line.hang_up, line.hang_up_reason) == (True, "fed up")
+
+
+async def test_it_waits_for_the_answer_to_its_last_question():
+    what = scenario(beats=[Beat(id="only", instruction="Ask how long it takes.")])
+    bot, _ = caller(
+        caller_says("How long will it take?", "only", hang_up=True, reason="done"),
+        caller_says("Great, thanks."),
+        what=what,
+    )
+    assert not (await bot.next_line("All set.")).hang_up
+    last = await bot.next_line("About an hour.")
+    assert (last.hang_up, last.hang_up_reason) == (True, "finished")
+
+
+async def test_an_optional_last_beat_doesnt_keep_it_on_the_line():
+    what = scenario(
+        beats=[
+            Beat(id="ask", instruction="Ask for a refund."),
+            Beat(id="close", instruction="Say thanks.", required=False),
+        ]
+    )
+    bot, _ = caller(
+        caller_says("Refund please.", "ask"),
+        caller_says("Thanks, bye.", hang_up=True, reason="done"),
+        what=what,
+    )
+    await bot.next_line("Hi")
+    assert (await bot.next_line("Done.")).hang_up
+
+
+@pytest.mark.parametrize(
+    "say", ["The agent said it was done.", "That isn't on my sheet.", "My step says to wait."]
+)
+async def test_the_script_never_shows(say):
+    bot, llm = caller(caller_says(say), caller_says("I was charged twice."))
+    assert (await bot.next_line("Hi")).text == "I was charged twice."
+    assert "never mention a sheet" in request_text(llm)
+
+
+async def test_a_pin_beat_waits_for_the_zip_and_pin():
+    what = scenario(
+        facts={"billing_zip": "97214", "pin": "4821"},
+        beats=[Beat(id="identify", instruction="Give your billing zip and PIN when asked.")],
+    )
+    bot, _ = caller(
+        caller_says("My zip is 97214.", "identify"),
+        caller_says("And the pin is four, eight, two, one.", "identify"),
+        what=what,
+    )
+    assert (await bot.next_line("Zip and PIN?")).completed_beat is None
+    assert (await bot.next_line("And the PIN?")).completed_beat == "identify"
+
+
+async def test_a_beat_that_asks_for_a_yes_waits_for_one():
+    what = scenario(beats=[Beat(id="agree", instruction="Ask the price, then say yes.")])
+    bot, _ = caller(
+        caller_says("How much is it?", "agree"),
+        caller_says("Yes, go ahead.", "agree"),
+        what=what,
+    )
+    assert (await bot.next_line("Shall I renew it?")).completed_beat is None
+    assert (await bot.next_line("It's $14.99.")).completed_beat == "agree"
+
+
+async def test_a_beat_it_forgets_to_claim_still_shows_in_its_words():
+    what = scenario(
+        facts={"billing_zip": "97214", "pin": "4821"},
+        beats=[
+            Beat(id="identify", instruction="Give your billing zip and PIN when asked."),
+            Beat(id="agree", instruction="Say yes to the charge."),
+        ],
+    )
+    bot, _ = caller(
+        caller_says("It's 97214, and the pin is 4821."),
+        caller_says("Yes, go ahead."),
+        what=what,
+    )
+    assert (await bot.next_line("Zip and PIN?")).completed_beat == "identify"
+    assert (await bot.next_line("Shall I charge it?")).completed_beat == "agree"
+
+
+async def test_a_yes_to_nothing_doesnt_finish_a_beat():
+    what = scenario(beats=[Beat(id="agree", instruction="Say yes to the charge.")])
+    bot, _ = caller(caller_says("Yes, hello."), what=what)
+    assert (await bot.next_line("Thanks for holding.")).completed_beat is None
+
+
+async def test_a_question_after_the_last_beat_gets_its_answer_then_the_call_ends():
+    what = scenario(beats=[Beat(id="only", instruction="Ask how long it takes.")])
+    bot, _ = caller(
+        caller_says("How long?", "only"),
+        caller_says("Sorry, how long?"),
+        caller_says("Sorry, what?"),
+        caller_says("And what?"),
+        what=what,
+    )
+    await bot.next_line("All set.")
+    assert not (await bot.next_line("D N S changes usually")).hang_up
+    assert not (await bot.next_line("About")).hang_up
+    assert (await bot.next_line("An hour.")).hang_up
+
+
+async def test_a_long_winded_line_is_cut_at_a_sentence():
+    chatty = persona(verbosity=5)
+    limit = 18 + 6 * 5
+    sentence = " ".join(["word"] * 20) + "."
+    bot, _ = caller(caller_says(f"{sentence} {sentence} {sentence}"), who=chatty)
+    line = await bot.next_line("Hi")
+    assert line.text == f"{sentence} {sentence}"
+    assert len(line.text.split()) <= limit
 
 
 async def test_after_the_last_beat_it_says_goodbye_and_hangs_up():
@@ -293,7 +440,7 @@ async def test_max_turns_ends_cleanly_without_asking_the_llm():
 
 
 async def test_nothing_happens_after_hanging_up():
-    bot, llm = caller(caller_says("Bye.", hang_up=True, reason="done"))
+    bot, llm = caller(caller_says("Bye.", hang_up=True, reason="done"), what=no_script())
     await bot.next_line("Hi")
     line = await bot.next_line("Hello?")
     assert line == CallerLine("", hang_up=True, hang_up_reason="done")
@@ -456,11 +603,9 @@ async def test_the_sheet_still_wins_after_a_disclosure(say):
 
 
 async def test_only_the_agents_lines_can_teach_a_reference():
-    bot, llm = failed_verification_caller(
-        caller_says("Ticket 777888, I think."), caller_says("Ticket 777888, I think.")
-    )
+    bot, llm = failed_verification_caller(*[caller_says("Ticket 777888, I think.")] * 3)
     assert (await bot.next_line("Your ticket is on its way.")).text == REDIRECT_LINE
-    assert len(llm.requests) == 2
+    assert len(llm.requests) == 3
 
 
 @pytest.mark.parametrize(
@@ -604,6 +749,11 @@ def kinds(result):
     return [event.kind for event in result.timeline if isinstance(event, SystemEvent)]
 
 
+def free_caller(*script, **options):
+    """A caller with no beats, so a test can hang it up whenever it likes."""
+    return caller(*script, what=options.pop("what", no_script()), **options)
+
+
 async def test_text_call_runs_both_bots_to_the_end(db):
     bot = support(
         db,
@@ -633,7 +783,10 @@ async def test_text_call_runs_both_bots_to_the_end(db):
 
 async def test_text_call_events_are_ordered_and_timed(db):
     bot = support(db, uses(call("list_plans")), "We have plans.")
-    who, _ = caller(caller_says("What plans?"), caller_says("Bye.", hang_up=True, reason="done"))
+    who, _ = free_caller(
+        caller_says("What plans?"),
+        caller_says("Bye.", hang_up=True, reason="done"),
+    )
     result = await run_text_call(bot, who)
     starts = [
         event.start_s if isinstance(event, Utterance) else event.at_s for event in result.timeline
@@ -645,7 +798,11 @@ async def test_text_call_events_are_ordered_and_timed(db):
 
 async def test_timeline_fits_the_call_artifact(db):
     bot = support(db, uses(call("list_plans")), "We have plans.")
-    who, _ = caller(caller_says("What plans?"), caller_says("Bye.", hang_up=True, reason="done"))
+    who, _ = free_caller(
+        caller_says("What plans?"),
+        caller_says("Bye.", hang_up=True, reason="done"),
+        what=no_script(),
+    )
     result = await run_text_call(bot, who)
     artifact = CallArtifact(
         mode=CallMode.TURN_BASED,
@@ -658,7 +815,9 @@ async def test_timeline_fits_the_call_artifact(db):
 
 async def test_caller_hears_the_spoken_form(db):
     bot = support(db, "Your invoice is FH-4419.")
-    who, llm = caller(caller_says("Which invoice?"), caller_says("Bye.", hang_up=True, reason="x"))
+    who, llm = free_caller(
+        caller_says("Which invoice?"), caller_says("Bye.", hang_up=True, reason="x")
+    )
     await run_text_call(bot, who)
     assert "F, as in frank" in request_text(llm)
     assert "FH-4419." not in request_text(llm).split("Reply with JSON")[0].split("Agent:")[-1]
@@ -666,7 +825,7 @@ async def test_caller_hears_the_spoken_form(db):
 
 async def test_utterances_record_intended_spoken_and_heard(db):
     bot = support(db, "Okay then.")
-    who, _ = caller(caller_says("Hi."), caller_says("Bye.", hang_up=True, reason="x"))
+    who, _ = free_caller(caller_says("Hi."), caller_says("Bye.", hang_up=True, reason="x"))
     result = await run_text_call(bot, who)
     first_bot = utterances(result, Speaker.BOT)[0]
     assert first_bot.intended_text == first_bot.spoken_text == first_bot.heard_text
@@ -675,7 +834,7 @@ async def test_utterances_record_intended_spoken_and_heard(db):
 
 async def test_bot_can_end_the_call(db):
     bot = support(db, uses(call("end_call", reason="all done"), text="Goodbye."))
-    who, llm = caller(caller_says("That's all, thanks."))
+    who, llm = free_caller(caller_says("That's all, thanks."))
     result = await run_text_call(bot, who)
     assert (result.end_reason, result.detail) == ("bot_ended", "all done")
     assert kinds(result)[-2:] == ["bot_ended", "call_ended"]
@@ -685,7 +844,7 @@ async def test_bot_can_end_the_call(db):
 async def test_call_stops_at_max_turns(db):
     what = scenario(max_turns=3)
     bot = SupportBot(ScriptedLLM(default="Please hold."), ToolDispatcher(db))
-    who, llm = caller(default=caller_says("Hello?"), what=what, who=persona(patience=5))
+    who, llm = free_caller(default=caller_says("Hello?"), what=what, who=persona(patience=5))
     result = await run_text_call(bot, who)
     assert result.end_reason == "max_turns"
     assert kinds(result)[-2:] == ["max_turns", "call_ended"]
@@ -695,7 +854,7 @@ async def test_call_stops_at_max_turns(db):
 
 async def test_db_changes_come_back_with_the_result(db):
     bot = support(db, uses(call("unlock_mailbox", address="evelyn@hartfamily.example")), "All set.")
-    who, _ = caller(caller_says("Unlock it."), caller_says("Bye.", hang_up=True, reason="x"))
+    who, _ = free_caller(caller_says("Unlock it."), caller_says("Bye.", hang_up=True, reason="x"))
     result = await run_text_call(bot, who)
     assert [(change.table, change.kind) for change in result.db_changes] == [
         ("mailboxes", "update")
@@ -706,7 +865,7 @@ async def test_barge_in_trims_what_the_caller_hears_and_the_bots_memory(db):
     long_reply = "One two three four five six seven eight nine ten."
     llm = ScriptedLLM(long_reply, default="Okay.")
     bot = SupportBot(llm, ToolDispatcher(db))
-    who, caller_llm = caller(
+    who, caller_llm = free_caller(
         caller_says("Go."),
         caller_says("Stop."),
         caller_says("Bye.", hang_up=True, reason="x"),
@@ -739,16 +898,13 @@ def always_interrupts(**fields):
 
 async def test_tools_in_later_rounds_never_run_after_the_cut(db):
     llm = ScriptedLLM(
-        uses(
-            call("list_plans"),
-            text=LONG_LINE,
-        ),
+        uses(call("list_plans")),
         uses(call("unlock_mailbox", address="evelyn@hartfamily.example")),
         "It's unlocked.",
         default="Okay.",
     )
-    bot = SupportBot(llm, ToolDispatcher(db))
-    who, _ = caller(
+    bot = SupportBot(llm, ToolDispatcher(db), filler_after_s=0)
+    who, _ = free_caller(
         caller_says("Go."),
         caller_says("Bye.", hang_up=True, reason="x"),
         who=always_interrupts(),
@@ -778,7 +934,7 @@ async def test_the_llm_stream_closes_before_the_caller_answers(db):
         support_llm, caller_says("Go."), caller_says("Bye.", hang_up=True, reason="x")
     )
     bot = SupportBot(support_llm, ToolDispatcher(db))
-    who = CallerBot(caller_llm, always_interrupts(), scenario())
+    who = CallerBot(caller_llm, always_interrupts(), no_script())
     await run_text_call(bot, who)
     assert caller_llm.closed_when_asked == [0, 1]
 
@@ -790,7 +946,7 @@ async def test_tools_finished_before_the_cut_are_kept(db):
         default="Okay.",
     )
     bot = SupportBot(llm, ToolDispatcher(db))
-    who, _ = caller(
+    who, _ = free_caller(
         caller_says("Go."),
         caller_says("Bye.", hang_up=True, reason="x"),
         who=always_interrupts(),
@@ -803,7 +959,7 @@ async def test_tools_finished_before_the_cut_are_kept(db):
 async def test_unplayed_sentences_are_not_intended_speech(db):
     sentences = ["Word " * 30 + "end.", "This later sentence never played."]
     bot = SupportBot(ScriptedLLM(" ".join(sentences), default="Okay."), ToolDispatcher(db))
-    who, _ = caller(
+    who, _ = free_caller(
         caller_says("Go."),
         caller_says("Bye.", hang_up=True, reason="x"),
         who=always_interrupts(),
@@ -817,7 +973,7 @@ async def test_unplayed_sentences_are_not_intended_speech(db):
 
 async def test_a_short_reply_can_still_be_cut_off(db):
     bot = SupportBot(ScriptedLLM(default="One two three four."), ToolDispatcher(db))
-    who, _ = caller(
+    who, _ = free_caller(
         caller_says("Go."),
         caller_says("Bye.", hang_up=True, reason="x"),
         who=always_interrupts(),
@@ -830,7 +986,7 @@ async def test_a_short_reply_can_still_be_cut_off(db):
 
 async def test_a_one_word_reply_has_nothing_to_cut(db):
     bot = SupportBot(ScriptedLLM(default="Okay."), ToolDispatcher(db))
-    who, _ = caller(
+    who, _ = free_caller(
         caller_says("Go."),
         caller_says("Bye.", hang_up=True, reason="x"),
         who=always_interrupts(),
@@ -841,7 +997,7 @@ async def test_a_one_word_reply_has_nothing_to_cut(db):
 
 async def test_the_final_goodbye_after_end_call_is_never_cut_off(db):
     bot = support(db, uses(call("end_call")))
-    who, _ = caller(caller_says("Bye."), who=always_interrupts())
+    who, _ = free_caller(caller_says("Bye."), who=always_interrupts())
     result = await run_text_call(bot, who)
     assert result.end_reason == "bot_ended"
     assert utterances(result, Speaker.BOT)[-1].interrupted is False
@@ -851,7 +1007,7 @@ async def test_cutting_in_before_end_call_ran_keeps_the_call_open(db):
     goodbye = "Well thank you so much for calling us today and have a really great rest of it."
     llm = ScriptedLLM(uses(call("end_call"), text=goodbye), default="Okay.")
     bot = SupportBot(llm, ToolDispatcher(db))
-    who, _ = caller(
+    who, _ = free_caller(
         caller_says("Bye."),
         caller_says("Wait, one more thing.", hang_up=True, reason="x"),
         who=always_interrupts(),
@@ -866,7 +1022,7 @@ async def test_same_seed_same_call():
     async def run():
         database = create_call_db()
         bot = SupportBot(ScriptedLLM(default="Noted, please go on."), ToolDispatcher(database))
-        who, _ = caller(
+        who, _ = free_caller(
             default=caller_says("Hm."),
             who=persona(interruption_rate=0.5, patience=2),
             seed=11,

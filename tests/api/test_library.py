@@ -315,7 +315,8 @@ def test_dry_run_is_text_only_with_reached_checkpoints(client, rig):
             "hang_up": False,
             "hang_up_reason": "",
         },
-        {"say": "Bye.", "completed_beat": None, "hang_up": True, "hang_up_reason": "done"},
+        *[{"say": "Hm.", "completed_beat": None, "hang_up": False, "hang_up_reason": ""}] * 8,
+        {"say": "Forget it.", "completed_beat": None, "hang_up": True, "hang_up_reason": "fed up"},
     ]
     response = client.post(
         "/api/scenarios/scn_dns_mx_fix/dry-run", json={"personaId": "per_sysadmin"}

@@ -46,6 +46,7 @@ _CATALOG: dict[str, _Tool] = {}
 _JSON_TYPES = {str: "string", int: "integer"}
 _MAX_INTEGER = 2**63 - 1  # SQLite integers are signed 64 bit
 _CLOSE_MATCH = 0.82  # one or two wrong letters in a domain, but not a different business
+REFUND_TIME = "3 to 5 business days"
 _EMAIL_VALUES = (
     "SELECT email AS value, id AS customer_id FROM customers"
     " UNION SELECT address, customer_id FROM mailboxes"
@@ -314,12 +315,12 @@ def _not_found(db: CompanyDb, problem: str, heard: str, sql: str) -> ToolRejecte
 
 
 @_tool(
-    "Find a customer by phone, email, domain, or invoice id. Give what you have.",
+    "Find a customer by phone, email, domain, or invoice. Never guess one. Ask.",
     optional={
         "phone": (str, "Phone number"),
         "email": (str, "Email or mailbox address"),
         "domain": (str, "Website or email domain"),
-        "invoice_id": (str, "Invoice id, like FH-4419"),
+        "invoice_id": (str, "Invoice id, like FH-1234"),
     },
 )
 def find_customer(
@@ -370,7 +371,7 @@ def find_customer(
 
 
 @_tool(
-    "Check a caller's billing zip and PIN.",
+    "Check the billing zip and PIN the caller said. If they haven't, ask first.",
     required={
         "customer_id": (str, "Customer id from find_customer"),
         "billing_zip": (str, "Billing zip code the caller gave"),
@@ -459,7 +460,7 @@ def list_invoices(db: CompanyDb, customer_id: str, status: str = "") -> dict[str
 
 @_tool(
     "Get one invoice with its payments and refunds.",
-    required={"invoice_id": (str, "Invoice id, like FH-4419")},
+    required={"invoice_id": (str, "Invoice id, like FH-1234")},
 )
 def get_invoice(db: CompanyDb, invoice_id: str) -> dict[str, Any]:
     invoice = _invoice(db, invoice_id)
@@ -481,13 +482,13 @@ def get_invoice(db: CompanyDb, invoice_id: str) -> dict[str, Any]:
 
 
 @_tool(
-    "Refund money on an invoice to the card it was paid with.",
+    "Refund an invoice. Limit $50, 30 days, else a ticket. Get a yes to the amount.",
     required={
-        "invoice_id": (str, "Invoice id, like FH-4419"),
+        "invoice_id": (str, "Invoice id, like FH-1234"),
         "reason": (str, "Why the refund is being issued"),
     },
     optional={
-        "amount_cents": (int, "Amount in cents, 4999 for $49.99. Omit for the full invoice."),
+        "amount_cents": (int, "Amount in cents, 1000 for $10.00. Omit for the full invoice."),
         "payment_id": (str, "Which payment to refund, for a duplicate charge"),
     },
 )
@@ -534,12 +535,13 @@ def issue_refund(
         "invoice_id": invoice["id"],
         "amount": _money(amount),
         "invoice_status": status,
+        "reaches_card_in": REFUND_TIME,
     }
 
 
 @_tool(
-    "Charge the card on file for an invoice. Also retries a failed payment.",
-    required={"invoice_id": (str, "Invoice id, like FH-4419")},
+    "Charge the card on file for an invoice. Say the amount and get a yes first.",
+    required={"invoice_id": (str, "Invoice id, like FH-1234")},
 )
 def pay_invoice(db: CompanyDb, invoice_id: str) -> dict[str, Any]:
     invoice = _invoice(db, invoice_id)
@@ -568,7 +570,7 @@ def pay_invoice(db: CompanyDb, invoice_id: str) -> dict[str, Any]:
 
 
 @_tool(
-    "Bring a suspended website back online.",
+    "Bring a suspended website back online, once its unpaid invoice is paid.",
     required={"domain": (str, "Website domain")},
 )
 def restore_site(db: CompanyDb, domain: str) -> dict[str, Any]:
@@ -581,7 +583,7 @@ def restore_site(db: CompanyDb, domain: str) -> dict[str, Any]:
 
 
 @_tool(
-    "Renew a website's SSL certificate for one year.",
+    "Renew a website's SSL for one year, free. Say so and get a yes first.",
     required={"domain": (str, "Website domain")},
 )
 def renew_ssl(db: CompanyDb, domain: str) -> dict[str, Any]:
@@ -597,7 +599,7 @@ def renew_ssl(db: CompanyDb, domain: str) -> dict[str, Any]:
 
 
 @_tool(
-    "Unlock a locked mailbox.",
+    "Unlock a locked mailbox. Offer it and get a yes first.",
     required={"address": (str, "Full mailbox address")},
 )
 def unlock_mailbox(db: CompanyDb, address: str) -> dict[str, Any]:
@@ -607,7 +609,7 @@ def unlock_mailbox(db: CompanyDb, address: str) -> dict[str, Any]:
 
 
 @_tool(
-    "Email a password reset link for a mailbox to the account's contact email.",
+    "Email a password reset link to the contact email. Offer it and get a yes first.",
     required={"address": (str, "Full mailbox address")},
 )
 def reset_mailbox_password(db: CompanyDb, address: str) -> dict[str, Any]:
@@ -637,7 +639,7 @@ def get_dns_records(db: CompanyDb, domain: str) -> dict[str, Any]:
 
 
 @_tool(
-    "Change a DNS record, or add it if it doesn't exist.",
+    "Change or add a DNS record. Say the new value and get a yes first.",
     required={
         "domain": (str, "Domain name"),
         "type": (str, "Record type: A, AAAA, CNAME, MX, or TXT"),
@@ -701,7 +703,7 @@ def update_dns_record(
 
 
 @_tool(
-    "Renew a domain and charge the card on file.",
+    "Renew a domain on the card on file. Say $14.99 a year and get a yes first.",
     required={"domain": (str, "Domain name")},
     optional={"years": (int, "Years to renew, 1 if omitted")},
 )
@@ -764,7 +766,7 @@ def list_plans(db: CompanyDb) -> dict[str, Any]:
 
 
 @_tool(
-    "Move a customer to another plan of the same kind, email or web.",
+    "Move to another plan of the same kind. Say price and space, get a yes first.",
     required={
         "customer_id": (str, "Customer id"),
         "plan_id": (str, "New plan id from list_plans"),
@@ -834,7 +836,7 @@ def create_ticket(
 
 
 @_tool(
-    "End the call after saying goodbye.",
+    "End the call, once the caller says they're finished and you said goodbye.",
     optional={"reason": (str, "Why the call is ending")},
 )
 def end_call(db: CompanyDb, reason: str = "") -> dict[str, Any]:

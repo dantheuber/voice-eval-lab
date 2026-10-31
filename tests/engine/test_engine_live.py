@@ -76,7 +76,7 @@ async def live_call(store: ArtifactStore, *, emit=None, req=None, **adapters) ->
 
 
 def quick_caller(*lines: str) -> Scripted:
-    return Scripted(*lines, says("Bye.", hang_up=True, reason="finished"))
+    return Scripted(*lines, says("Bye.", beat="only", hang_up=True, reason="finished"))
 
 
 async def test_a_live_call_runs_in_real_time_and_writes_the_artifact(store):
@@ -203,12 +203,12 @@ async def test_the_bot_stops_for_a_caller_who_talks_over_a_long_reply(store, mon
 
 
 async def test_the_caller_waits_when_told_to_hold_on(store):
-    slow_tool = uses("list_plans", text=FILLER_LINE)
+    slow_tool = uses("list_plans")
 
     class PausesAfterTheFiller(Scripted):
         async def stream_chat(self, messages, **options):
-            if messages[-1].role == "tool":
-                await asyncio.sleep(1.5)  # a slow second LLM round, in silence
+            # A slow first round earns the filler, and a slow second one leaves it in silence.
+            await asyncio.sleep(1.5 if messages[-1].role == "tool" else 0.7)
             async for delta in super().stream_chat(messages, **options):
                 yield delta
 
