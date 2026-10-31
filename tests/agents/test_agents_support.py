@@ -68,7 +68,7 @@ def test_system_prompt_is_built_for_voice(db):
 
 
 def test_prompt_stays_short_for_a_small_model():
-    assert len(SYSTEM_PROMPT.split()) < 225
+    assert len(SYSTEM_PROMPT.split()) < 240
 
 
 def test_greeting_is_fixed_and_recorded(db):

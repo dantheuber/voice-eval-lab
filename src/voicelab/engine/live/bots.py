@@ -147,6 +147,7 @@ class _LiveBotCall:
             # lose the recording.
             self._close_out()
             await self._stop_pipelines()
+            self.log.send_waiting_turns()
             self.log.post(progress.call_done(self.artifact))
             await self.log.close()
         return self.artifact

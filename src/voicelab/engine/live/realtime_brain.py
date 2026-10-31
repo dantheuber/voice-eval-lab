@@ -157,6 +157,7 @@ class RealtimeBrain(BotBrain):
 
     def on_transcript(self, text: str) -> None:
         self.session.record_user_text(text)
+        self.note_heard(text)
         self._log_caller_turn(text)
 
     async def stop_model(self, played_ms: int) -> None:

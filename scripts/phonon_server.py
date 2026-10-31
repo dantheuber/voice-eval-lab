@@ -12,8 +12,9 @@ Phonon generates at about 10x real time on CPU, so one lock doesn't hold anyone 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import threading
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Callable
 
 import numpy as np
 import ptts
@@ -34,10 +35,37 @@ class Request(BaseModel):
     voice: str = "Easton"
 
 
-def _pcm(text: str, voice: str) -> Iterator[bytes]:
-    with one_at_a_time, engine.stream(text, voice=voice) as audio:
-        for chunk in audio:
-            yield (np.clip(np.asarray(chunk), -1, 1) * 32767).astype("<i2").tobytes()
+def _generate(text: str, voice: str, stop: threading.Event, send: Callable[[bytes | None], None]):
+    """Runs on a worker thread. A client that hangs up must not leave the lock held."""
+    try:
+        with one_at_a_time:
+            if stop.is_set():
+                return
+            with engine.stream(text, voice=voice) as audio:
+                for chunk in audio:
+                    if stop.is_set():
+                        return
+                    send((np.clip(np.asarray(chunk), -1, 1) * 32767).astype("<i2").tobytes())
+    finally:
+        send(None)
+
+
+async def _pcm(text: str, voice: str) -> AsyncIterator[bytes]:
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue()
+    stop = threading.Event()
+
+    def send(item: bytes | None) -> None:
+        loop.call_soon_threadsafe(queue.put_nowait, item)
+
+    worker = loop.run_in_executor(None, _generate, text, voice, stop, send)
+    try:
+        while (item := await queue.get()) is not None:
+            yield item
+    finally:
+        # Runs when the client disconnects too, which is every barge-in.
+        stop.set()
+        await asyncio.shield(worker)
 
 
 @app.get("/health")
@@ -46,7 +74,7 @@ def health() -> dict[str, str]:
 
 
 @app.post("/tts")
-def tts(request: Request) -> StreamingResponse:
+async def tts(request: Request) -> StreamingResponse:
     return StreamingResponse(
         _pcm(request.text, request.voice),
         media_type="audio/pcm",

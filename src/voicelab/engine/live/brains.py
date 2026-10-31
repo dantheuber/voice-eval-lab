@@ -70,6 +70,7 @@ class Brain(FrameProcessor):
     """Shared by both bots: collect what was heard, and hold one turn's speech at a time."""
 
     speaker: Speaker
+    far_side: Speaker | None = None  # set when a bot is listening at the other end
 
     def __init__(
         self,
@@ -199,6 +200,13 @@ class Brain(FrameProcessor):
 
     def on_transcript(self, text: str) -> None:
         self.heard_parts.append(text)
+        self.note_heard(text)
+
+    def note_heard(self, text: str) -> None:
+        """Credit what STT heard to the far side's turn on the timeline."""
+        if self.far_side is not None:
+            at_s = self.far_side_ended_s if self.far_side_ended_s is not None else self.log.now()
+            self.log.hear(self.far_side, text, at_s)
 
 
 class BotBrain(Brain):
@@ -216,6 +224,7 @@ class BotBrain(Brain):
     ) -> None:
         super().__init__(**kwargs)
         self.far_side_listens = far_side_listens
+        self.far_side = Speaker.CALLER if far_side_listens else None
         self.on_turn_done = on_turn_done
         self.on_call_ended = on_call_ended
         self.cut_pending = False
@@ -248,9 +257,7 @@ class BotBrain(Brain):
             await self.answer(heard)
 
     def _log_caller_turn(self, heard: str) -> None:
-        if self.far_side_listens:
-            self.log.hear(Speaker.CALLER, heard)
-        elif heard:
+        if heard and not self.far_side_listens:
             start = self.caller_started_s if self.caller_started_s is not None else self.log.now()
             end = self.far_side_ended_s if self.far_side_ended_s is not None else self.log.now()
             self.log.utterance(
@@ -356,6 +363,7 @@ class CallerBrain(Brain):
     """
 
     speaker = Speaker.CALLER
+    far_side = Speaker.BOT
     role = "llm_caller"
 
     def __init__(
@@ -413,7 +421,6 @@ class CallerBrain(Brain):
             await self.cancel_task(self.cut_timer)
         self.cut_timer = None
         heard = self.take_heard()
-        self.log.hear(Speaker.BOT, heard)
         if self.cut_in_this_turn or self.call_over:
             return  # already answered, over the top of the bot
         self.run(self._say_next(heard))

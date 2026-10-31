@@ -123,12 +123,10 @@ def store(tmp_path: Path) -> ArtifactStore:
     return ArtifactStore(tmp_path)
 
 
-async def wait_until(condition, timeout: float = 15.0) -> None:
-    async def poll() -> None:
+async def wait_until(condition, limit_s: float = 15.0) -> None:
+    async with asyncio.timeout(limit_s):
         while not condition():  # noqa: ASYNC110  (conditions read other tasks' plain state)
             await asyncio.sleep(0.02)
-
-    await asyncio.wait_for(poll(), timeout)
 
 
 def utterances(artifact: CallArtifact, speaker: Speaker | None = None) -> list[Utterance]:

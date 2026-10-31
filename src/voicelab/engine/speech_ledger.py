@@ -57,14 +57,11 @@ class PlayoutLedger:
         self.segments = []
         self.played_s = 0.0
 
-    def start_segment(self, text: str) -> None:
-        self.segments.append(_Segment(text))
-
-    def add_audio(self, seconds: float) -> None:
-        self.segments[-1].produced_s += seconds
-
-    def finish_segment(self) -> None:
-        self.segments[-1].finished = True
+    def start_segment(self, text: str) -> _Segment:
+        """Add a sentence. TTS keeps the result, since a cut can start a new turn mid-sentence."""
+        segment = _Segment(text)
+        self.segments.append(segment)
+        return segment
 
     def add_played(self, seconds: float) -> None:
         self.played_s += seconds

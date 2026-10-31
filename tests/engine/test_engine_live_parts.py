@@ -27,12 +27,10 @@ def frames(samples: np.ndarray, size: int = 320):
 
 def turn() -> PlayoutLedger:
     ledger = PlayoutLedger()
-    ledger.start_segment("one two")
-    ledger.add_audio(1.0)
-    ledger.finish_segment()
-    ledger.start_segment("three four")
-    ledger.add_audio(1.0)
-    ledger.finish_segment()
+    for text in ("one two", "three four"):
+        segment = ledger.start_segment(text)
+        segment.produced_s = 1.0
+        segment.finished = True
     return ledger
 
 
@@ -51,12 +49,22 @@ def test_spoken_text_follows_audio_sent_not_audio_made():
 
 def test_a_sentence_still_in_tts_is_measured_by_its_length():
     ledger = PlayoutLedger()
-    ledger.start_segment("one two three four five six seven eight nine ten")
-    ledger.add_audio(0.2)
+    ledger.start_segment("one two three four five six seven eight nine ten").produced_s = 0.2
 
     ledger.add_played(0.6)
 
     assert ledger.spoken_text == "one two"
+
+
+def test_tts_finishing_a_sentence_after_a_new_turn_began_is_harmless():
+    ledger = PlayoutLedger()
+    in_flight = ledger.start_segment("from the old turn")
+
+    ledger.reset()
+    in_flight.produced_s += 0.5
+    in_flight.finished = True
+
+    assert ledger.intended_text == ""
 
 
 def test_reset_starts_a_new_turn():

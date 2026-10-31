@@ -47,6 +47,7 @@ Fail = Callable[[str], Awaitable[None]]
 
 _VAD_HANG_S = 0.3  # measured: longer adds latency, and Smart Turn covers pauses inside a turn
 _VAD_START_S = 0.2
+_RESUME_WINDOW_S = 0.5  # on top of the VAD hang, so about p90 of the gaps inside a turn
 _STT_P99_S = 0.4  # Parakeet runs at about 150x real time, so even a long turn is quick
 
 
@@ -55,10 +56,19 @@ def _silero() -> VADAnalyzer:
 
 
 def _smart_turn(*, wait_for_transcript: bool = True) -> list[BaseUserTurnStopStrategy]:
+    """Smart Turn, plus a window to carry on, and both have to agree the turn is over.
+
+    A sentence that ended looks finished to Smart Turn even with more to come. Gaps inside one
+    turn measured 0.32 s at the median and 0.5 to 0.76 s at p90 across Pocket and Phonon voices.
+    Without the window, turns ended at those gaps and the bot talked over its caller.
+    """
     return [
         TurnAnalyzerUserTurnStopStrategy(
             turn_analyzer=LocalSmartTurnAnalyzerV3(), wait_for_transcript=wait_for_transcript
-        )
+        ),
+        SpeechTimeoutUserTurnStopStrategy(
+            user_speech_timeout=_RESUME_WINDOW_S, wait_for_transcript=wait_for_transcript
+        ),
     ]
 
 
@@ -160,11 +170,11 @@ class WrappedTTS(TTSService):
         self._role = role
 
     async def run_tts(self, text: str, context_id: str) -> AsyncGenerator[Frame | None, None]:
-        self._ledger.start_segment(text)
+        segment = self._ledger.start_segment(text)
         try:
             async for clip in self._tts.stream(text, voice_id=self._voice_id, style=self._style):
                 await self.stop_ttfb_metrics()
-                self._ledger.add_audio(clip.duration_s)
+                segment.produced_s += clip.duration_s
                 yield TTSAudioRawFrame(
                     audio=clip.pcm,
                     sample_rate=clip.sample_rate,
@@ -174,7 +184,7 @@ class WrappedTTS(TTSService):
         except Exception as failure:
             await self._fail(f"{self._role} failed: {failure!r}")
         finally:
-            self._ledger.finish_segment()
+            segment.finished = True
 
 
 class PlayoutTap(FrameProcessor):
