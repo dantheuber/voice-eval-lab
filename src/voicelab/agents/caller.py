@@ -35,10 +35,11 @@ from voicelab.providers.base import LLM, ChatMessage
 
 MAX_TURNS_REASON = "max_turns"
 MAX_TURNS_LINE = "Look, I have to go. I'll call back later."
-REDIRECT_LINE = "Sorry, um, can we get back to why I called?"
+REDIRECT_LINE = "Sorry, could you say that again?"
 OPTIONAL_BEAT_TURNS = 2  # an optional beat that goes nowhere for this long gets dropped
 REPLY_TRIES = 3  # a rejected reply gets this many goes in all before the safe line
 LAST_QUESTIONS = 2  # lines after the last beat that can still be a question
+OPENING_WORDS = 5  # an opening line this long is the first step, not "hello?"
 TRANSCRIPT_LINES = 20  # keeps the prompt small enough for a little local model
 TYPICAL_TURN_WORDS = 20  # one or two short sentences, as the support prompt asks for
 BASE_TURN_WORDS = 18  # a caller's most words in a turn, with `WORDS_PER_VERBOSITY` for each step
@@ -78,6 +79,7 @@ _SCRIPT_TALK = re.compile(
     r"\b(?:fact )?sheet\b|\bthe agent\b|\bmy (?:current )?step\b", re.IGNORECASE
 )
 _WANTS_A_YES = re.compile(r"\bsay yes\b|\bagree\b", re.IGNORECASE)
+_JUST_ASKS = re.compile(r"ask\b(?!.*\bsay yes\b)", re.IGNORECASE)
 _A_YES = re.compile(
     r"\b(?:yes|yeah|yep|yup|sure|okay|ok|alright|fine|go ahead|please do|do it|charge it"
     r"|sounds good)\b",
@@ -314,19 +316,32 @@ class CallerBot:
     def _beat_shows(self, beat: Beat, text: str) -> bool:
         """The model also forgets to call a step done, and then it replays that step for ever.
 
-        These steps can be read off the words: the zip and PIN got said, or the agent asked
-        something and the answer opens with a yes.
+        These steps can be read off the words: a real opening line is the first step, the zip and
+        PIN got said, a step that asks got asked, or the agent asked and the answer opens with a yes.
         """
+        if self.turns == 1 and len(text.split()) >= OPENING_WORDS:
+            return True
         if "PIN" in beat.instruction:
             return True
+        if _JUST_ASKS.match(beat.instruction):
+            return "?" in text
         asked = bool(self.transcript) and "?" in self.transcript[-1][1]
         return asked and _WANTS_A_YES.search(beat.instruction) and _A_YES.match(text.strip())
+
+    @staticmethod
+    def _asked(beat: Beat, text: str) -> bool:
+        """A step that's a question needs a question. A bot that gets there first doesn't excuse
+        it: the checkpoint says the caller asked, and repeating the answer isn't asking.
+        """
+        return not _JUST_ASKS.match(beat.instruction) or "?" in text
 
     def _did_the_beat(self, beat: Beat, text: str) -> bool:
         """The model calls a step done at its first half. Two kinds can be checked from the words:
         one that asks for a yes needs a yes, and one that asks for the zip and PIN needs both.
         """
         if _WANTS_A_YES.search(beat.instruction) and not _A_YES.search(text):
+            return False
+        if not self._asked(beat, text):
             return False
         if "PIN" not in beat.instruction:
             return True
@@ -361,10 +376,14 @@ class CallerBot:
             return "You sounded like a support agent. You are the customer, so don't offer help."
         if _SCRIPT_TALK.search(say):
             return "Talk like a person on a phone. Say 'you', and never mention a sheet or a step."
+        beat = self.current_beat
         if self._leaving_early(reply):
-            beat = self.current_beat
             step = beat.instruction if beat else "Finish why you called."
             return f"You are not done, so don't say goodbye or hang up. Do this now: {step}"
+        if beat and reply.completed_beat == beat.id and not self._asked(beat, say):
+            return (
+                f"Your step is: {beat.instruction} Ask it out loud, even if you heard the answer."
+            )
         invented = self._invented_details(say)
         if invented:
             return (
@@ -474,6 +493,8 @@ right, so don't agree with it.
 
 Rules:
 - You are the customer. Never help the agent, summarize for it, or offer to do its job.
+- Your mood changes how you say things, never what you do. Always do your current step.
+- If your step says to ask, ask it out loud, even if the agent already told you.
 - If the agent asks for something on your sheet, give it right away, before anything else.
 - If the agent is checking something, say okay and wait. A short wait is normal.
 - If the agent doesn't get to your step, ask for it directly.

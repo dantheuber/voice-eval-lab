@@ -929,7 +929,7 @@ async def test_a_made_up_argument_never_reaches_the_tool(db, tool):
     segments = await turn(bot, "I'd like to renew my domain.")
     assert [s.display for s in segments] == ["What's your domain?"]
     assert tool_events(events) == []
-    assert [e.kind for e in events] == ["made_up_arguments"]
+    assert [e.kind for e in events] == ["bad_arguments"]
     assert "hasn't said" in next(m for m in bot.messages if m.role == "tool").content
 
 
@@ -938,6 +938,18 @@ async def test_a_made_up_check_doesnt_use_up_a_try(db):
     bot, _, _ = make_bot(db, uses(tool), "What's your zip?")
     await turn(bot, "Hello.")
     assert bot._failed_checks == 0
+
+
+@pytest.mark.parametrize(
+    ("zip_code", "pin"), [("97214", "552"), ("9721", "4821"), ("497214", "4821")]
+)
+async def test_a_check_with_digits_missing_doesnt_use_up_a_try(db, zip_code, pin):
+    tool = call("verify_identity", customer_id="cus_1001", billing_zip=zip_code, pin=pin)
+    bot, _, events = make_bot(db, uses(tool), "Could you say those again?")
+    await turn(bot, f"My zip is {zip_code} and my pin is {pin}.")
+    assert tool_events(events) == []
+    assert bot._failed_checks == 0
+    assert "missed some digits" in next(m for m in bot.messages if m.role == "tool").content
 
 
 @pytest.mark.parametrize(

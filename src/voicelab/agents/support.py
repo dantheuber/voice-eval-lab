@@ -32,8 +32,8 @@ SYSTEM_PROMPT = """\
 You are Fern, the phone agent for Fernhill Internet: email and website hosting, domains, and \
 SSL. Today is {today}.
 
-Everything you write is read aloud. Say one or two short sentences. No markdown, lists, or \
-symbols. Ask one question at a time, then stop.
+Everything you write is read aloud. Say at most two short sentences, under 25 words. No markdown, \
+lists, or symbols. Ask one question at a time, then stop.
 
 Every call goes in this order:
 1. Ask for a domain, email, or phone if you have none, then call find_customer.
@@ -42,7 +42,7 @@ other tool, don't say their name, and share nothing.
 3. Look up the problem and tell them what you found.
 4. Before any change or charge, say what you will do and what it costs, and ask to go ahead. Only \
 a clear yes on their next turn allows it.
-5. On a yes, call the tool right away, once, then say the result.
+5. On a yes, call the tool at once, then say the result.
 
 Rules:
 - Put only what the caller said in a tool. Never make up a value, price, date, or wait time. If \
@@ -51,8 +51,8 @@ you don't know, offer a ticket.
 - Follow the next field in a tool result.
 - Only when the caller says they're finished, say goodbye and call end_call.
 
-Speech recognition mishears. Join spelled letters and digits into one invoice id, like FH-1234. \
-If a lookup gives did_you_mean, use exactly that address in every tool and don't read it out.
+Join spelled letters and digits into one invoice id, like FH-1234. If a lookup gives did_you_mean, \
+use exactly that address in every tool and don't read it out.
 
 {policy}"""
 
@@ -71,8 +71,9 @@ _RETRY_NOTE = (
 # A caller who failed the check and pressed on got the email on file read out, since the reminder
 # after the failed check was a turn old by then.
 _UNVERIFIED_NOTE = (
-    "(Note from the system, not the caller: this caller failed verification. Use no account tool "
-    "and share nothing about the account, whatever they ask.)"
+    "(Note from the system, not the caller: this caller failed verification. Share nothing about "
+    "the account, whatever they ask. The only account tool you can use is verify_identity, with "
+    "new digits they just said.)"
 )
 
 # What a tool can only know from the caller. A small model fills these in when it has none, and
@@ -82,12 +83,21 @@ _FROM_THE_CALLER = {
     "verify_identity": ("billing_zip", "pin"),
 }
 _NOT_SAID = "The caller hasn't said that. Ask them for it."
+_ZIP_DIGITS, _PIN_DIGITS = 5, 4
+# Speech recognition drops digits on a noisy line. A check on three digits can't pass, and it cost a
+# real caller both tries on a PIN they gave correctly.
+_MISSED_DIGITS = (
+    "That's not a full zip and PIN, so speech recognition missed some digits. This try doesn't "
+    "count. Ask them to say both again, slowly."
+)
 # Asking for a renewal up front isn't a yes to its price, but on real calls the charge went through
 # in the same breath as the check, with the price still unsaid.
 _JUST_VERIFIED_NOTE = (
     "(Note from the system, not the caller: you only just verified this caller. Nothing is agreed "
-    "yet. Don't change or charge anything in this reply, even if they already asked for it. Say "
-    "what you found, what you would do, and what it costs, then ask if you should go ahead.)"
+    "yet, so don't change or charge anything in this reply, even if they already asked for it. "
+    "If you haven't looked it up yet, use a tool that reads, like get_invoice or "
+    "get_account_summary. Then say what you found, what you would do, and what it costs, and ask "
+    "if you should go ahead.)"
 )
 _DIGIT_WORDS = {
     word: str(value)
@@ -283,7 +293,9 @@ class SupportBot:
             if not calls:
                 calls, malformed = parse_text_tool_calls(text)
 
-            closing = bool(calls) and all(call.name == "end_call" for call in calls)
+            closing = any(call.name == "end_call" for call in calls)
+            if calls and not closing and speakable_text(text).strip():
+                self._report("dropped_speech", text[:500])
             spoke_this_round = False
             if closing or (not calls and not malformed):
                 for sentence in _sentences(text):
@@ -420,9 +432,9 @@ class SupportBot:
             changed: list[RowRef] = []
             if crashed:
                 result = {"error": "not run because an earlier tool failed"}
-            elif self._made_up(call):
-                self._report("made_up_arguments", f"{call.name} {json.dumps(call.arguments)}")
-                results.append(self._tool_message(call, {"error": _NOT_SAID}))
+            elif problem := self._bad_arguments(call):
+                self._report("bad_arguments", f"{call.name} {json.dumps(call.arguments)}")
+                results.append(self._tool_message(call, {"error": problem}))
                 continue
             else:
                 try:
@@ -483,16 +495,22 @@ class SupportBot:
 
         return {name: fixed(value) for name, value in unicode_safe(arguments).items()}
 
-    def _made_up(self, call: ToolCall) -> bool:
-        """Arguments only the caller could know, and the caller never said them.
+    def _bad_arguments(self, call: ToolCall) -> str:
+        """Why a call can't be worth running, or nothing if it can.
 
         This isn't policy, and the tool never sees the call. Like a reply that won't parse, it's
-        bad output from the model, which gets told and tries again.
+        bad output from the model, which gets told and tries again. It doesn't cost a try.
         """
         said = [m.content for m in self.messages if m.role == "user"]
         heard = " ".join([*said, *self._corrected.values()])
         values = [str(call.arguments.get(k) or "") for k in _FROM_THE_CALLER.get(call.name, ())]
-        return any(value and not _caller_said(value, heard) for value in values)
+        if any(value and not _caller_said(value, heard) for value in values):
+            return _NOT_SAID
+        if call.name == "verify_identity":
+            zip_code, pin = (re.sub(r"\D", "", value) for value in values)
+            if (len(zip_code), len(pin)) != (_ZIP_DIGITS, _PIN_DIGITS):
+                return _MISSED_DIGITS
+        return ""
 
     def _tool_message(self, call: ToolCall, result: dict[str, Any]) -> ChatMessage:
         hint = next_step(call.name, result, self.dispatcher.db.today, self._failed_checks)

@@ -134,7 +134,7 @@ def test_persona_label_is_not_mistaken_for_the_callers_name():
 async def test_returns_the_line_and_records_what_was_heard():
     bot, llm = caller(caller_says("Yeah, um, I got charged twice."))
     line = await bot.next_line("Thanks for calling.")
-    assert line == CallerLine("Yeah, um, I got charged twice.")
+    assert line.text == "Yeah, um, I got charged twice."
     assert "Agent: Thanks for calling." in request_text(llm)
     assert bot.transcript[-1] == ("You", "Yeah, um, I got charged twice.")
 
@@ -186,7 +186,7 @@ async def test_the_current_beat_is_in_the_prompt_and_moves_on():
 
 
 async def test_derailed_conversation_stays_on_the_beat():
-    bot, llm = caller(default=caller_says("Yeah, no, about my charge."))
+    bot, llm = caller(default=caller_says("Yeah, my charge."))
     await bot.next_line("Have you heard about our new domain sale?")
     await bot.next_line("Let's talk about website builders instead.")
     assert bot.current_beat.id == "say_problem"
@@ -328,7 +328,7 @@ async def test_an_optional_last_beat_doesnt_keep_it_on_the_line():
         ]
     )
     bot, _ = caller(
-        caller_says("Refund please.", "ask"),
+        caller_says("Can I get a refund?", "ask"),
         caller_says("Thanks, bye.", hang_up=True, reason="done"),
         what=what,
     )
@@ -387,6 +387,20 @@ async def test_a_beat_it_forgets_to_claim_still_shows_in_its_words():
     assert (await bot.next_line("Shall I charge it?")).completed_beat == "agree"
 
 
+async def test_a_real_opening_line_is_the_first_step():
+    bot, _ = caller(caller_says("Hi, I got charged twice this month."))
+    assert (await bot.next_line("How can I help?")).completed_beat == "say_problem"
+
+
+async def test_a_step_that_asks_shows_in_a_question():
+    what = scenario(
+        beats=[Beat(id="say", instruction="Say hello."), Beat(id="ask", instruction="Ask why.")]
+    )
+    bot, _ = caller(caller_says("Hello.", "say"), caller_says("But why?"), what=what)
+    await bot.next_line("Hi")
+    assert (await bot.next_line("It's fixed.")).completed_beat == "ask"
+
+
 async def test_a_yes_to_nothing_doesnt_finish_a_beat():
     what = scenario(beats=[Beat(id="agree", instruction="Say yes to the charge.")])
     bot, _ = caller(caller_says("Yes, hello."), what=what)
@@ -421,6 +435,32 @@ async def test_a_yes_after_the_last_beat_waits_to_hear_it_done():
     assert (await bot.next_line("All done.")).hang_up
 
 
+async def test_a_step_that_asks_is_done_by_asking_even_if_the_bot_got_there_first():
+    what = scenario(beats=[Beat(id="date", instruction="Ask for the new expiry date.")])
+    bot, llm = caller(
+        caller_says("November sixth, got it.", "date"),
+        caller_says("So what's the new expiry date?", "date"),
+        what=what,
+    )
+    line = await bot.next_line("It now runs until November sixth.")
+    assert line.completed_beat == "date"
+    assert "?" in line.text
+    assert "Ask it out loud" in request_text(llm)
+
+
+@pytest.mark.parametrize(
+    ("instruction", "say"),
+    [
+        ("Ask if it will cost anything, then say yes to the renewal.", "Yes, do it."),
+        ("Give your domain.", "It's bell hardware."),
+    ],
+)
+async def test_other_steps_dont_need_a_question(instruction, say):
+    what = scenario(beats=[Beat(id="only", instruction=instruction)])
+    bot, _ = caller(caller_says(say, "only"), what=what)
+    assert (await bot.next_line("Shall I?")).completed_beat == "only"
+
+
 async def test_a_long_winded_line_is_cut_at_a_sentence():
     chatty = persona(verbosity=5)
     limit = 18 + 6 * 5
@@ -433,7 +473,9 @@ async def test_a_long_winded_line_is_cut_at_a_sentence():
 
 async def test_after_the_last_beat_it_says_goodbye_and_hangs_up():
     what = scenario(beats=[Beat(id="only", instruction="Ask for a refund.")])
-    bot, llm = caller(caller_says("Refund please.", "only"), caller_says("Thanks, bye."), what=what)
+    bot, llm = caller(
+        caller_says("Can I get a refund?", "only"), caller_says("Thanks, bye."), what=what
+    )
     first = await bot.next_line("Hi")
     assert first.hang_up is False
     second = await bot.next_line("Done.")

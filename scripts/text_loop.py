@@ -81,6 +81,20 @@ QUOTE_BEFORE = {
 }
 
 
+class TellingCaller(CallerBot):
+    """Keeps what the guards rejected, for the transcript."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.rejected: list[str] = []
+
+    def _problem_with(self, reply):
+        problem = super()._problem_with(reply)
+        if problem:
+            self.rejected.append(f"{problem[:70]} <- {reply.say[:90]}")
+        return problem
+
+
 class HearsLikeStt(SupportBot):
     """Hands the bot the words live STT made of the caller's line."""
 
@@ -201,7 +215,7 @@ async def one_call(args, llm, scenario, persona, rep, out: Path) -> Score:
     try:
         bot_type = HearsLikeStt if args.garble else SupportBot
         support = bot_type(llm, ToolDispatcher(db))
-        caller = CallerBot(llm, persona, scenario, seed=rep)
+        caller = TellingCaller(llm, persona, scenario, seed=rep)
         result = await run_text_call(support, caller)
         outcome = score(scenario, persona.id, rep, result, args.garble)
     finally:
@@ -209,7 +223,7 @@ async def one_call(args, llm, scenario, persona, rep, out: Path) -> Score:
     head = (
         f"{outcome.scenario} {outcome.persona} rep {rep}: {outcome.end_reason} ({outcome.detail})"
     )
-    body = transcript(result)
+    body = transcript(result) + "\n\nREJECTED:\n" + "\n".join(caller.rejected)
     (out / f"{scenario.id}.{persona.id}.{rep}.txt").write_text(
         f"{head}\nPROBLEMS: {outcome.problems}\n\n{body}\n"
     )
