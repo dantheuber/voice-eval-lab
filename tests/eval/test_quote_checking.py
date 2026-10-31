@@ -684,3 +684,77 @@ async def test_asking_again_after_a_cut_off_reply_allows_more_tokens():
     payload, _ = await ask_json(llm, "prompt", {}, EvalConfig())
     assert payload == {"status": "pass"}
     assert llm.kwargs[1]["max_tokens"] > llm.kwargs[0]["max_tokens"]
+
+
+# A quote has to end where a word ends ------------------------------------------------------------
+
+
+@pytest.fixture
+def exact() -> TranscriptIndex:
+    said = "Your fee is $500 today and I can't do that. Invoice FH-4419 is at 94110 now."
+    return TranscriptIndex({Speaker.BOT: transcript((said, 0.0))}, Lexicon.load())
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "Your fee is $50",
+        "fee is 50",
+        "I can",
+        "and I can",
+        "Invoice FH-44",
+        "is at 9411",
+    ],
+)
+def test_a_quote_cannot_stop_inside_a_number_or_a_contraction(exact, quote):
+    assert exact.locate(quote) is None, quote
+
+
+def test_a_quote_cannot_start_inside_a_number_or_a_contraction():
+    index = TranscriptIndex({Speaker.BOT: transcript(("the total is $500 today", 0.0))})
+    assert index.locate("00 today") is None
+
+
+def test_a_whole_number_and_a_whole_contraction_still_match(exact):
+    assert exact.locate("Your fee is $500").quote == "Your fee is $500"
+    assert exact.locate("I cannot do that").quote == "I can't do that."
+
+
+def test_a_later_complete_match_is_found_past_a_partial_one():
+    index = TranscriptIndex({Speaker.BOT: transcript(("I can't refund it but I can help", 0.0))})
+    assert index.locate("I can").quote == "I can"
+
+
+@pytest.mark.parametrize(
+    ("said", "quote"),
+    [
+        ("It renews on October 12th. one moment please", "renews on October 12th."),
+        ("This is 9702. 10-7-3-1-6. I know", "This is 9702."),
+        ("This is 9702. 10-7-3-1-6. I know", "10-7-3-1-6."),
+        ("your card ending in five One moment please", "your card ending in five"),
+    ],
+)
+def test_a_number_ends_where_its_sentence_ends(said, quote):
+    index = TranscriptIndex({Speaker.BOT: transcript((said, 0.0))})
+    assert index.locate(quote) is not None, quote
+
+
+def test_part_of_a_spoken_number_is_not_the_number():
+    index = TranscriptIndex({Speaker.BOT: transcript(("that is forty nine dollars today", 0.0))})
+    assert index.locate("nine dollars") is None
+    assert index.locate("forty nine dollars") is not None
+
+
+def test_word_breaks_cannot_reach_inside_a_number():
+    index = TranscriptIndex({Speaker.BOT: transcript(("call 500 now", 0.0))})
+    assert index.locate("call 50") is None
+
+
+def test_a_judge_cannot_cite_part_of_a_number_as_evidence(exact):
+    judgment = verify_judgment(
+        {"status": "fail", "reason": "overcharged", "quotes": ["Your fee is $50"]},
+        exact,
+        quote_needed_for="fail",
+    )
+    assert judgment.status == "unknown"
+    assert judgment.dropped_quotes == 1

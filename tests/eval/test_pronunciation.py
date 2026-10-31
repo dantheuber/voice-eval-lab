@@ -105,6 +105,25 @@ def test_ordinary_words_are_not_critical():
     assert critical("please hold while I check that for you") == {}
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("on October 12th. one moment", ["on", "october", "1", "2", "1", "moment"]),
+        ("ending in five One moment", ["ending", "in", "5", "1", "moment"]),
+    ],
+)
+def test_a_number_stops_at_the_end_of_its_sentence(text, expected):
+    tokens = tokenize(text.split())
+    assert [t.norm for t in tokens] == expected
+    assert len({(t.start, t.end) for t in tokens if t.norm.isdigit()}) == 2
+
+
+def test_commas_inside_a_spoken_number_do_not_end_it():
+    tokens = tokenize("nine, seven, seven, zero, one.".split())
+    assert "".join(t.norm for t in tokens) == "97701"
+    assert len({(t.start, t.end) for t in tokens}) == 1
+
+
 def test_incidental_number_words_are_not_critical():
     assert critical("one moment please, just a second") == {}
 
@@ -695,6 +714,10 @@ def test_spellings_of_one_sound_are_alike(said, heard):
         ("mx", "ms"),
         ("fh4419", "fh4491"),
         ("mail2example", "mail3example"),
+        ("11", "1"),
+        ("$11", "$1"),
+        ("100", "10"),
+        ("room 22", "room 2"),
         ("marcus", "markets"),
         ("Marino", "Marina"),
         ("", "Sophia"),
@@ -852,10 +875,20 @@ async def test_a_persona_label_is_not_a_person(store):
 
 
 async def test_a_sound_alike_counts_every_repeated_letter_of_its_token(store):
-    """Two equal tokens in one group each get marked, not the first one twice."""
-    scenario = Scenario(title="t", goal="g", pronunciation_watch=["annaanna.example"])
-    artifact = call(
-        bot_utterance("Visit anna anna dot example today.", 1.0, 4.0), scenario_snapshot=scenario
-    )
-    out = await evaluate(store, artifact, "visit ana ana dot example today")
+    """Two aligned entries here compare equal, so finding one by value finds the first twice."""
+    scenario = Scenario(title="t", goal="g", pronunciation_watch=["anna anna"])
+    artifact = call(bot_utterance("Visit anna anna today.", 1.0, 4.0), scenario_snapshot=scenario)
+    out = await evaluate(store, artifact, "visit ana-ana today")
+    assert out.metrics["sound_alike"] == 1
     assert out.metrics["token_accuracy"] == 1.0
+
+
+async def test_both_engines_hearing_a_wrong_repeated_digit_is_corroborated(store):
+    """$11 and $1 squeeze to one sound, and that read as the live engine hearing the script."""
+    artifact = call(
+        bot_utterance("Your total is $11 today.", 1.0, 4.0, heard_text="Your total is $1 today.")
+    )
+    out = await evaluate(store, artifact, "your total is $1 today")
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_corroborated"
+    assert finding.advisory is False

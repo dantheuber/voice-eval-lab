@@ -13,7 +13,7 @@ symbol or unit word only says it's money: $5, 5.00, and "five dollars" all read 
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence, Set
 from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -25,6 +25,7 @@ from voicelab.company.db import SEEDS_DIR
 LEXICON_FILE = SEEDS_DIR / "lexicon.yaml"
 
 _EDGE_PUNCTUATION = "\"'`.,!?;:()[]{}<>"
+_SENTENCE_END = (".", "?", "!")
 
 _NUMERIC = re.compile(r"^\$?\d[\d,.\-:/]*(st|nd|rd|th|%)?$")
 _NUMBER_WITH_UNIT = re.compile(r"^(\d+)([A-Za-z]{2,})$")
@@ -187,13 +188,20 @@ def _numeric_digits(word: str) -> str:
     return re.sub(r"\D", "", word)
 
 
-def _consume_number(words: Sequence[str], start: int) -> tuple[int, str, bool]:
-    """Read a number starting at `start`. Returns its end, its digits, and whether it's money."""
+def _consume_number(
+    words: Sequence[str], start: int, breaks: Set[int] = frozenset()
+) -> tuple[int, str, bool]:
+    """Read a number starting at `start`. Returns its end, its digits, and whether it's money.
+
+    A number can't run on past an index in `breaks`, which is where a new sentence starts.
+    """
     number = _SpokenNumber()
     money = False
     i = start
     while i < len(words):
         word = words[i]
+        if i > start and i in breaks:
+            break
         if number.complete and _starts_number(word):
             break
         decimal = _DECIMAL.match(word)
@@ -244,6 +252,7 @@ class _Piece:
     text: str  # lowercase
     original: str
     source: int  # index of the input word
+    ends_sentence: bool = False
 
 
 def _is_url(text: str, tlds: Iterable[str]) -> bool:
@@ -275,7 +284,22 @@ def _pieces(words: Sequence[str], tlds: Iterable[str]) -> list[_Piece]:
         if stripped:
             parts = _split_word(stripped, tlds)
             pieces.extend(_Piece(part.lower(), part, source) for part in parts)
+            if word.rstrip("\"')").endswith(_SENTENCE_END):
+                pieces[-1] = replace(pieces[-1], ends_sentence=True)
     return pieces
+
+
+def _sentence_starts(pieces: Sequence[_Piece]) -> set[int]:
+    """Where a new sentence starts: after a full stop, or at a capitalized number word.
+
+    An ASR turn can end with no punctuation at all, and "ending in five One moment" isn't 51.
+    """
+    starts: set[int] = set()
+    for i in range(1, len(pieces)):
+        capitalized = pieces[i].original[:1].isupper() and pieces[i].text in _NUMBER_WORDS
+        if pieces[i - 1].ends_sentence or capitalized:
+            starts.add(i)
+    return starts
 
 
 def _expand_word(text: str) -> list[str]:
@@ -317,11 +341,13 @@ def _spelled_run_end(pieces: Sequence[_Piece], start: int) -> int:
 
 def _classified(pieces: Sequence[_Piece], names: set[str], tlds) -> list[Token]:
     tokens: list[Token] = []
+    texts = [p.text for p in pieces]
+    breaks = _sentence_starts(pieces)
     i = 0
     while i < len(pieces):
         piece = pieces[i]
         if _starts_number(piece.text):
-            end, digits, money = _consume_number([p.text for p in pieces], i)
+            end, digits, money = _consume_number(texts, i, breaks)
             incidental = end == i + 1 and piece.text in _INCIDENTAL_NUMBERS
             kind = "money" if money else None if incidental else "number"
             last = pieces[end - 1].source + 1
@@ -550,6 +576,10 @@ _SOUND_RULES = (
 _MIN_LETTERS_FOR_VOWEL_SLIP = 7
 
 
+def _bare(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def _sound_key(text: str) -> str:
     key = text.lower()
     for pattern, replacement in _SOUND_RULES:
@@ -564,14 +594,17 @@ def sounds_alike(said: str, heard: str) -> bool:
     Rahman as Raman. Both engines do it the same way, so it looks like corroboration, and it isn't.
     This is deliberately narrow. Spelling rules only, plus one unstressed-looking vowel in a long
     word, since "ramen law" against "rahman law" is what schwa does. A short word's vowel is the
-    word: Dana isn't Dina. Anything with a digit has to match exactly.
+    word: Dana isn't Dina. Anything with a digit has to match exactly, and that's checked before
+    any sound rule, because squeezing doubled letters would make 11 and 1 the same.
     """
+    if any(c.isdigit() for c in said + heard):
+        return _bare(said) == _bare(heard)
     a, b = _sound_key(said), _sound_key(heard)
     if not a or not b:
         return False
     if a == b:
         return True
-    if any(c.isdigit() for c in a + b) or len(a) != len(b) or len(a) < _MIN_LETTERS_FOR_VOWEL_SLIP:
+    if len(a) != len(b) or len(a) < _MIN_LETTERS_FOR_VOWEL_SLIP:
         return False
     slips = [(x, y) for x, y in zip(a, b, strict=True) if x != y]
     return len(slips) == 1 and slips[0][0] in _VOWELS and slips[0][1] in _VOWELS and a[0] == b[0]

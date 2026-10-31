@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import chain
 
 from voicelab.core.models import Evidence, Speaker, Word
 from voicelab.eval.normalize import Lexicon, Token, phrase_spans, tokenize
@@ -148,7 +149,7 @@ class TranscriptIndex:
         if not parts:
             return None
         for channel in sorted(self._channels, key=lambda c: c.speaker != prefer):
-            spans = [_find_exact(channel.tokens, part) for part in parts]
+            spans = [self._find(channel, part) for part in parts]
             if all(span is not None for span in spans):
                 return _evidence(channel, *spans[0])
         return None
@@ -156,15 +157,37 @@ class TranscriptIndex:
     def _needle(self, text: str) -> list[str]:
         return [token.norm for token in tokenize(text.split(), lexicon=self._lexicon)]
 
+    def _find(self, channel: _Channel, needle: list[str]) -> tuple[int, int] | None:
+        """The first place this quote stands whole.
 
-def _find_exact(tokens: list[Token], needle: list[str]) -> tuple[int, int] | None:
-    size = len(needle)
-    norms = [token.norm for token in tokens]
-    for start in range(len(norms) - size + 1):
-        if norms[start : start + size] == needle:
-            return start, start + size
-    # An ASR and a judge can split a name differently. Every letter still has to be there.
-    return next(phrase_spans(tokens, "".join(needle)), None)
+        One word can become several tokens, as "can't" becomes "can not" and "$500" becomes three
+        digits, so tokens alone would let "I can" match "I can't" and "$50" match "$500". A match
+        has to start and end on word edges, and the words it covers have to read back as the quote.
+        """
+        tokens = channel.tokens
+        size = len(needle)
+        norms = [token.norm for token in tokens]
+        token_runs = (
+            (start, start + size)
+            for start in range(len(norms) - size + 1)
+            if norms[start : start + size] == needle
+        )
+        # An ASR and a judge can split a name differently, and every letter still has to be there.
+        for start, end in chain(token_runs, phrase_spans(tokens, "".join(needle))):
+            if _on_word_edges(tokens, start, end) and self._reads_as(channel, start, end, needle):
+                return start, end
+        return None
+
+    def _reads_as(self, channel: _Channel, start: int, end: int, needle: list[str]) -> bool:
+        words = channel.words[channel.tokens[start].start : channel.tokens[end - 1].end]
+        tokens = tokenize([word.text for word in words], lexicon=self._lexicon)
+        return "".join(token.norm for token in tokens) == "".join(needle)
+
+
+def _on_word_edges(tokens: list[Token], start: int, end: int) -> bool:
+    starts_inside = start > 0 and tokens[start - 1].end > tokens[start].start
+    ends_inside = end < len(tokens) and tokens[end].start < tokens[end - 1].end
+    return not (starts_inside or ends_inside)
 
 
 def _evidence(channel: _Channel, start: int, end: int) -> Evidence:
