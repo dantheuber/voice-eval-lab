@@ -111,4 +111,4 @@ A tool turn needs a second LLM round, and Qwen3.5-4B takes up to 2.4 s end to en
 | `filler_after_s` 0.6 | `LiveSettings` | A tool turn needs a second LLM round, so a slow first round predicts a long silence |
 | `settle_s` 0.06 | `LiveSettings` | One output chunk is 40 ms |
 | `stop_timeout_s` 5 | `LiveSettings` | Ends a turn that never produced a transcript |
-| `caller_patience_s` 12 | `LiveSettings` | A caller left in silence speaks up |
+| `caller_patience_s` 12 | `LiveSettings` | A caller left in silence speaks up. Pipecat's idle timer only runs from that side's own speech, so `CallerBrain` keeps its own for when it owes a reply |
