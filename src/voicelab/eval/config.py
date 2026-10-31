@@ -9,6 +9,13 @@ from pydantic import BaseModel, Field
 Severity = Literal["info", "minor", "major", "critical"]
 
 
+class TranscribeConfig(BaseModel):
+    """How a silence-sensitive ASR is fed. See `eval/transcript.py:speech_chunks`."""
+
+    chunk_gap_s: float = 0.8  # speech closer than this goes to the ASR as one clip
+    chunk_pad_s: float = 0.2  # audio kept around speech, so first and last words aren't clipped
+
+
 class TimingConfig(BaseModel):
     min_speech_s: float = 0.1
     min_gap_s: float = 0.2  # shorter pauses stay inside one speech region
@@ -138,6 +145,7 @@ class EvalConfig(BaseModel):
     judge_temperature: float = 0.0
     judge_max_tokens: int = 400
     ignored_state_tables: list[str] = Field(default_factory=list)
+    transcribe: TranscribeConfig = Field(default_factory=TranscribeConfig)
     timing: TimingConfig = Field(default_factory=TimingConfig)
     pronunciation: PronunciationConfig = Field(default_factory=PronunciationConfig)
     audio_quality: AudioQualityConfig = Field(default_factory=AudioQualityConfig)

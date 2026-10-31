@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from voicelab.core.models import Speaker
+from voicelab.core.audio import AudioClip
+from voicelab.core.models import Speaker, Word
+from voicelab.eval.config import TranscribeConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
-from voicelab.eval.transcript import estimate_words
+from voicelab.eval.transcript import estimate_words, speech_chunks
+from voicelab.eval.vad import Region
 from voicelab.providers.base import STT, Transcript
 
 
@@ -45,8 +48,47 @@ async def _transcribe(ctx: EvalContext, stt: STT, speaker: Speaker) -> tuple[Tra
         # Whisper-style models invent text when fed silence, and this channel has nothing to hear.
         return Transcript(text="", model=stt.name), False
     audio = ctx.audio(speaker)
+    if getattr(stt, "speech_only", False):
+        return await _transcribe_speech(stt, audio, regions, ctx.config.transcribe)
     transcript = await stt.transcribe(audio, language="en", hints=None)
     if transcript.words or not transcript.text.strip():
         return transcript, False
     words = estimate_words(transcript.text, regions, audio.duration_s)
     return transcript.model_copy(update={"words": words}), True
+
+
+async def _transcribe_speech(
+    stt: STT, audio: AudioClip, regions: list[Region], cfg: TranscribeConfig
+) -> tuple[Transcript, bool]:
+    """One request per stretch of speech, with word times moved back onto the call's clock."""
+    words: list[Word] = []
+    estimated = False
+    model = stt.name
+    chunks = speech_chunks(
+        regions, gap_s=cfg.chunk_gap_s, pad_s=cfg.chunk_pad_s, end_s=audio.duration_s
+    )
+    for chunk in chunks:
+        part = await stt.transcribe(
+            audio.slice(chunk.start_s, chunk.end_s), language="en", hints=None
+        )
+        model = part.model or model
+        if part.words:
+            words.extend(_on_call_clock(part.words, chunk))
+        elif part.text.strip():
+            inside = [r for r in regions if chunk.start_s <= r.start_s < chunk.end_s]
+            words.extend(estimate_words(part.text, inside, chunk.end_s))
+            estimated = True
+    text = " ".join(word.text for word in words)
+    return Transcript(text=text, words=words, language="en", model=model), estimated
+
+
+def _on_call_clock(words: list[Word], chunk: Region) -> list[Word]:
+    return [
+        word.model_copy(
+            update={
+                "start_s": min(chunk.end_s, chunk.start_s + word.start_s),
+                "end_s": min(chunk.end_s, chunk.start_s + word.end_s),
+            }
+        )
+        for word in words
+    ]

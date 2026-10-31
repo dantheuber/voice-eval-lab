@@ -220,7 +220,8 @@ async def test_whisper_tokens_are_joined_into_the_words_they_spell():
 @respx.mock
 async def test_whisper_word_split_across_segments_stays_one_word():
     first = {"start": 0.0, "end": 1.0, "words": [_token(" Fern", 0.0, 1.0)]}
-    second = {"start": 1.0, "end": 2.0, "words": [_token("hill", 1.0, 1.5), _token(" mail", 1.5, 2)]}
+    tokens = [_token("hill", 1.0, 1.5), _token(" mail", 1.5, 2.0)]
+    second = {"start": 1.0, "end": 2.0, "words": tokens}
     respx.post(f"{BASE}/inference").mock(
         return_value=httpx.Response(200, json={"text": "x", "segments": [first, second]})
     )

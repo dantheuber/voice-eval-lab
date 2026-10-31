@@ -20,10 +20,11 @@ from voicelab.core.models import (
     StateExpectation,
     Utterance,
     Verdict,
+    Word,
 )
 from voicelab.engine.recorder import CallRecorder
 from voicelab.eval.config import EvalConfig
-from voicelab.eval.context import EvalDeps, Skip
+from voicelab.eval.context import EvalContext, EvalDeps, EvaluatorOutput, Skip
 from voicelab.eval.evaluators.transcribe import TranscribeEvaluator
 from voicelab.eval.pipeline import (
     EvalProgress,
@@ -489,3 +490,73 @@ async def test_live_call_with_a_barge_in_is_measured_through_the_line(store):
     event = timing["barge_in"]["events"][0]
     assert event["caller_start_s"] == pytest.approx(4.0, abs=0.15)
     assert event["reaction_s"] == pytest.approx(0.3, abs=0.15)
+
+
+class ChunkHearingSTT:
+    """Hears each clip it's sent as a clip of its own, with times from that clip's start."""
+
+    name = "chunk-stt"
+    speech_only = True
+
+    def __init__(self, words_per_clip: int = 2) -> None:
+        self.words_per_clip = words_per_clip
+        self.durations: list[float] = []
+
+    async def transcribe(self, audio, *, language="en", hints=None) -> Transcript:
+        self.durations.append(audio.duration_s)
+        words = [
+            Word(text=f"w{len(self.durations)}.{i}", start_s=0.1 * i, end_s=0.1 * (i + 1))
+            for i in range(self.words_per_clip)
+        ]
+        return Transcript(text=" ".join(w.text for w in words), words=words, model="chunk-model")
+
+
+async def test_silence_sensitive_stt_hears_speech_only_and_keeps_call_times(store):
+    artifact, paths = write_call(
+        store,
+        bot=[(2.0, 3.0), (3.4, 4.0), (20.0, 21.0)],
+        duration_s=30.0,
+    )
+    stt = ChunkHearingSTT()
+    ctx = EvalContext(artifact, paths, EvalDeps(stt=stt))
+    out = EvaluatorOutput()
+
+    await TranscribeEvaluator().run(ctx, out)
+
+    bot = ctx.transcripts[Speaker.BOT]
+    # The caller channel was silent, so only the bot's two turns reached the model.
+    assert len(stt.durations) == 2
+    assert sum(stt.durations) < 5.0
+    assert bot.words[0].start_s == pytest.approx(1.8 + 0.0, abs=0.05)
+    assert bot.words[2].start_s == pytest.approx(19.8, abs=0.05)
+    assert bot.text == " ".join(w.text for w in bot.words)
+    assert bot.model == "chunk-model"
+
+
+async def test_silence_sensitive_stt_with_no_word_times_is_estimated_per_chunk(store):
+    class TextOnly(ChunkHearingSTT):
+        async def transcribe(self, audio, *, language="en", hints=None) -> Transcript:
+            self.durations.append(audio.duration_s)
+            return Transcript(text="alpha beta", model="text-only")
+
+    artifact, paths = write_call(store, bot=[(1.0, 2.0), (20.0, 21.0)], duration_s=30.0)
+    ctx = EvalContext(artifact, paths, EvalDeps(stt=TextOnly()))
+    out = EvaluatorOutput()
+
+    await TranscribeEvaluator().run(ctx, out)
+
+    words = ctx.transcripts[Speaker.BOT].words
+    assert [w.text for w in words] == ["alpha", "beta", "alpha", "beta"]
+    assert 0.8 <= words[0].start_s and words[1].end_s <= 2.2
+    assert 19.8 <= words[2].start_s and words[3].end_s <= 21.2
+    assert out.metrics["estimated_word_timing"] == ["bot"]
+
+
+async def test_whole_channel_stt_still_gets_the_whole_channel(store):
+    artifact, paths = write_call(store, bot=[(1.0, 2.0), (20.0, 21.0)], duration_s=30.0)
+    stt = FakeSTT(bot=make_transcript("hello there"))
+    ctx = EvalContext(artifact, paths, EvalDeps(stt=stt))
+
+    await TranscribeEvaluator().run(ctx, EvaluatorOutput())
+
+    assert [c["duration_s"] for c in stt.calls] == [30.0]

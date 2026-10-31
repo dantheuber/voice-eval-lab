@@ -189,6 +189,25 @@ def test_transcript_renders_turns_in_time_order():
     ]
 
 
+def test_overlapping_speech_stays_in_whole_turns():
+    """Word times from two channels interleave when both talk, and that must not shred a turn."""
+    text = render_transcript(
+        {
+            Speaker.CALLER: transcript(("wait I need to know the price", 1.0)),
+            Speaker.BOT: transcript(("one moment let me check that", 1.1)),
+        }
+    )
+    assert text.splitlines() == [
+        "[1.0s] CALLER: wait I need to know the price",
+        "[1.1s] BOT: one moment let me check that",
+    ]
+
+
+def test_a_long_gap_on_one_channel_starts_a_new_line():
+    text = render_transcript({Speaker.BOT: transcript(("one moment", 0.0), ("all done", 9.0))})
+    assert text.splitlines() == ["[0.0s] BOT: one moment", "[9.0s] BOT: all done"]
+
+
 def test_words_are_estimated_across_speech_regions():
     words = estimate_words("aaaa bbbb cccc dddd", [Region(1, 2), Region(5, 6)], 10.0)
     assert [w.text for w in words] == ["aaaa", "bbbb", "cccc", "dddd"]

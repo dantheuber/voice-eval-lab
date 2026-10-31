@@ -124,7 +124,12 @@ class WhisperCppSTT:
 
     Pass no prompt, ever: a prompt biases what Whisper hears, and eval has to catch mispronounced
     words, not have them corrected away.
+
+    `speech_only` asks eval to send stretches of speech rather than a whole channel, because
+    Whisper loops on invented text across long silences.
     """
+
+    speech_only = True
 
     def __init__(
         self, base_url: str, *, name: str = "whisper.cpp", timeout_s: float = 900.0
