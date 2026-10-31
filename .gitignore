@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+web/dist/
+*.tsbuildinfo
+
+# Runtime data (recordings, databases, downloaded binaries and models)
+data/
+.runtime/
+models/
+*.gguf
+*.onnx
+*.safetensors
+*.sqlite
+*.sqlite3
+*.db
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+certs/
+
+# Editor and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Benchmark scratch audio
+docs/research/artifacts/*.wav
