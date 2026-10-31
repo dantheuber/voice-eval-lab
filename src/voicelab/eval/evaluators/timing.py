@@ -1,7 +1,13 @@
-"""Conversation timing, measured from the audio itself and cross-checked against the timeline."""
+"""Conversation timing, measured from the audio itself and cross-checked against the timeline.
+
+Merging a speaker's regions into turns smooths over pauses inside a sentence, but a pause someone
+else spoke in is where a turn ended, so turns never merge across the other side. Interruptions are
+measured against the raw speech regions: a merged turn would invent speech during the pause.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from statistics import median
 from typing import Any
@@ -48,15 +54,27 @@ class BargeIn:
         return self.bot_end_s - self.caller_start_s
 
 
-def merge_turns(regions: list[Region], gap_s: float) -> list[Region]:
-    """Join regions separated by less than `gap_s` into one turn."""
+@dataclass(frozen=True)
+class Unanswered:
+    caller_end_s: float
+    waited_s: float  # silence from the bot until the caller spoke again or the call ended
+
+
+def merge_turns(regions: list[Region], gap_s: float, other: Sequence[Region] = ()) -> list[Region]:
+    """Join regions less than `gap_s` apart into one turn, unless `other` spoke in between."""
     turns: list[Region] = []
     for region in regions:
-        if turns and region.start_s - turns[-1].end_s < gap_s:
+        if turns and _same_turn(turns[-1], region, gap_s, other):
             turns[-1] = Region(turns[-1].start_s, region.end_s)
         else:
             turns.append(region)
     return turns
+
+
+def _same_turn(first: Region, second: Region, gap_s: float, other: Sequence[Region]) -> bool:
+    if second.start_s - first.end_s >= gap_s:
+        return False
+    return not any(o.start_s < second.start_s and o.end_s > first.end_s for o in other)
 
 
 def total_speech(regions: list[Region]) -> float:
@@ -74,15 +92,22 @@ def find_overlaps(caller: list[Region], bot: list[Region], *, min_s: float = 0.0
     return sorted(overlaps, key=lambda o: o.start_s)
 
 
-def find_silences(caller: list[Region], bot: list[Region]) -> list[Region]:
-    """Stretches where nobody speaks, between the first and last speech of the call."""
+def find_silences(caller: list[Region], bot: list[Region], *, end_s: float) -> list[Region]:
+    """Stretches where nobody speaks, from the first speech through the end of the call.
+
+    The tail counts, because a bot that never answers leaves nothing but tail.
+    """
     speech = sorted([*caller, *bot], key=lambda r: r.start_s)
+    if not speech:
+        return [Region(0.0, end_s)] if end_s > 0 else []
     silences = []
-    reached = speech[0].end_s if speech else 0.0
+    reached = speech[0].end_s
     for region in speech[1:]:
         if region.start_s > reached:
             silences.append(Region(reached, region.start_s))
         reached = max(reached, region.end_s)
+    if end_s > reached:
+        silences.append(Region(reached, end_s))
     return silences
 
 
@@ -115,15 +140,29 @@ def response_latencies(caller_turns: list[Region], bot_turns: list[Region]) -> l
     return latencies
 
 
+def unanswered_turns(
+    caller_turns: list[Region], bot_regions: list[Region], *, end_s: float
+) -> list[Unanswered]:
+    """Caller turns the bot said nothing after, before the caller spoke again or the call ended."""
+    items = []
+    for i, turn in enumerate(caller_turns):
+        until = caller_turns[i + 1].start_s if i + 1 < len(caller_turns) else end_s
+        if not any(b.start_s < until and b.end_s > turn.end_s for b in bot_regions):
+            items.append(Unanswered(turn.end_s, max(0.0, until - turn.end_s)))
+    return items
+
+
 def find_barge_ins(
-    caller_turns: list[Region], bot_turns: list[Region], *, min_overlap_s: float
+    caller_regions: list[Region], bot_regions: list[Region], *, min_overlap_s: float
 ) -> list[BargeIn]:
-    """Moments the caller started over the bot, with when the bot's audio actually stopped."""
+    """Each stretch of bot speech the caller cut into, and when that speech actually stopped."""
     barge_ins = []
-    for turn in caller_turns:
-        bot = next((b for b in bot_turns if b.start_s < turn.start_s < b.end_s), None)
-        if bot is not None and min(bot.end_s, turn.end_s) - turn.start_s >= min_overlap_s:
-            barge_ins.append(BargeIn(turn.start_s, bot.end_s))
+    for bot in bot_regions:
+        for caller in caller_regions:
+            cuts_in = bot.start_s < caller.start_s < bot.end_s
+            if cuts_in and min(bot.end_s, caller.end_s) - caller.start_s >= min_overlap_s:
+                barge_ins.append(BargeIn(caller.start_s, bot.end_s))
+                break
     return barge_ins
 
 
@@ -144,12 +183,12 @@ class TimingEvaluator:
         caller = ctx.regions(Speaker.CALLER)
         bot = ctx.regions(Speaker.BOT)
         duration = ctx.artifact.duration_s or ctx.audio(Speaker.BOT).duration_s
-        caller_turns = merge_turns(caller, cfg.turn_gap_s)
-        bot_turns = merge_turns(bot, cfg.turn_gap_s)
+        caller_turns = merge_turns(caller, cfg.turn_gap_s, bot)
+        bot_turns = merge_turns(bot, cfg.turn_gap_s, caller)
         real = ctx.artifact.timing_is_real
         inferred = ctx.channels_inferred
 
-        silences = find_silences(caller, bot)
+        silences = find_silences(caller, bot, end_s=duration)
         out.metrics.update(_talk_metrics(caller, bot, duration))
         out.metrics["dead_air"] = {
             "total_s": _rounded(total_speech(silences)),
@@ -159,6 +198,11 @@ class TimingEvaluator:
         }
         monologue = _monologue_metrics(caller, bot, cfg.monologue_gap_s)
         out.metrics["longest_monologue"] = monologue
+        unanswered = unanswered_turns(caller_turns, bot, end_s=duration)
+        out.metrics["unanswered_turns"] = [
+            {"caller_end_s": _rounded(u.caller_end_s), "waited_s": _rounded(u.waited_s)}
+            for u in unanswered
+        ]
 
         skipped: dict[str, str] = {}
         if inferred:
@@ -179,13 +223,14 @@ class TimingEvaluator:
             out.metrics["response_latency"] = _latency_metrics(ctx, latencies)
             out.findings.extend(_dead_air_findings(silences, cfg))
             out.findings.extend(_slow_response_findings(latencies, cfg))
+            out.findings.extend(_unanswered_findings(unanswered, cfg))
         else:
             skipped["latency"] = _SYNTHETIC_REASON
             skipped["barge_in"] = _SYNTHETIC_REASON
             out.metrics["response_latency"] = None
 
         if real and not inferred:
-            barge_ins = find_barge_ins(caller_turns, bot_turns, min_overlap_s=cfg.min_overlap_s)
+            barge_ins = find_barge_ins(caller, bot, min_overlap_s=cfg.min_overlap_s)
             out.metrics["barge_in"] = _barge_in_metrics(ctx, barge_ins)
             out.findings.extend(_slow_barge_in_findings(barge_ins, cfg))
             out.findings.extend(_talk_over_findings(caller_turns, bot_turns, cfg))
@@ -295,6 +340,30 @@ def _slow_response_findings(latencies: list[Latency], cfg: TimingConfig) -> list
         )
         for item in latencies
         if item.latency_s >= cfg.slow_response_s
+    ]
+
+
+def _unanswered_findings(items: list[Unanswered], cfg: TimingConfig) -> list[Finding]:
+    return [
+        Finding(
+            evaluator="timing",
+            category="unanswered_turn",
+            severity=_severity(item.waited_s, cfg.slow_response_major_s),
+            title=f"Bot left the caller unanswered for {item.waited_s:.1f} s",
+            detail=(
+                f"The caller stopped at {item.caller_end_s:.1f} s and the bot said nothing "
+                "before the caller spoke again or the call ended."
+            ),
+            evidence=[
+                Evidence(
+                    speaker=Speaker.BOT,
+                    start_s=item.caller_end_s,
+                    end_s=item.caller_end_s + item.waited_s,
+                )
+            ],
+        )
+        for item in items
+        if item.waited_s >= cfg.slow_response_s
     ]
 
 
