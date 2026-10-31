@@ -1,0 +1,55 @@
+# An AWS stack, as an example to copy. Nothing in it has ever run against live AWS: see
+# src/voicelab/providers/adapters/bedrock.py. Needs `uv sync --extra aws` and AWS credentials.
+#
+# Check before use:
+#   - amazon.nova-2-5-sonic is the requested id, and no AWS document found names it. The documented
+#     Sonic ids are amazon.nova-sonic-v1:0 and amazon.nova-2-sonic-v1:0.
+#   - Transcribe fills both STT roles, so stt_eval is not independent of stt_live as the brief
+#     wants. No custom vocabulary is set, and eval never passes hints.
+#   - Transcribe streams at real time, so eval of a long call takes as long as the call.
+id: bedrock-example
+label: AWS Bedrock (example)
+description: Claude on Bedrock, Polly, Transcribe, and Nova Sonic. Untested against live AWS.
+live_capable: false
+untested: true
+roles:
+  stt_live: {type: transcribe, region: us-east-1, name: transcribe-live}
+  stt_eval: {type: transcribe, region: us-east-1, name: transcribe-eval}
+  tts_bot: {type: polly, region: us-east-1, name: polly-bot, voice_id: Joanna}
+  tts_caller:
+    type: polly
+    region: us-east-1
+    name: polly-caller
+    voice_map:
+      default_female_1: Ruth
+      default_female_2: Kendra
+      default_female_3: Salli
+      default_female_4: Ivy
+      default_female_5: Kimberly
+      default_male_1: Matthew
+      default_male_2: Joey
+      default_male_3: Stephen
+      default_male_4: Justin
+  # These Claude models reject temperature and think on every request, and the thinking counts
+  # against the token limit, so the small limits the bots ask for need a floor.
+  llm_support:
+    type: bedrock_converse
+    model: global.anthropic.claude-haiku-5-5
+    region: us-east-1
+    send_temperature: false
+    min_max_tokens: 2000
+    effort: low
+  llm_caller:
+    type: bedrock_converse
+    model: global.anthropic.claude-haiku-5-5
+    region: us-east-1
+    send_temperature: false
+    min_max_tokens: 2000
+    effort: low
+  llm_judge:
+    type: bedrock_converse
+    model: global.anthropic.claude-opus-5-5
+    region: us-east-1
+    send_temperature: false
+    min_max_tokens: 8000
+  realtime: {type: nova_sonic, model: amazon.nova-2-5-sonic, region: us-east-1}

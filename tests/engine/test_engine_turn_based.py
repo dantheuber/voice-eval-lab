@@ -114,7 +114,7 @@ async def test_a_fake_call_runs_end_to_end_and_writes_its_artifact(store):
     assert store.read_artifact(artifact.id).status == CallStatus.EVALUATING
 
 
-async def test_a_full_call_then_evaluation_passes_on_a_clean_line(store):
+async def test_a_full_call_then_evaluation_clears_every_criterion_on_a_clean_line(store):
     chatty, double_charge = real_seed()
     built = stack()
     artifact = await run_bot_call(
@@ -130,12 +130,13 @@ async def test_a_full_call_then_evaluation_passes_on_a_clean_line(store):
         EvalDeps(stt=built.stt_eval, judge=built.llm_judge),
     )
 
-    assert result.verdict == Verdict.PASS, result.summary
+    # Tones aren't voices, so delivery checks may flag them for review. They can't fail a call.
+    assert result.verdict in (Verdict.PASS, Verdict.NEEDS_REVIEW), result.summary
+    assert all(finding.advisory for finding in result.findings)
     assert {run.status for run in result.evaluators} <= {"ok", "skipped"}
-    states = [c for c in result.criteria if c.kind == "state"]
-    assert states and all(c.status == "pass" for c in states)
-    timing = next(run for run in result.evaluators if run.name == "timing")
-    assert "latency" in timing.metrics.get("not_checked", timing.reason) or timing.status
+    assert result.criteria and all(c.status == "pass" for c in result.criteria)
+    assert any(c.kind == "state" for c in result.criteria)
+    assert any(c.kind == "beat" for c in result.criteria)
 
 
 async def test_every_utterance_says_what_was_meant_played_and_heard(store):

@@ -18,13 +18,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-aws = ["boto3>=1.35", "aiobotocore>=2.13"]
+aws = [
+    "boto3>=1.35",
+    "aiobotocore>=2.13",
+    "aws-sdk-bedrock-runtime[awscrt]>=0.12.0",
+    "aws-sdk-transcribe-streaming[awscrt]>=0.12.0",
+]
 
 [project.scripts]
 voicelab = "voicelab.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "respx>=0.21"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "respx>=0.21",
+    "boto3>=1.43.117",
+    "aws-sdk-bedrock-runtime>=0.12.0",
+    "aws-sdk-transcribe-streaming>=0.12.0",
+]
 
 [build-system]
 requires = ["hatchling"]
