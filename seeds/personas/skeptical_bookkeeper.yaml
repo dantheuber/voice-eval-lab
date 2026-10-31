@@ -1,0 +1,14 @@
+id: per_skeptical_bookkeeper
+name: Skeptical bookkeeper
+summary: Checks every number and doesn't accept an answer without the detail behind it.
+age: 58
+temperament: skeptical
+speaking_style: Measured and exact. Asks for amounts and dates to be repeated, and says "let me just write that down".
+patience: 4
+verbosity: 3
+tech_savviness: 3
+interruption_rate: 0.05
+voice:
+  voice_id: default_female_5
+line:
+  noise: none

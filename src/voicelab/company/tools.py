@@ -735,9 +735,9 @@ def create_ticket(
 
 @_tool(
     "End the call after saying goodbye.",
-    required={"reason": (str, "Why the call is ending")},
+    optional={"reason": (str, "Why the call is ending")},
 )
-def end_call(db: CompanyDb, reason: str) -> dict[str, Any]:
+def end_call(db: CompanyDb, reason: str = "") -> dict[str, Any]:
     return {"ended": True, "reason": reason}
 
 

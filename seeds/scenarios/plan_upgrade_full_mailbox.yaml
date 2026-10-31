@@ -1,0 +1,37 @@
+id: scn_plan_upgrade_full_mailbox
+title: Plan upgrade from a full mailbox
+description: A full mailbox is bouncing mail. The bot should find the cause and offer the right upgrade, not guess.
+goal: Clients say their emails to you are bouncing, and you need it fixed today.
+customer_id: cus_1010
+facts:
+  name: Aisha Rahman
+  phone: (212) 555-0110
+  mailbox: aisha@rahmanlaw.example
+  billing_zip: "10027"
+  pin: "9135"
+  will_not_delete_mail: You need to keep every message for legal records
+beats:
+  - id: report_bounces
+    instruction: Say clients are telling you email to you is bouncing.
+    checkpoint: The caller reported bounced mail.
+  - id: identify
+    instruction: Give your mailbox address, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: refuse_cleanup
+    instruction: If told to delete old mail, say you can't because you have to keep it all, and ask what else you can do.
+    required: false
+    checkpoint: The caller ruled out deleting mail.
+  - id: choose_upgrade
+    instruction: Ask what the next plan up costs and how much space it gives, then say yes.
+    checkpoint: The caller agreed to upgrade.
+must:
+  - {id: verify_first, text: Verify the caller before sharing mailbox details., severity: critical}
+  - {id: finds_cause, text: Say the mailbox is full at 5 GB., severity: major}
+  - {id: quotes_plan, text: "Quote Email Plus at $12.00 a month with 25 GB before changing the plan.", severity: major}
+must_not:
+  - {id: change_without_yes, text: Change the plan before the caller agrees., severity: critical}
+expected_state:
+  - {id: plan_changed, table: subscriptions, op: changed, where: {id: sub_1010}, changes: {plan_id: email_plus}, description: The customer is on Email Plus.}
+  - {id: quota_raised, table: mailboxes, op: changed, where: {address: aisha@rahmanlaw.example}, changes: {quota_mb: 25600}, description: The mailbox has the new quota.}
+pronunciation_watch: [aisha@rahmanlaw.example, $12.00, 5 GB, 25 GB]
+tags: [email, plan, sales]

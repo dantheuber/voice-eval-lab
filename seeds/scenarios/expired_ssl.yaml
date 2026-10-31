@@ -1,0 +1,33 @@
+id: scn_expired_ssl
+title: Expired SSL certificate
+description: Browsers show a security warning because the certificate expired. The bot should renew it at no charge.
+goal: Your cafe website shows a scary security warning and customers are calling you about it.
+customer_id: cus_1008
+facts:
+  name: Sofia Marino
+  phone: (312) 555-0108
+  domain: marinocafe.example
+  billing_zip: "60614"
+  pin: "8073"
+  warning_text: Your connection is not private
+beats:
+  - id: describe_warning
+    instruction: Say your site shows a warning saying your connection is not private.
+    checkpoint: The caller described the browser warning.
+  - id: identify
+    instruction: Give your domain, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: approve_renewal
+    instruction: Ask if it will cost anything, then say yes to the renewal.
+    checkpoint: The caller approved the SSL renewal.
+must:
+  - {id: verify_first, text: Verify the caller before making changes., severity: critical}
+  - {id: finds_cause, text: Explain that the SSL certificate expired on October 21., severity: major}
+  - {id: says_free, text: Say that the renewal is free with the website plan., severity: major}
+must_not:
+  - {id: charge, text: Charge the customer for the renewal., severity: critical}
+expected_state:
+  - {id: ssl_renewed, table: websites, op: changed, where: {domain: marinocafe.example}, changes: {ssl_expires_on: "2027-10-30"}, description: The certificate runs for another year.}
+  - {id: no_charge, table: invoices, op: no_change, where: {customer_id: cus_1008}, description: No invoice was created or changed.}
+pronunciation_watch: [SSL, marinocafe.example]
+tags: [website, ssl]

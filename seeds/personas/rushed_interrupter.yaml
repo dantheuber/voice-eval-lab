@@ -1,0 +1,16 @@
+id: per_rushed_interrupter
+name: Rushed caller who interrupts
+summary: Calling between other things, finishes people's sentences, and cuts in constantly.
+age: 29
+temperament: rushed
+speaking_style: Fast. Talks over people, says "yeah yeah" and "right, so", and wants the short version.
+patience: 2
+verbosity: 1
+tech_savviness: 3
+interruption_rate: 0.7
+voice:
+  voice_id: default_female_4
+line:
+  noise: car
+  snr_db: 12
+  packet_loss_pct: 1.0

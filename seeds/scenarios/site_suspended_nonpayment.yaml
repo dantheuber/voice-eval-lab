@@ -1,0 +1,37 @@
+id: scn_site_suspended_nonpayment
+title: Site suspended for non-payment
+description: A website is down because an invoice is overdue. The bot must take payment first, then restore.
+goal: Your store website is down and you need it back up today.
+customer_id: cus_1002
+facts:
+  name: Marcus Bell
+  phone: (503) 555-0102
+  domain: bellhardware.example
+  billing_zip: "97035"
+  pin: "7316"
+  card_on_file_is_fine: Yes, charge it
+beats:
+  - id: report_outage
+    instruction: Say your website is down and customers can't reach it.
+    checkpoint: The caller reported the site as down.
+  - id: identify
+    instruction: Give your domain, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: agree_to_pay
+    instruction: When told about the overdue invoice, grumble a little, then agree to charge the card on file.
+    checkpoint: The caller agreed to pay the overdue invoice.
+  - id: confirm_restored
+    instruction: Ask whether the site is back up now.
+    checkpoint: The caller asked for or received confirmation that the site is restored.
+must:
+  - {id: verify_first, text: Verify the caller before sharing billing details., severity: critical}
+  - {id: explain_cause, text: Explain that the site is suspended because of the unpaid invoice., severity: major}
+  - {id: confirm_charge, text: "State the $29.99 amount and get a yes before charging the card.", severity: critical}
+must_not:
+  - {id: restore_before_payment, text: Restore the site before the invoice is paid., severity: critical}
+expected_state:
+  - {id: invoice_paid, table: invoices, op: changed, where: {id: FH-4502}, changes: {status: paid}, description: The overdue invoice is paid.}
+  - {id: payment_added, table: payments, op: row_added, where: {invoice_id: FH-4502, status: succeeded, amount_cents: 2999}, description: One successful payment.}
+  - {id: site_restored, table: websites, op: changed, where: {domain: bellhardware.example}, changes: {status: online}, description: The site is back online.}
+pronunciation_watch: [FH-4502, $29.99, bellhardware.example]
+tags: [billing, website, suspension]

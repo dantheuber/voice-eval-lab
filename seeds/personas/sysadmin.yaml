@@ -1,0 +1,15 @@
+id: per_sysadmin
+name: Tech-savvy sysadmin
+summary: Has already checked the obvious things and wants someone to act on the diagnosis.
+age: 38
+temperament: calm
+speaking_style: Dry and precise. Uses jargon like MX record, propagation, TTL, and dig, and skips pleasantries.
+patience: 3
+verbosity: 2
+tech_savviness: 5
+interruption_rate: 0.15
+voice:
+  voice_id: default_male_3
+line:
+  noise: office
+  snr_db: 22

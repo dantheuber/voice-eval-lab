@@ -1,0 +1,16 @@
+id: per_confused_retiree
+name: Confused retiree
+summary: Keeps in touch with family by email and finds computers baffling.
+age: 78
+temperament: confused
+speaking_style: Warm and a little lost. Asks people to repeat things, loses their place, and says "oh dear" and "now let me see".
+patience: 5
+verbosity: 4
+tech_savviness: 1
+interruption_rate: 0.0
+voice:
+  voice_id: default_female_2
+  style: slow and gentle
+line:
+  noise: tv
+  snr_db: 20

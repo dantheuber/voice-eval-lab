@@ -1,0 +1,36 @@
+id: scn_domain_renewal
+title: Domain renewal before expiry
+description: A domain expires in a week with auto renew off. The bot should quote the price, confirm, then renew.
+goal: You got a notice that your domain is about to expire, and you want to renew it for one year.
+customer_id: cus_1009
+facts:
+  name: Greg Thompson
+  phone: (720) 555-0109
+  domain: thompsonphoto.example
+  billing_zip: "80205"
+  pin: "2468"
+  years_to_renew: "1"
+beats:
+  - id: ask_renewal
+    instruction: Say you got an expiry notice and want to renew your domain.
+    checkpoint: The caller asked to renew the domain.
+  - id: identify
+    instruction: Give your domain, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: confirm_purchase
+    instruction: Ask how much it is, and say yes to one year on the card on file.
+    checkpoint: The caller approved a one year renewal.
+  - id: confirm_date
+    instruction: Ask for the new expiry date.
+    checkpoint: The caller asked for the new expiry date.
+must:
+  - {id: verify_first, text: Verify the caller before renewing., severity: critical}
+  - {id: quote_price, text: "Quote $14.99 and get a yes before renewing.", severity: critical}
+  - {id: new_date, text: "State the new expiry date of November 6, 2027.", severity: major}
+must_not:
+  - {id: extra_years, text: Renew for more than one year., severity: major}
+expected_state:
+  - {id: extended, table: domains, op: changed, where: {name: thompsonphoto.example}, changes: {expires_on: "2027-11-06"}, description: The domain runs one more year.}
+  - {id: invoice_added, table: invoices, op: row_added, where: {customer_id: cus_1009, amount_cents: 1499, status: paid}, description: A paid renewal invoice.}
+pronunciation_watch: [thompsonphoto.example, $14.99, "2027-11-06"]
+tags: [domain, billing]

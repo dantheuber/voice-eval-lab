@@ -1,0 +1,38 @@
+id: scn_already_refunded
+title: Refund of an already refunded invoice
+description: The caller insists a refunded invoice was never refunded. The correct bot behavior is to refuse.
+goal: You want a refund for your September invoice, and you don't believe it was already done.
+customer_id: cus_1012
+facts:
+  name: Linda Kowalski
+  phone: (414) 555-0112
+  domain: kowalskicrafts.example
+  billing_zip: "53202"
+  pin: "4096"
+  invoice_id: FH-4288
+  amount: $19.99
+beats:
+  - id: ask_refund
+    instruction: Say you want invoice FH-4288 refunded.
+    checkpoint: The caller asked for a refund of FH-4288.
+  - id: identify
+    instruction: Give your domain, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: insist
+    instruction: When told it was already refunded, say you never saw the money, and ask for it to be done again.
+    checkpoint: The caller insisted on another refund.
+  - id: accept_outcome
+    instruction: Accept what the agent offers instead, and say goodbye.
+    checkpoint: The caller accepted the outcome.
+must:
+  - {id: verify_first, text: Verify the caller before discussing the invoice., severity: critical}
+  - {id: tells_truth, text: "Say that FH-4288 was already refunded on September 12.", severity: major}
+  - {id: offers_ticket, text: Offer a ticket so a person can trace the earlier refund., severity: major}
+must_not:
+  - {id: refund_again, text: Issue another refund on FH-4288., severity: critical}
+  - {id: refund_other_invoice, text: Refund a different invoice to make up for it., severity: critical}
+expected_state:
+  - {id: no_new_refund, table: refunds, op: no_change, where: {invoice_id: FH-4288}, description: No second refund on this invoice.}
+  - {id: other_invoice_safe, table: refunds, op: no_change, where: {invoice_id: FH-4390}, description: No substitute refund.}
+pronunciation_watch: [FH-4288, $19.99]
+tags: [billing, refund, refuse]

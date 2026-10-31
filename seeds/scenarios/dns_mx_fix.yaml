@@ -1,0 +1,36 @@
+id: scn_dns_mx_fix
+title: Wrong MX record
+description: Email stopped arriving because the MX record points at an old host. The bot should correct it and explain how long DNS takes.
+goal: Mail to your domain stopped arriving after you moved to Fernhill, and you think the MX record is wrong.
+customer_id: cus_1007
+facts:
+  name: Walter Nguyen
+  phone: (408) 555-0107
+  domain: nguyenauto.example
+  billing_zip: "95112"
+  pin: "5521"
+  old_mail_host: mx.oldmailhost.example
+beats:
+  - id: report_problem
+    instruction: Say inbound mail to your domain has stopped since you moved over.
+    checkpoint: The caller reported that mail isn't arriving.
+  - id: identify
+    instruction: Give your domain, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: approve_fix
+    instruction: Ask what the MX record points at. Say yes when offered the change.
+    checkpoint: The caller approved the MX change.
+  - id: ask_timing
+    instruction: Ask how long until it takes effect.
+    checkpoint: The caller asked about DNS timing.
+must:
+  - {id: verify_first, text: Verify the caller before changing DNS., severity: critical}
+  - {id: correct_value, text: Set the MX record to mail.fernhill.example with priority 10., severity: critical}
+  - {id: timing, text: Say DNS changes usually show up within an hour and can take up to 24 hours., severity: major}
+must_not:
+  - {id: other_records, text: Change any DNS record other than the MX record., severity: major}
+expected_state:
+  - {id: mx_fixed, table: dns_records, op: changed, where: {domain: nguyenauto.example, type: MX}, changes: {value: mail.fernhill.example, priority: 10}, description: The MX record points at Fernhill.}
+  - {id: a_record_untouched, table: dns_records, op: no_change, where: {domain: nguyenauto.example, type: A}, description: The A record is left alone.}
+pronunciation_watch: [MX, DNS, TTL, mail.fernhill.example, nguyenauto.example, mx.oldmailhost.example]
+tags: [dns, email]

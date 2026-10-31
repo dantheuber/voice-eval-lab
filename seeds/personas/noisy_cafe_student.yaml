@@ -1,0 +1,16 @@
+id: per_noisy_cafe_student
+name: Student on a bad line in a cafe
+summary: Calling from a loud cafe on a shaky connection, easygoing but hard to hear.
+age: 22
+temperament: relaxed
+speaking_style: Casual. Says "like" and "yeah no", and sometimes asks the agent to repeat because of the noise.
+patience: 3
+verbosity: 3
+tech_savviness: 4
+interruption_rate: 0.1
+voice:
+  voice_id: default_male_4
+line:
+  noise: cafe
+  snr_db: 10
+  packet_loss_pct: 3.0

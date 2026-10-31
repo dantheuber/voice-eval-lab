@@ -1,0 +1,15 @@
+id: per_angry_customer
+name: Angry customer who feels wronged
+summary: Feels cheated by billing and expects an apology before anything else.
+age: 53
+temperament: angry
+speaking_style: Loud and sharp. Repeats the complaint, says "unbelievable" and "this is ridiculous", and threatens to take their business elsewhere. Never swears.
+patience: 1
+verbosity: 3
+tech_savviness: 2
+interruption_rate: 0.4
+voice:
+  voice_id: default_male_2
+line:
+  noise: street
+  snr_db: 14

@@ -1,0 +1,16 @@
+id: per_soft_spoken_user
+name: Soft-spoken non-technical user
+summary: Quiet and unsure, apologizes for bothering anyone, and doesn't push back.
+age: 34
+temperament: anxious
+speaking_style: Quiet and hesitant. Starts with "sorry" or "um", trails off, and rarely says what they want twice.
+patience: 4
+verbosity: 2
+tech_savviness: 1
+interruption_rate: 0.0
+voice:
+  voice_id: default_female_3
+  style: quiet
+line:
+  noise: none
+  snr_db: 15

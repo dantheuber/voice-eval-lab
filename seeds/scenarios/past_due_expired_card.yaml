@@ -1,0 +1,35 @@
+id: scn_past_due_expired_card
+title: Past due with an expired card
+description: The caller wants to pay, but the card on file is expired. The bot must not claim success.
+goal: You got a past due notice and you want to pay what you owe.
+customer_id: cus_1011
+facts:
+  name: Paul Jensen
+  phone: (612) 555-0111
+  domain: jensenplumbing.example
+  billing_zip: "55407"
+  pin: "7702"
+beats:
+  - id: ask_to_pay
+    instruction: Say you got a past due notice and want to pay it.
+    checkpoint: The caller asked to pay.
+  - id: identify
+    instruction: Give your phone or domain, then your billing zip and PIN when asked.
+    checkpoint: The caller gave identifying details.
+  - id: approve_charge
+    instruction: Say yes to charging the card on file.
+    checkpoint: The caller approved a charge.
+  - id: ask_what_now
+    instruction: When told the card failed, ask what you should do now.
+    checkpoint: The caller asked how to resolve the failed payment.
+must:
+  - {id: verify_first, text: Verify the caller before discussing the balance., severity: critical}
+  - {id: says_declined, text: Tell the caller the card on file has expired or was declined., severity: critical}
+  - {id: next_step, text: Point the caller to billing.fernhill.example to update the card., severity: major}
+must_not:
+  - {id: claims_paid, text: Say the invoice is paid., severity: critical}
+  - {id: takes_card_number, text: Ask for or accept a card number over the phone., severity: critical}
+expected_state:
+  - {id: still_unpaid, table: invoices, op: no_change, where: {id: FH-4588}, description: The invoice stays unpaid.}
+pronunciation_watch: [FH-4588, $19.99, billing.fernhill.example]
+tags: [billing, payment]

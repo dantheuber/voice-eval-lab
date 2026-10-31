@@ -1,0 +1,77 @@
+# How Fernhill's vocabulary should sound. Speech normalization reads this to build the
+# text sent to TTS, and the pronunciation evaluator reads it to know the expected spoken form.
+#
+# Terms match case-insensitively as whole words, and also as parts of hostnames and email
+# addresses. Compound domain labels are listed so TTS doesn't guess at one long word.
+
+terms:
+  # Protocols and mail
+  DNS: D N S
+  IMAP: eye map
+  SMTP: S M T P
+  POP3: pop three
+  SSL: S S L
+  TLS: T L S
+  STARTTLS: start T L S
+  HTTP: H T T P
+  HTTPS: H T T P S
+  FTP: F T P
+  SFTP: S F T P
+  SSH: S S H
+  # DNS records
+  MX: M X
+  TTL: T T L
+  CNAME: C name
+  TXT: text
+  AAAA: quad A
+  SPF: S P F
+  DKIM: dee kim
+  DMARC: dee mark
+  TLD: T L D
+  WHOIS: who is
+  # General
+  IP: I P
+  IPv4: I P v four
+  IPv6: I P v six
+  ISP: I S P
+  URL: U R L
+  WWW: W W W
+  PIN: pin
+  ID: I D
+  FAQ: F A Q
+  CDN: C D N
+  PHP: P H P
+  2FA: two factor
+  KB: kilobytes
+  MB: megabytes
+  GB: gigabytes
+  TB: terabytes
+  # Seeded names with spellings TTS tends to miss
+  Nguyen: win
+  Okafor: oh kah for
+  Castillo: cas tee yo
+  # Seeded domain labels
+  whitfieldlandscaping: whitfield landscaping
+  bellhardware: bell hardware
+  hartfamily: hart family
+  nairdesign: nair design
+  okaforconsulting: oh kah for consulting
+  castillostudio: cas tee yo studio
+  nguyenauto: win auto
+  marinocafe: marino cafe
+  thompsonphoto: thompson photo
+  rahmanlaw: rahman law
+  jensenplumbing: jensen plumbing
+  kowalskicrafts: kowalski crafts
+  oldmailhost: old mail host
+
+# singular, plural
+units:
+  KB: [kilobyte, kilobytes]
+  MB: [megabyte, megabytes]
+  GB: [gigabyte, gigabytes]
+  TB: [terabyte, terabytes]
+
+# Dotted words only count as hostnames when they end in one of these, so a typo like
+# "done.Thanks" isn't read as "done dot Thanks".
+tlds: [com, net, org, info, biz, io, co, us, uk, ca, dev, app, site, online, store, shop, tech, example]
