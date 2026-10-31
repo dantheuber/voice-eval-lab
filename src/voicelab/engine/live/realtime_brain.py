@@ -83,14 +83,20 @@ class RealtimeBrain(BotBrain):
         return words_played([(self._text, self._generated_s)], self.ledger.played_s)
 
     async def on_start(self) -> None:
-        self.session = await self.voice.connect(
-            instructions=self.instructions, tools=self.dispatcher.tools
-        )
+        try:
+            self.session = await self.voice.connect(
+                instructions=self.instructions, tools=self.dispatcher.tools
+            )
+        except Exception as failure:  # a busy server is the usual cause: one session per process
+            await self.fail(f"realtime failed to connect: {failure!r}")
+            return
         self._reader = self.create_task(self._read_events())
         self._sender = self.create_task(self._send_audio())
 
     async def greet(self) -> None:
         """The opening line is fixed, so a call never starts with a model failure."""
+        if self.session is None:
+            return
         self.begin_turn()
         self.turn_open = True
         self._text = GREETING

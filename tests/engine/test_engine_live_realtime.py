@@ -188,6 +188,16 @@ async def test_a_barge_in_tells_the_session_how_much_was_played(store):
     assert barges
 
 
+async def test_a_realtime_server_that_refuses_the_connection_fails_the_call(store):
+    class Busy(ScriptedVoice):
+        async def connect(self, *, instructions, tools, voice_id=None):
+            raise RuntimeError("every slot is busy")
+
+    artifact = await run(store, Busy())
+
+    assert artifact.status == CallStatus.FAILED and "every slot is busy" in artifact.error
+
+
 async def test_an_error_from_the_model_fails_the_call(store):
     voice = ScriptedVoice([RealtimeEvent(type="error", text="context full")])
 
