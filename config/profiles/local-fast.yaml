@@ -8,7 +8,7 @@ label: "Local: fastest cascade"
 description: "Parakeet, LFM3-1.7B, Phonon. 681 ms plain turn and 1.1 s tool turn, but 9 of 12 tool sessions, and Parakeet can loop on repeated digits."
 live_capable: true
 roles:
-  stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18101", name: parakeet-tdt-0.6b-v3, trust_confidence: false}
+  stt_live: {type: http_transcriptions, base_url: "http://127.0.0.1:18108", name: parakeet-tdt-0.6b-v3, trust_confidence: false}
   # Whisper, not the live STT: Parakeet reports confidence 1.0 on every word, Qwen3-ASR reports none,
   # and pronunciation checks need real word probabilities from a separate model family.
   stt_eval: {type: whisper_cpp, base_url: "http://127.0.0.1:18104", name: whisper-large-v3-q5}
@@ -18,8 +18,11 @@ roles:
   llm_caller: {type: openai_compat, base_url: "http://127.0.0.1:18102/v1", name: lfm3-1.7b-caller, timeout_s: 120}
   llm_judge: {type: openai_compat, base_url: "http://127.0.0.1:18105/v1", name: qwen3.8-27b, timeout_s: 600}
 services:
+  # Its own port, not the 18101 the other profiles' STT uses. nemo-speech binds without
+  # SO_REUSEADDR, and llama-server's ports are nearly always in TIME_WAIT from health checks, so
+  # taking one over sat "could not bind" for a minute on every swap to this profile.
   - name: parakeet
-    port: 18101
+    port: 18108
     startup_timeout_s: 120
     env: {LD_LIBRARY_PATH: .runtime/nemo/nemo-speech-0.3.0-linux-x86_64-vulkan/lib}
     command:
@@ -27,7 +30,7 @@ services:
       - "serve"
       - "--no-ui"
       - "--port"
-      - "18101"
+      - "18108"
       - "--asr-model"
       - ".runtime/models/nvidia__parakeet/parakeet-tdt-0.6b-v3.q8_0.gguf"
       - "--device"
