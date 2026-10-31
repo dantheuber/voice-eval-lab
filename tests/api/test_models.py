@@ -265,6 +265,18 @@ def test_aws_without_credentials(client, monkeypatch, tmp_path):
     }
 
 
+def test_aws_named_profile_nobody_selected_is_not_credentials(client, monkeypatch, tmp_path):
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION"):
+        monkeypatch.delenv(name, raising=False)
+    credentials = tmp_path / "credentials"
+    credentials.write_text("[spike]\naws_access_key_id = x\naws_secret_access_key = y\n")
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(credentials))
+    assert client.get("/api/aws").json()["credentials"] == "not_found"
+
+    credentials.write_text("[default]\naws_access_key_id = x\naws_secret_access_key = y\n")
+    assert client.get("/api/aws").json()["credentials"] == "found"
+
+
 def test_aws_test_answers(client):
     body = client.post("/api/aws/test").json()
     assert body["ok"] is False

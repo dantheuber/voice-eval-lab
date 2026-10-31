@@ -54,6 +54,9 @@ def _credentials_file() -> Path:
 
 
 def _has_credentials() -> bool:
+    """Whether boto3 would find any. A named profile in the file is not used unless AWS_PROFILE
+    selects it, so it doesn't count. boto3's own chain would also ask the instance metadata
+    service, which costs a timeout on every settings page."""
     if os.environ.get("AWS_ACCESS_KEY_ID") or os.environ.get("AWS_PROFILE"):
         return True
     parser = configparser.ConfigParser()
@@ -61,7 +64,7 @@ def _has_credentials() -> bool:
         parser.read(_credentials_file())
     except configparser.Error:
         return False
-    return bool(parser.sections())
+    return parser.has_section("default")
 
 
 def aws_status() -> dict[str, Any]:

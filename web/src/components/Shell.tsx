@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Button, HealthDot, Icon, Kbd } from "./ui";
 import { useTheme } from "@/store/theme";
 import { useToast } from "@/store/toast";
-import { useHealth, useOverview, useProfiles, useScenarios, useRuns, usePersonas } from "@/api/queries";
+import { useHealth, useOverview, useProfiles, useScenarios, useRuns, usePersonas, useSystem } from "@/api/queries";
 import { endpoints } from "@/api/client";
 import { useHotkeys, useScope } from "@/hooks/useHotkeys";
 import { isMock } from "@/api/transport";
@@ -23,6 +23,7 @@ export function Shell({ children, crumbs, actions, keys }: { children: ReactNode
   const health = useHealth();
   const overview = useOverview();
   const profiles = useProfiles();
+  const system = useSystem();
   const nav = useNavigate();
   const [keysOpen, setKeysOpen] = useState(false);
   const [jumpOpen, setJumpOpen] = useState(false);
@@ -46,6 +47,7 @@ export function Shell({ children, crumbs, actions, keys }: { children: ReactNode
   const down = items.find((h) => h.state === "down");
   const reviewCount = overview.data?.queueTotal;
   const activeProfile = profiles.data?.activeId ?? "";
+  const lanHost = system.data?.urls.lan?.replace(/^https?:\/\//, "") ?? "";
 
   return (
     <div className="app">
@@ -70,7 +72,7 @@ export function Shell({ children, crumbs, actions, keys }: { children: ReactNode
             </Link>
             <Button variant="ghost" size="sm" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} onClick={toggle}><Icon name={theme === "dark" ? "sun" : "moon"} /></Button>
           </div>
-          <div className="row"><span>192.168.0.75:8443</span><span><Kbd>?</Kbd> keys</span></div>
+          <div className="row"><span title="Address for other devices on your network">{lanHost}</span><span><Kbd>?</Kbd> keys</span></div>
         </div>
       </nav>
       <div className="main">
