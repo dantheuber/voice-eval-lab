@@ -23,7 +23,7 @@ from pipecat.frames.frames import (
 
 from voicelab.agents.support import GREETING
 from voicelab.company.tools import ToolDispatcher
-from voicelab.core.models import ToolCallEvent
+from voicelab.core.models import RowRef, ToolCallEvent
 from voicelab.engine.live.brains import BotBrain
 from voicelab.engine.speech_ledger import Segment
 from voicelab.engine.tool_checks import tool_call_problem
@@ -216,11 +216,13 @@ class RealtimeBrain(BotBrain):
         call: ToolCall = event.tool_call
         problem = event.text or tool_call_problem(call, self.dispatcher.tools)
         at_s = self.log.now()
+        changed: list[RowRef] = []
         if problem:
             result: dict[str, Any] = {"error": problem}
         else:
             try:
                 result = self.dispatcher.dispatch(call.name, call.arguments)
+                changed = self.dispatcher.last_changes
             except Exception as failure:
                 self.log.system("tool_failed", repr(failure))
                 result = {"error": f"{call.name} failed: {failure}"}
@@ -231,6 +233,7 @@ class RealtimeBrain(BotBrain):
                 arguments=call.arguments,
                 result=result,
                 error=result.get("error"),
+                changed=changed,
             )
         )
         if call.name == "end_call" and result.get("ended"):

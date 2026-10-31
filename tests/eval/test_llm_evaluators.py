@@ -10,6 +10,7 @@ from voicelab.core.models import (
     CallArtifact,
     CallMode,
     DbChange,
+    RowRef,
     Rule,
     Scenario,
     Speaker,
@@ -546,11 +547,14 @@ async def test_one_breach_quoting_the_bot_leaves_the_fact_check_unknown(store):
 # The fact check reads what the caller was scripted to say ----------------------------------------
 
 
-def scripted_caller(*lines: str, **kwargs) -> CallArtifact:
+def scripted_caller(*lines: str, start_s: float = 0.0, **kwargs) -> CallArtifact:
     artifact = validity_call(**kwargs)
     artifact.timeline = [
         Utterance(
-            speaker=Speaker.CALLER, start_s=float(i * 10), end_s=i * 10 + 5.0, intended_text=t
+            speaker=Speaker.CALLER,
+            start_s=start_s + i * 10,
+            end_s=start_s + i * 10 + 5.0,
+            intended_text=t,
         )
         for i, t in enumerate(lines)
     ]
@@ -645,8 +649,8 @@ async def test_a_breach_that_names_something_new_stands(store, quote):
 
 
 async def test_repeating_a_detail_the_bot_gave_is_not_a_breach(store):
-    """BOT_SAID has "forty nine dollars", which isn't on the sheet."""
-    artifact = scripted_caller("forty nine dollars, unbelievable", facts=SHEET)
+    """BOT_SAID has "forty nine dollars" at 10 s, which isn't on the sheet."""
+    artifact = scripted_caller("forty nine dollars, unbelievable", start_s=20.0, facts=SHEET)
     judge = beat_judge({}, facts_reply("fail", breach("forty nine dollars")))
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
     assert by_id(out, FACTS_CRITERION_ID).status == "pass"
@@ -768,7 +772,14 @@ def refund_call(*changes: DbChange, **fields) -> CallArtifact:
         mode=CallMode.LIVE_BOTS,
         scenario_snapshot=rules,
         db_changes=list(changes),
-        timeline=[ToolCallEvent(at_s=117.5, name="issue_refund", result={"refund_id": "rfd_1"})],
+        timeline=[
+            ToolCallEvent(
+                at_s=117.5,
+                name="issue_refund",
+                result={"refund_id": "rfd_1"},
+                changed=[RowRef(table="refunds", key={"id": "rfd_1"})],
+            )
+        ],
     )
 
 
@@ -797,3 +808,112 @@ async def test_the_database_already_reports_that_failure_so_it_is_one_finding(st
 async def test_a_rule_the_database_shows_kept_passes(store):
     out = await run(TranscriptJudgeEvaluator(), context(store, refund_call(), FakeLLM()))
     assert by_id(out, "refund_over_limit").status == "pass"
+
+
+# What a breach has to be -------------------------------------------------------------------------
+
+
+def cut_off(intended: str, spoken: str | None) -> Utterance:
+    return Utterance(
+        speaker=Speaker.CALLER,
+        start_s=0.0,
+        end_s=5.0,
+        intended_text=intended,
+        spoken_text=spoken,
+        interrupted=True,
+    )
+
+
+async def test_words_the_caller_never_got_to_say_are_not_in_the_fact_check(store):
+    artifact = validity_call(facts=SHEET)
+    artifact.timeline = [cut_off("my name is Walter and my pin is 9999", "my name is Walter")]
+    judge = beat_judge({})
+    await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    prompt = next(p for p in judge.prompts if "keep to its fact sheet" in p)
+    assert "CALLER: my name is Walter" in prompt
+    assert "9999" not in prompt
+
+
+async def test_a_made_up_detail_in_the_cancelled_tail_cannot_void_the_call(store):
+    artifact = validity_call(facts=SHEET)
+    artifact.timeline = [cut_off("my name is Walter and my pin is 9999", "my name is Walter")]
+    judge = beat_judge({}, facts_reply("fail", breach("my pin is 9999")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert not [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
+async def test_a_cut_off_line_with_no_record_of_what_played_is_left_out(store):
+    artifact = validity_call(facts=SHEET)
+    artifact.timeline = [
+        cut_off("my pin is 9999", None),
+        Utterance(speaker=Speaker.CALLER, start_s=9.0, end_s=11.0, intended_text="hello there"),
+    ]
+    judge = beat_judge({})
+    await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    prompt = next(p for p in judge.prompts if "keep to its fact sheet" in p)
+    assert "9999" not in prompt and "hello there" in prompt
+
+
+CARD_SHEET = {"name": "Pat Lee", "card_status": "expired", "pin": "5521"}
+
+
+def contradicts(quote: str, key: str = "none", material: object = True) -> dict:
+    return {**breach(quote, material), "contradicts": key}
+
+
+async def test_a_contradiction_stands_with_no_new_detail_in_it(store):
+    """ "My card is valid" names no number, and against an expired card it's still a breach."""
+    artifact = scripted_caller("my card is valid", facts=CARD_SHEET)
+    judge = beat_judge({}, facts_reply("fail", contradicts("my card is valid", "card_status")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "fail"
+    assert [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
+async def test_the_reply_names_a_line_of_this_sheet(store):
+    judge = beat_judge({})
+    await run(
+        CallerValidityEvaluator(),
+        context(store, scripted_caller("hello", facts=CARD_SHEET), judge),
+    )
+    schema = next(k for k in judge.kwargs if "breaches" in k["json_schema"]["properties"])
+    breach_item = schema["json_schema"]["properties"]["breaches"]["items"]
+    assert breach_item["properties"]["contradicts"]["enum"] == [*CARD_SHEET, "none"]
+
+
+async def test_a_contradiction_of_a_line_the_sheet_lacks_is_dropped(store):
+    artifact = scripted_caller("my card is valid", facts=CARD_SHEET)
+    judge = beat_judge({}, facts_reply("fail", contradicts("my card is valid", "shoe_size")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "pass"
+
+
+async def test_a_claim_holding_the_sheets_own_value_contradicts_nothing(store):
+    artifact = scripted_caller("my pin is 5521", facts=CARD_SHEET)
+    judge = beat_judge({}, facts_reply("fail", contradicts("my pin is 5521", "pin")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "pass"
+
+
+async def test_a_question_states_nothing(store):
+    artifact = scripted_caller("is my card valid?", facts=CARD_SHEET)
+    judge = beat_judge({}, facts_reply("fail", contradicts("is my card valid?", "card_status")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "pass"
+
+
+async def test_the_bot_repeating_a_made_up_pin_later_does_not_erase_the_breach(store):
+    """The transcript has the bot saying 9999 at 10 s, after the caller made it up."""
+    artifact = scripted_caller("my pin is 9999", facts=SHEET)
+    ctx = context(store, artifact, beat_judge({}, facts_reply("fail", breach("my pin is 9999"))))
+    ctx.transcripts[Speaker.BOT] = make_transcript(("so your pin is 9999 then", 10.0))
+    out = await run(CallerValidityEvaluator(), ctx)
+    assert [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
+async def test_a_detail_the_bot_gave_first_can_be_repeated(store):
+    artifact = scripted_caller("my pin is 9999", start_s=20.0, facts=SHEET)
+    ctx = context(store, artifact, beat_judge({}, facts_reply("fail", breach("my pin is 9999"))))
+    ctx.transcripts[Speaker.BOT] = make_transcript(("so your pin is 9999 then", 10.0))
+    out = await run(CallerValidityEvaluator(), ctx)
+    assert not [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]

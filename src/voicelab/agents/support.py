@@ -24,7 +24,7 @@ from voicelab.agents.speech import (
 )
 from voicelab.company.policy import load_policy
 from voicelab.company.tools import ToolDispatcher
-from voicelab.core.models import SystemEvent, ToolCallEvent, new_id
+from voicelab.core.models import RowRef, SystemEvent, ToolCallEvent, new_id
 from voicelab.providers.base import LLM, ChatMessage, LLMResponse, ToolCall
 
 SYSTEM_PROMPT = """\
@@ -341,11 +341,13 @@ class SupportBot:
         for call in calls:
             at_s = self.clock()
             started = time.perf_counter()
+            changed: list[RowRef] = []
             if crashed:
                 result = {"error": "not run because an earlier tool failed"}
             else:
                 try:
                     result = self.dispatcher.dispatch(call.name, call.arguments)
+                    changed = self.dispatcher.last_changes
                 except Exception as failure:
                     crashed = True
                     result = {"error": f"{call.name} failed: {failure}"}
@@ -358,6 +360,7 @@ class SupportBot:
                     result=result,
                     error=result.get("error"),
                     duration_ms=(time.perf_counter() - started) * 1000,
+                    changed=changed,
                 )
             )
             results.append(

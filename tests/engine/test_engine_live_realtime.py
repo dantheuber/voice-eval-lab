@@ -180,6 +180,7 @@ async def test_tool_calls_run_in_order_and_bad_ones_get_an_error_not_a_crash(sto
     assert [e.name for e in events][:2] == ["find_customer", "get_invoice"]
     assert events[1].error and not events[0].error
     assert not artifact.db_changes
+    assert events[0].changed == [] and events[1].changed == []  # recorded, and nothing changed
 
 
 async def test_a_barge_in_tells_the_session_how_much_was_played(store):

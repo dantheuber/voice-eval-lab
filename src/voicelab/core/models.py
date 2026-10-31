@@ -161,6 +161,13 @@ class Utterance(BaseModel):
     ttfb_ms: float | None = None  # speech end to first audio, when measured
 
 
+class RowRef(BaseModel):
+    """One database row, by table and primary key."""
+
+    table: str
+    key: dict[str, Any]
+
+
 class ToolCallEvent(BaseModel):
     type: Literal["tool_call"] = "tool_call"
     id: str = Field(default_factory=lambda: new_id("tc"))
@@ -170,6 +177,9 @@ class ToolCallEvent(BaseModel):
     result: Any = None
     error: str | None = None
     duration_ms: float | None = None
+    # The rows this call changed, which is the only link between a database change and a time.
+    # None means it wasn't recorded, as on older calls and uploads.
+    changed: list[RowRef] | None = None
 
 
 class BargeInEvent(BaseModel):

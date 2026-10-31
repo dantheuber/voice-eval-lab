@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from voicelab.core.models import DbChange
+from voicelab.core.models import DbChange, RowRef
 
 SEEDS_DIR = Path(__file__).resolve().parents[3] / "seeds"
 SEED_FILE = SEEDS_DIR / "company.yaml"
@@ -208,6 +208,28 @@ def _keyed_rows(
 ) -> dict[tuple[Any, ...], dict[str, Any]]:
     rows = (dict(row) for row in conn.execute(f"SELECT * FROM {table}"))
     return {tuple(row[column] for column in key_columns): row for row in rows}
+
+
+def table_rows(db: CompanyDb) -> dict[str, dict[tuple[Any, ...], dict[str, Any]]]:
+    """Every data row by table and primary key, to compare before and after a tool runs."""
+    return {
+        table: _keyed_rows(db.conn, table, _primary_key(db.conn, table)) for table in SEED_TABLES
+    }
+
+
+def changed_rows(
+    before: dict[str, dict[tuple[Any, ...], dict[str, Any]]],
+    after: dict[str, dict[tuple[Any, ...], dict[str, Any]]],
+    db: CompanyDb,
+) -> list[RowRef]:
+    """The rows that differ between two `table_rows` snapshots."""
+    refs: list[RowRef] = []
+    for table in SEED_TABLES:
+        key_columns = _primary_key(db.conn, table)
+        for key in sorted(before[table].keys() | after[table].keys()):
+            if before[table].get(key) != after[table].get(key):
+                refs.append(RowRef(table=table, key=dict(zip(key_columns, key, strict=True))))
+    return refs
 
 
 def diff_against_seed(db: CompanyDb) -> list[DbChange]:

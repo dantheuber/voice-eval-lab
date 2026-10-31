@@ -37,27 +37,31 @@ from voicelab.providers.base import Transcript
 FACTS_TEXT = "Caller stayed within its fact sheet"
 _BOT_TO_BOT = (CallMode.LIVE_BOTS, CallMode.TURN_BASED)
 
-FACTS_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "breaches": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "quote": {"type": "string", "maxLength": 200},
-                    "why": {"type": "string", "maxLength": 200},
-                    "material": {"type": "boolean"},
-                },
-                "required": ["quote", "why", "material"],
-            },
-            "maxItems": 5,
+
+def facts_schema(facts: dict[str, str]) -> dict[str, Any]:
+    """A reply about this sheet. A breach names the line it contradicts, if it contradicts one."""
+    breach = {
+        "type": "object",
+        "properties": {
+            "quote": {"type": "string", "maxLength": 200},
+            "contradicts": {"type": "string", "enum": [*facts, _NO_SHEET_LINE]},
+            "why": {"type": "string", "maxLength": 200},
+            "material": {"type": "boolean"},
         },
-        "reason": {"type": "string", "maxLength": 240},
-        "status": {"type": "string", "enum": ["pass", "fail", "unknown"]},
-    },
-    "required": ["breaches", "reason", "status"],
-}
+        "required": ["quote", "contradicts", "why", "material"],
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "breaches": {"type": "array", "items": breach, "maxItems": 5},
+            "reason": {"type": "string", "maxLength": 240},
+            "status": {"type": "string", "enum": ["pass", "fail", "unknown"]},
+        },
+        "required": ["breaches", "reason", "status"],
+    }
+
+
+_NO_SHEET_LINE = "none"
 _FACTS_REPLY_ITEMS = 3  # the fact check's reply can run to a few breaches
 _ONE_LINE_S = 3600.0  # a script line stays on one line, however long the speaker paused
 _DETAIL_KINDS = ("number", "money", "id", "url")
@@ -184,13 +188,17 @@ class CallerValidityEvaluator:
         )
         try:
             payload, out.model = await ask_json(
-                ctx.deps.judge, prompt, FACTS_SCHEMA, ctx.config, items=_FACTS_REPLY_ITEMS
+                ctx.deps.judge,
+                prompt,
+                facts_schema(ctx.scenario.facts),
+                ctx.config,
+                items=_FACTS_REPLY_ITEMS,
             )
         except Exception as exc:
             out.criteria.append(_facts_criterion("unknown", f"judge failed: {exc}", []))
             return
         listed = [b for b in payload.get("breaches") or [] if isinstance(b, dict)]
-        known = _known_details(ctx.scenario.facts, ctx.transcripts.get(Speaker.BOT))
+        bot = ctx.transcripts.get(Speaker.BOT)
 
         def worth_keeping(breach: dict[str, Any]) -> bool:
             # A quote that isn't the caller's stays, so verification can throw the reply out.
@@ -198,7 +206,7 @@ class CallerValidityEvaluator:
             found = index.locate(quote, Speaker.CALLER) if isinstance(quote, str) else None
             if found is None or found.speaker != Speaker.CALLER:
                 return True
-            return _names_something_new(quote, known)
+            return _is_a_breach(breach, quote, found, ctx.scenario.facts, bot)
 
         breaches = [b for b in listed if worth_keeping(b)]
         cited = {**payload, "quotes": [b.get("quote") for b in breaches]}
@@ -220,22 +228,27 @@ class CallerValidityEvaluator:
 
 
 def _script_lines(timeline: list[Any]) -> Transcript | None:
-    """What the caller bot was given to say, as a transcript with one turn per utterance."""
+    """What the caller bot said, as a transcript. Words it never got to play don't count.
+
+    A cut-off line keeps only the part that played, and with no record of that part it's left out.
+    """
     spoken = [
         event
         for event in timeline
-        if isinstance(event, Utterance) and event.speaker == Speaker.CALLER and event.intended_text
+        if isinstance(event, Utterance) and event.speaker == Speaker.CALLER and _said(event)
     ]
     words = [
         word
         for utterance in spoken
         for word in estimate_words(
-            utterance.intended_text,
-            [Region(utterance.start_s, utterance.end_s)],
-            utterance.end_s,
+            _said(utterance), [Region(utterance.start_s, utterance.end_s)], utterance.end_s
         )
     ]
     return Transcript(text=" ".join(w.text for w in words), words=words) if words else None
+
+
+def _said(utterance: Utterance) -> str | None:
+    return utterance.spoken_text if utterance.interrupted else utterance.intended_text
 
 
 def _sheet(facts: dict[str, str]) -> str:
@@ -247,12 +260,41 @@ def _sheet(facts: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _known_details(facts: dict[str, str], bot: Transcript | None) -> str:
-    """Everything the caller is entitled to say: its sheet, and what the bot told it."""
+def _is_a_breach(
+    breach: dict[str, Any],
+    quote: str,
+    found: Evidence,
+    facts: dict[str, str],
+    bot: Transcript | None,
+) -> bool:
+    """Whether a claimed breach is a statement the caller had no right to make.
+
+    A question states nothing. A statement that contradicts a line of the sheet is a breach whether
+    or not it names a number, as "my card is valid" against an expired card is, unless it holds
+    that line's own value. Otherwise it has to name a concrete detail the caller couldn't have,
+    which means off the sheet and not something the bot had already told it.
+    """
+    if quote.rstrip().endswith("?"):
+        return False
+    line = breach.get("contradicts")
+    if line in facts:
+        return _spelled(facts[line]) not in _spelled(quote)
+    return _names_something_new(quote, _known_details(facts, bot, found.start_s))
+
+
+def _spelled(text: str) -> str:
+    return "".join(t.norm for t in tokenize(text.split(), lexicon=Lexicon.load()))
+
+
+def _known_details(facts: dict[str, str], bot: Transcript | None, before_s: float | None) -> str:
+    """What the caller may say at this moment: its sheet, and what the bot had told it by then."""
     sheet = [*facts.values(), *(normalize(value).spoken for value in facts.values())]
-    told = [word.text for word in bot.words] if bot else []
-    words = [*" ".join(sheet).split(), *told]
-    return "".join(t.norm for t in tokenize(words, lexicon=Lexicon.load()))
+    told = [
+        word.text
+        for word in (bot.words if bot else [])
+        if before_s is not None and word.start_s < before_s
+    ]
+    return _spelled(" ".join([*sheet, *told]))
 
 
 def _names_something_new(quote: Any, known: str) -> bool:

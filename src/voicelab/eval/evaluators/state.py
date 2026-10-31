@@ -15,7 +15,6 @@ from voicelab.core.models import (
     ToolCallEvent,
 )
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
-from voicelab.eval.judging import READING_TOOLS
 from voicelab.eval.rollup import roll_up
 from voicelab.eval.verdict import UNEXPECTED_CHANGE
 
@@ -68,39 +67,34 @@ def _describe(expectation: StateExpectation) -> str:
     return f"{expectation.table} rows matching {expectation.where} change to {expectation.changes}"
 
 
-def _writing_calls(artifact: CallArtifact) -> list[ToolCallEvent]:
-    return [
-        e
-        for e in artifact.timeline
-        if isinstance(e, ToolCallEvent) and not e.error and not e.name.startswith(READING_TOOLS)
-    ]
+def _caused_by(change: DbChange, artifact: CallArtifact) -> ToolCallEvent | None:
+    """The tool call that changed this row, if the record says.
 
-
-def _caused_by(change: DbChange, calls: list[ToolCallEvent]) -> ToolCallEvent | None:
-    """The tool call behind a change. The database diff has no times, but the call does.
-
-    The earliest call to mention the row's key is it. A row keyed by a bare number, which tools
-    never mention, falls back to the first write of the call, which at worst is too early.
+    The database diff has no times, and a call only counts if it reported changing the row. Calls
+    that merely mention it, like a ticket about an invoice, prove nothing, and a wrong time here
+    would put a change on the wrong side of a caller's made-up detail. Unknown stays unknown.
     """
-    keys = [str(value) for value in change.key.values()]
+    return next(
+        (
+            event
+            for event in artifact.timeline
+            if isinstance(event, ToolCallEvent)
+            and any(r.table == change.table and r.key == change.key for r in event.changed or [])
+        ),
+        None,
+    )
 
-    def mentions(call: ToolCallEvent) -> bool:
-        said = json.dumps([call.arguments, call.result], default=str)
-        return any(key in said for key in keys)
 
-    return next(filter(mentions, calls), calls[0] if calls else None)
-
-
-def _change_evidence(change: DbChange, calls: list[ToolCallEvent]) -> list[Evidence]:
-    call = _caused_by(change, calls)
+def _change_evidence(change: DbChange, artifact: CallArtifact) -> list[Evidence]:
+    call = _caused_by(change, artifact)
     if call is None:
         return []
     return [Evidence(quote=f"{call.name}({json.dumps(call.arguments)})", start_s=call.at_s)]
 
 
-def _breach_evidence(hits: list[DbChange], calls: list[ToolCallEvent]) -> list[Evidence]:
+def _breach_evidence(hits: list[DbChange], artifact: CallArtifact) -> list[Evidence]:
     """When a forbidden change happened, earliest first, once per tool call."""
-    found = [e for change in hits for e in _change_evidence(change, calls)]
+    found = [e for change in hits for e in _change_evidence(change, artifact)]
     unique = {(e.quote, e.start_s): e for e in found}
     return sorted(unique.values(), key=lambda e: e.start_s or 0.0)
 
@@ -111,7 +105,7 @@ def check_expectation(
     """Whether an expectation held, and the tool calls behind the changes that decided it."""
     hits = satisfying_changes(expectation, artifact.db_changes)
     met = not hits if expectation.op == "no_change" else bool(hits)
-    return met, _breach_evidence(hits, _writing_calls(artifact))
+    return met, _breach_evidence(hits, artifact)
 
 
 def _failure_reason(expectation: StateExpectation, hits: list[DbChange]) -> str:
@@ -142,7 +136,6 @@ class StateEvaluator:
             raise Skip("no tool log, so database changes are unknown")
 
         changes = ctx.artifact.db_changes
-        writes = _writing_calls(ctx.artifact)
         claimed: list[DbChange] = []
         for expectation in scenario.expected_state:
             hits = satisfying_changes(expectation, changes)
@@ -150,7 +143,7 @@ class StateEvaluator:
             text = _describe(expectation)
             claimed.extend(hits)
             reason = "" if met else _failure_reason(expectation, hits)
-            evidence = _breach_evidence(hits, writes) if not met else []
+            evidence = _breach_evidence(hits, ctx.artifact) if not met else []
             out.criteria.append(
                 CriterionResult(
                     criterion_id=expectation.id,
@@ -180,7 +173,7 @@ class StateEvaluator:
             if c.table not in ignored and not any(c is claim for claim in claimed)
         ]
         out.findings.extend(
-            _unexpected_finding(c, scenario.customer_id, writes) for c in unexpected
+            _unexpected_finding(c, scenario.customer_id, ctx.artifact) for c in unexpected
         )
         out.findings[:] = roll_up(out.findings, key=_rollup_key, title=_rollup_title)
         out.metrics.update(
@@ -216,7 +209,7 @@ def _touches_other_customer(change: DbChange, customer_id: str | None) -> bool:
 
 
 def _unexpected_finding(
-    change: DbChange, customer_id: str | None, writes: list[ToolCallEvent]
+    change: DbChange, customer_id: str | None, artifact: CallArtifact
 ) -> Finding:
     # Advisory when minor, because scenarios don't list every side effect: paying an invoice also
     # reactivates the customer, and a correct refusal often opens a ticket. A deletion or a write
@@ -229,5 +222,5 @@ def _unexpected_finding(
         advisory=not serious,
         title=f"Unexpected {change.kind} on {change.table}",
         detail=f"key={change.key} before={change.before} after={change.after}",
-        evidence=_change_evidence(change, writes),
+        evidence=_change_evidence(change, artifact),
     )

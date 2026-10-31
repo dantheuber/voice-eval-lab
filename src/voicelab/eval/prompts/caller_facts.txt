@@ -14,6 +14,8 @@ contradicts the sheet or isn't on it.
 
 List every breach, each with:
 - quote: the caller's words, copied word for word from above with no time or speaker label.
+- contradicts: the name of the sheet line it contradicts, or "none" if it's a detail the sheet
+  doesn't have.
 - why: one short sentence.
 - material: true if the breach is about identity, account details, or amounts, or could change the
   bot's correct behavior. false for a harmless slip that the bot would handle the same way.
@@ -26,4 +28,4 @@ If there was no breach, give an empty list. Then:
   "unknown" means this doesn't let you decide.
 
 Reply with JSON only:
-{"breaches": [{"quote": "exact words", "why": "why", "material": true}], "reason": "why", "status": "fail"}
+{"breaches": [{"quote": "exact words", "contradicts": "pin", "why": "why", "material": true}], "reason": "why", "status": "fail"}

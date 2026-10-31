@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from voicelab.company.db import CompanyDb
+from voicelab.company.db import CompanyDb, changed_rows, table_rows
+from voicelab.core.models import RowRef
 from voicelab.providers.base import ToolDef
 
 
@@ -852,17 +853,21 @@ class ToolDispatcher:
 
     def __init__(self, db: CompanyDb) -> None:
         self.db = db
+        self.last_changes: list[RowRef] = []  # what the latest dispatch changed, for its event
 
     def dispatch(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         """Run a tool. Bad requests come back as {"error": ...} so the LLM can correct itself.
 
         Tools write several rows, so any failure undoes all of them. A bug in a tool is undone
-        too, and still raises.
+        too, and still raises. `last_changes` says which rows a tool really changed, which is the
+        only thing that ties a database change to a moment in the call.
         """
+        self.last_changes = []
         tool = _CATALOG.get(name)
         if tool is None:
             return {"error": f"unknown tool {name}"}
         try:
+            before = table_rows(self.db)
             values = self._check_arguments(tool, arguments or {})
             result = tool.run(self.db, **values)
             self.db.conn.commit()
@@ -875,6 +880,7 @@ class ToolDispatcher:
         except Exception:
             self._undo()
             raise
+        self.last_changes = changed_rows(before, table_rows(self.db), self.db)
         return result
 
     def _undo(self) -> None:
