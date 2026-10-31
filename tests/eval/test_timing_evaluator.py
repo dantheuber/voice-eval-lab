@@ -131,8 +131,8 @@ async def test_metrics_on_constructed_overlapping_audio(store):
 async def test_dead_air_finding_and_severity(store):
     out, _ = await evaluate(store, caller=[(0, 1)], bot=[(8, 9), (31, 32)], duration_s=32.0)
     dead = [f for f in out.findings if f.category == "dead_air"]
-    assert [f.severity for f in dead] == ["minor", "major"]
-    assert dead[1].evidence[0].start_s == pytest.approx(9.0, abs=TOLERANCE)
+    assert [f.severity for f in dead] == ["major"]
+    assert dead[0].evidence[0].start_s == pytest.approx(9.0, abs=TOLERANCE)
     assert out.metrics["dead_air"]["count_over_threshold"] == 2
 
 
@@ -323,3 +323,93 @@ async def test_reaction_stops_at_the_speech_the_caller_cut_into(store):
     out, _ = await evaluate(store, bot=[(0, 2), (2.5, 6)], caller=[(1, 1.9)], duration_s=7.0)
     events = out.metrics["barge_in"]["events"]
     assert [e["reaction_s"] for e in events] == pytest.approx([1.0], abs=TOLERANCE)
+
+
+# Calibrated on 18 real calls -----------------------------------------------------------------------
+
+
+async def findings_for(store, *, caller, bot, category, config=None):
+    out, _ = await evaluate(store, caller=caller, bot=bot, duration_s=120.0, config=config)
+    return [f for f in out.findings if f.category == category]
+
+
+async def test_a_normal_tool_turn_is_not_a_slow_response(store):
+    """Real tool turns on this stack land at 4.2 to 4.8 s, and plain ones at 1.5 to 2.5 s."""
+    caller = [(1.0, 3.0), (10.0, 12.0), (20.0, 22.0)]
+    bot = [(4.8, 8.0), (16.8, 18.0), (24.0, 26.0)]
+    assert await findings_for(store, caller=caller, bot=bot, category="slow_response") == []
+
+
+async def test_only_the_outlier_turn_is_reported(store):
+    caller = [(1.0, 3.0), (10.0, 12.0), (20.0, 22.0)]
+    bot = [(5.0, 8.0), (18.0, 19.0), (24.0, 26.0)]
+    [finding] = await findings_for(store, caller=caller, bot=bot, category="slow_response")
+    assert "6.0 s" in finding.title
+
+
+async def test_the_slow_response_threshold_stays_configurable(store):
+    config = EvalConfig()
+    config.timing.slow_response_s = 3.0
+    caller = [(1.0, 3.0), (10.0, 12.0)]
+    bot = [(7.0, 8.0), (16.8, 18.0)]
+    found = await findings_for(
+        store, caller=caller, bot=bot, category="slow_response", config=config
+    )
+    assert len(found) == 1
+    assert len(found[0].evidence) == 2
+
+
+async def test_repeated_slow_turns_roll_up_and_keep_the_worst_severity(store):
+    caller = [(1.0, 3.0), (20.0, 22.0), (40.0, 42.0)]
+    bot = [(12.0, 14.0), (28.0, 30.0), (43.0, 44.0)]
+    [finding] = await findings_for(store, caller=caller, bot=bot, category="slow_response")
+    assert finding.severity == "major"
+    assert "2 slow responses" in finding.title
+    assert "9.0 s" in finding.title
+    assert finding.evidence[0].start_s == pytest.approx(3.0, abs=0.1)
+
+
+async def test_repeated_dead_air_rolls_up(store):
+    found = await findings_for(
+        store, caller=[(1.0, 2.0), (20.0, 21.0), (40.0, 41.0)], bot=[], category="dead_air"
+    )
+    assert len(found) == 1
+    assert len(found[0].evidence) >= 2
+
+
+def noisy_channel_call() -> CallArtifact:
+    """The bot said one thing, and the channel shows speech nearly all call."""
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS)
+    artifact.timeline.append(Utterance(speaker=Speaker.BOT, start_s=1.0, end_s=2.0))
+    return artifact
+
+
+async def test_line_noise_that_reads_as_speech_stops_turn_timing(store):
+    """Seen on a real call with TV noise: nine barge-ins that never happened."""
+    out, _ = await evaluate(
+        store,
+        noisy_channel_call(),
+        caller=[(5.0, 6.0), (20.0, 21.0)],
+        bot=[(1.0, 2.0), (3.0, 12.0), (14.0, 30.0)],
+        duration_s=31.0,
+    )
+    assert categories(out) == []
+    assert "noise" in out.metrics["skipped"]["barge_in"]
+    assert "noise" in out.metrics["skipped"]["latency"]
+    assert out.metrics["response_latency"] is None
+    assert out.metrics["barge_in"] is None
+
+
+async def test_speech_inside_the_timeline_is_measured_as_usual(store):
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS)
+    artifact.timeline.append(Utterance(speaker=Speaker.BOT, start_s=3.0, end_s=20.0))
+    out, _ = await evaluate(
+        store, artifact, caller=[(1.0, 2.0)], bot=[(9.0, 12.0)], duration_s=21.0
+    )
+    assert "slow_response" in categories(out)
+    assert "latency" not in out.metrics["skipped"]
+
+
+async def test_a_call_with_no_timeline_is_measured_from_the_audio(store):
+    out, _ = await evaluate(store, caller=[(1.0, 2.0)], bot=[(9.0, 12.0)], duration_s=21.0)
+    assert "slow_response" in categories(out)

@@ -22,6 +22,7 @@ from voicelab.eval.config import DeliveryConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
 from voicelab.eval.normalize import tokenize
 from voicelab.eval.pitch import HOP_S, pitch_stats, track_pitch
+from voicelab.eval.rollup import roll_up
 from voicelab.eval.speech_measures import (
     edge_ms,
     estimate_snr_db,
@@ -39,6 +40,19 @@ _WORD_EDGE_S = 0.02
 _EDGE_LEAD_S = 0.05
 _EDGE_BODY_S = 0.3
 _SAME_EDGE_S = 0.1
+_SENTENCE_MARKS = (".", ",", "?", "!", ";", ":")
+_EDGE_KINDS = ("abrupt_onset", "abrupt_offset")
+_KIND_NAMES = {
+    "rushed": "Speech rushed",
+    "dragging": "Speech dragging",
+    "robotic": "Pitch is robotic",
+    "monotone": "Pitch is monotone",
+    "noisy": "Noisy speech",
+    "halting": "Halting speech",
+    "chopped": "Audio chopped",
+    "abrupt_onset": "Speech starts abruptly",
+    "abrupt_offset": "Speech stops abruptly",
+}
 
 
 @dataclass
@@ -55,6 +69,9 @@ class UtteranceDelivery:
     pause_count: int = 0
     longest_pause_s: float = 0.0
     pause_ratio: float = 0.0
+    halting_pauses: int = 0  # the pauses that came mid-sentence
+    halting_ratio: float = 0.0
+    interrupted: bool = False
     chops: int = 0
     mid_word_chops: int = 0
     voiced_s: float = 0.0
@@ -121,6 +138,7 @@ def _measure(
     speaker: Speaker,
 ) -> UtteranceDelivery:
     item = UtteranceDelivery(speaker.value, span.utterance_id, span.start_s, span.end_s)
+    item.interrupted = span.interrupted
     rate = clip.sample_rate
     item.snr_db = estimate_snr_db(clip.slice(span.start_s, span.end_s).samples(), rate)
     inside = _inside(regions, span)
@@ -140,6 +158,10 @@ def _measure(
         for w in words
         if span.start_s - _WORD_SLACK_S <= (w.start_s + w.end_s) / 2 <= span.end_s + _WORD_SLACK_S
     ]
+    if last > first:
+        halting = [p for p in pauses if not _after_a_sentence(p, said)]
+        item.halting_pauses = len(halting)
+        item.halting_ratio = sum(p.duration_s for p in halting) / (last - first)
     item.words = _spoken_words(said)
     if item.words >= cfg.min_words and item.speech_s >= cfg.min_rate_speech_s:
         item.wpm = item.words / item.speech_s * 60
@@ -165,6 +187,12 @@ def _measure(
         tail = clip.slice(last - _EDGE_BODY_S, last + _EDGE_LEAD_S).samples()
         item.offset_ms = edge_ms(tail, rate, at_end=True)
     return item
+
+
+def _after_a_sentence(pause: Region, words: list[Word]) -> bool:
+    """Whether the word before this pause ended a sentence or a clause, so it's punctuation."""
+    before = [w for w in words if w.start_s < pause.start_s + _WORD_SLACK_S]
+    return bool(before) and before[-1].text.endswith(_SENTENCE_MARKS)
 
 
 def _in_a_word(moment: float, words: list[Word]) -> bool:
@@ -194,22 +222,55 @@ def _is_chopped(item: UtteranceDelivery, cfg: DeliveryConfig) -> bool:
     return item.chops >= cfg.min_chops
 
 
+def _rate_is_measurable(item: UtteranceDelivery, cfg: DeliveryConfig) -> bool:
+    """Noise and chops break the speech timing rate rests on, and get reported themselves. A cut
+    off utterance's span runs on past the words said in it."""
+    noisy = item.snr_db is not None and item.snr_db < cfg.rate_min_snr_db
+    return not (item.wpm is None or noisy or _is_chopped(item, cfg) or item.interrupted)
+
+
 def _rate_flag(item: UtteranceDelivery, typical: float | None, cfg: DeliveryConfig) -> _Flag | None:
-    # Both of these break the speech timing that rate rests on, and get reported themselves.
-    if item.wpm is None or _is_noisy(item, cfg) or _is_chopped(item, cfg):
+    if not _rate_is_measurable(item, cfg):
         return None
-    ratio = item.wpm / typical if typical else 1.0
+    if typical is None:
+        return _fixed_rate_flag(item, cfg)
+    if item.words < cfg.min_compare_words or item.speech_s < cfg.min_compare_speech_s:
+        return None
+    ratio = item.wpm / typical
+    if ratio >= cfg.rate_median_ratio:
+        kind = "rushed"
+    elif ratio <= 1 / cfg.rate_median_ratio:
+        kind = "dragging"
+    else:
+        return None
+    why = f"{ratio:.2f}x the call's median of {typical:.0f} wpm"
+    return _Flag(item, kind, f"Speech {kind}: {item.wpm:.0f} wpm", f"Rate is {why}.")
+
+
+def _fixed_rate_flag(item: UtteranceDelivery, cfg: DeliveryConfig) -> _Flag | None:
     if item.wpm > cfg.max_wpm:
         kind, why = "rushed", f"over the {cfg.max_wpm:.0f} wpm limit"
-    elif ratio >= cfg.rate_median_ratio:
-        kind, why = "rushed", f"{ratio:.2f}x the call's median of {typical:.0f} wpm"
     elif item.wpm < cfg.min_wpm:
         kind, why = "dragging", f"under the {cfg.min_wpm:.0f} wpm limit"
-    elif ratio <= 1 / cfg.rate_median_ratio:
-        kind, why = "dragging", f"{ratio:.2f}x the call's median of {typical:.0f} wpm"
     else:
         return None
     return _Flag(item, kind, f"Speech {kind}: {item.wpm:.0f} wpm", f"Rate is {why}.")
+
+
+def _call_rate_flag(
+    items: list[UtteranceDelivery], typical: float | None, cfg: DeliveryConfig
+) -> _Flag | None:
+    """A voice that's fast all call is one thing to say, about the call."""
+    if typical is None:
+        return None
+    if typical > cfg.max_median_wpm:
+        kind, why = "rushed", f"over the {cfg.max_median_wpm:.0f} wpm limit for a call"
+    elif typical < cfg.min_median_wpm:
+        kind, why = "dragging", f"under the {cfg.min_median_wpm:.0f} wpm limit for a call"
+    else:
+        return None
+    title = f"Speech {kind} the whole call: {typical:.0f} wpm"
+    return _Flag(max(items, key=lambda i: i.words), kind, title, f"The median is {why}.")
 
 
 def _pitch_flag(
@@ -246,10 +307,10 @@ def _noise_flag(
 
 
 def _pause_flag(item: UtteranceDelivery, cfg: DeliveryConfig) -> _Flag | None:
-    if item.pause_count < cfg.min_pauses or item.pause_ratio < cfg.max_pause_ratio:
+    if item.halting_pauses < cfg.min_pauses or item.halting_ratio < cfg.max_pause_ratio:
         return None
-    share = f"{item.pause_ratio:.0%}"
-    title = f"Halting speech: {item.pause_count} pauses"
+    share = f"{item.halting_ratio:.0%}"
+    title = f"Halting speech: {item.halting_pauses} pauses mid-sentence"
     return _Flag(item, "halting", title, f"{share} of the utterance was silence.")
 
 
@@ -304,15 +365,35 @@ def _flags(
         found = [f for f in checks if f is not None]
         item.flags = [f.kind for f in found]
         flags.extend(found)
+    whole_call = _call_rate_flag(items, medians["wpm"], cfg) if items else None
+    if whole_call is not None:
+        flags.append(whole_call)
     return flags, medians
 
 
-def _finding(flag: _Flag) -> Finding:
+def _worth_a_reviewer(
+    flag: _Flag, counts: dict[str, int], utterances: int, ctx: EvalContext, cfg: DeliveryConfig
+) -> bool:
+    """Whether this says something about the bot. Details stay in the call, out of the way."""
+    if flag.kind == "noisy":
+        # A persona's line is noisy on purpose, and the bot didn't make that noise.
+        persona = ctx.artifact.persona_snapshot
+        return persona is None or persona.line.noise == "none"
+    if flag.kind in _EDGE_KINDS:
+        return counts[flag.kind] / max(1, utterances) >= cfg.abrupt_share_to_review
+    return True
+
+
+def _rollup_title(group: list[Finding]) -> str:
+    return f"{_KIND_NAMES[group[0].category]} on {len(group)} utterances"
+
+
+def _finding(flag: _Flag, *, reviewed: bool = True) -> Finding:
     item = flag.item
     return Finding(
         evaluator="delivery",
         category=flag.kind,
-        severity="minor",
+        severity="minor" if reviewed else "info",
         advisory=True,
         title=flag.title,
         detail=flag.detail,
@@ -338,9 +419,12 @@ class DeliveryEvaluator:
         counts: dict[str, int] = {}
         for flag in flags:
             counts[flag.kind] = counts.get(flag.kind, 0) + 1
-            # A voice that's flat throughout is one problem, not one finding per sentence.
-            if counts[flag.kind] <= cfg.max_findings_per_kind:
-                out.findings.append(_finding(flag))
+        # A voice that's flat throughout is one problem, not one finding per sentence.
+        findings = [
+            _finding(flag, reviewed=_worth_a_reviewer(flag, counts, len(bot), ctx, cfg))
+            for flag in flags
+        ]
+        out.findings.extend(roll_up(findings, key=lambda f: f.category, title=_rollup_title))
         out.metrics.update(
             {
                 "bot": [item.rounded() for item in bot],

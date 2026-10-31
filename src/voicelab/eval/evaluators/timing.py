@@ -12,15 +12,24 @@ from dataclasses import dataclass
 from statistics import median
 from typing import Any
 
-from voicelab.core.models import BargeInEvent, Evidence, Finding, Speaker, Utterance
+from voicelab.core.models import (
+    BargeInEvent,
+    CallArtifact,
+    Evidence,
+    Finding,
+    Speaker,
+    Utterance,
+)
 from voicelab.eval.config import TimingConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput
+from voicelab.eval.rollup import roll_up
 from voicelab.eval.vad import Region
 
 _SYNTHETIC_REASON = (
     "timing_is_real is False: this was a turn-based call, so its pauses come from the scheduler"
 )
 _INFERRED_REASON = "channels were inferred from a mono recording, so they can't overlap"
+_NOISE_REASON = "noise on this line reads as speech on the bot channel, so its turns can't be timed"
 
 
 @dataclass(frozen=True)
@@ -166,8 +175,54 @@ def find_barge_ins(
     return barge_ins
 
 
+def noise_reads_as_speech(bot: list[Region], artifact: CallArtifact, limit: float) -> bool:
+    """Whether the bot channel shows speech the bot's own timeline can't account for.
+
+    A speech-like noise bed such as a TV passes the energy VAD. Everything measured from those
+    regions would be wrong, and the turn timing is what can fail a call.
+    """
+    said = [
+        Region(e.start_s, e.end_s)
+        for e in artifact.timeline
+        if isinstance(e, Utterance) and e.speaker == Speaker.BOT
+    ]
+    total = total_speech(bot)
+    if not said or total <= 0:
+        return False
+    covered = sum(
+        max(0.0, min(region.end_s, span.end_s) - max(region.start_s, span.start_s))
+        for region in bot
+        for span in said
+    )
+    return 1 - covered / total > limit
+
+
 def _rounded(value: float) -> float:
     return round(value, 3)
+
+
+def _rollup_title(group: list[Finding]) -> str:
+    durations = [(e.end_s or 0.0) - (e.start_s or 0.0) for f in group for e in f.evidence]
+    longest = max(durations, default=0.0)
+    names = {
+        "dead_air": f"{len(group)} stretches of dead air, the longest {longest:.1f} s",
+        "slow_response": f"{len(group)} slow responses, the slowest {longest:.1f} s",
+        "unanswered_turn": f"{len(group)} turns left unanswered, the longest {longest:.1f} s",
+        "slow_barge_in": f"Bot slow to stop on {len(group)} barge-ins, up to {longest:.1f} s",
+        "talk_over": f"Bot talked over the caller {len(group)} times, up to {longest:.1f} s",
+    }
+    return names[group[0].category]
+
+
+def _rolled_up(findings: list[Finding]) -> list[Finding]:
+    """One finding per kind of problem, with the longest occurrence first."""
+    ordered = sorted(findings, key=_duration, reverse=True)
+    return roll_up(ordered, key=lambda f: f.category, title=_rollup_title)
+
+
+def _duration(finding: Finding) -> float:
+    evidence = finding.evidence[0]
+    return (evidence.end_s or 0.0) - (evidence.start_s or 0.0)
 
 
 def _p95(values: list[float]) -> float:
@@ -185,6 +240,7 @@ class TimingEvaluator:
         duration = ctx.artifact.duration_s or ctx.audio(Speaker.BOT).duration_s
         caller_turns = merge_turns(caller, cfg.turn_gap_s, bot)
         bot_turns = merge_turns(bot, cfg.turn_gap_s, caller)
+        noisy = noise_reads_as_speech(bot, ctx.artifact, cfg.max_speech_off_timeline)
         real = ctx.artifact.timing_is_real
         inferred = ctx.channels_inferred
 
@@ -218,18 +274,19 @@ class TimingEvaluator:
                 "caller_started": sum(o.started_by == Speaker.CALLER for o in overlaps),
             }
 
-        if real:
+        if real and not noisy:
             latencies = response_latencies(caller_turns, bot_turns)
             out.metrics["response_latency"] = _latency_metrics(ctx, latencies)
             out.findings.extend(_dead_air_findings(silences, cfg))
             out.findings.extend(_slow_response_findings(latencies, cfg))
             out.findings.extend(_unanswered_findings(unanswered, cfg))
         else:
-            skipped["latency"] = _SYNTHETIC_REASON
-            skipped["barge_in"] = _SYNTHETIC_REASON
+            reason = _NOISE_REASON if real else _SYNTHETIC_REASON
+            skipped["latency"] = reason
+            skipped["barge_in"] = reason
             out.metrics["response_latency"] = None
 
-        if real and not inferred:
+        if real and not inferred and not noisy:
             barge_ins = find_barge_ins(caller, bot, min_overlap_s=cfg.min_overlap_s)
             out.metrics["barge_in"] = _barge_in_metrics(ctx, barge_ins)
             out.findings.extend(_slow_barge_in_findings(barge_ins, cfg))
@@ -237,6 +294,7 @@ class TimingEvaluator:
         else:
             out.metrics["barge_in"] = None
         out.metrics["skipped"] = skipped
+        out.findings[:] = _rolled_up(out.findings)
 
 
 def _talk_metrics(caller: list[Region], bot: list[Region], duration: float) -> dict[str, Any]:

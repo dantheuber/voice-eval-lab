@@ -15,6 +15,7 @@ from voicelab.core.models import (
     ToolCallEvent,
 )
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
+from voicelab.eval.rollup import roll_up
 from voicelab.eval.verdict import UNEXPECTED_CHANGE
 
 # By convention tools with these names only read. Everything else can write.
@@ -160,7 +161,7 @@ class StateEvaluator:
                         category="state_expectation",
                         severity="major",
                         title=f"State expectation failed: {text}",
-                        detail=reason,
+                        detail=f"{text}: {reason}",
                         evidence=evidence,
                         criterion_id=expectation.id,
                     )
@@ -174,6 +175,7 @@ class StateEvaluator:
         out.findings.extend(
             _unexpected_finding(c, scenario.customer_id, writes) for c in unexpected
         )
+        out.findings[:] = roll_up(out.findings, key=_rollup_key, title=_rollup_title)
         out.metrics.update(
             {
                 "expectations": len(scenario.expected_state),
@@ -182,6 +184,25 @@ class StateEvaluator:
                 "unexpected_changes": len(unexpected),
             }
         )
+
+
+def _rollup_key(finding: Finding) -> str:
+    # Each failed expectation still has its own criterion. A serious change stands alone.
+    return (
+        finding.id
+        if finding.severity == "major" and not _is_expectation(finding)
+        else (finding.category)
+    )
+
+
+def _is_expectation(finding: Finding) -> bool:
+    return finding.category == "state_expectation"
+
+
+def _rollup_title(group: list[Finding]) -> str:
+    if _is_expectation(group[0]):
+        return f"{len(group)} state expectations failed"
+    return f"{len(group)} unexpected side effects"
 
 
 def _touches_other_customer(change: DbChange, customer_id: str | None) -> bool:

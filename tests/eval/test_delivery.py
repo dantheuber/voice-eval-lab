@@ -30,9 +30,11 @@ from voicelab.core.models import (
     Evidence,
     Finding,
     LineConditions,
+    Persona,
     Speaker,
     Utterance,
     Verdict,
+    VoiceRef,
     Word,
 )
 from voicelab.engine.recorder import CallRecorder
@@ -417,12 +419,106 @@ async def test_every_finding_is_advisory_with_a_bot_clip(store):
         assert finding.evidence[0].end_s > finding.evidence[0].start_s
 
 
-async def test_a_flat_voice_all_call_is_capped_and_counted(store):
+async def test_a_flat_voice_all_call_is_one_finding_listing_each_utterance(store):
     clips = [synth_voice(8, flat=True, seed=i) for i in range(7)]
     out = await measure(build_context(store, clips))
-    assert len([f for f in out.findings if f.category == "robotic"]) == 5
+    [finding] = [f for f in out.findings if f.category == "robotic"]
+    assert len(finding.evidence) == 7
+    assert "7 utterances" in finding.title
     assert out.metrics["flag_counts"]["robotic"] == 7
     assert sum("robotic" in f for f in flags(out)) == 7
+
+
+# Calibrated on 18 real calls -----------------------------------------------------------------------
+
+
+async def test_a_voice_that_is_fast_all_call_is_not_rushed_on_every_utterance(store):
+    """Real Phonon speech runs near 270 wpm with pauses left out. That's the voice, not a defect."""
+    clips = [synth_voice(WORDS, speed=1.7, seed=i) for i in range(5)]
+    out = await measure(build_context(store, clips))
+    assert out.metrics["medians"]["wpm"] > EvalConfig().delivery.max_wpm
+    assert flags(out) == [[], [], [], [], []]
+    assert out.findings == []
+
+
+async def test_a_call_median_past_its_limit_is_one_finding(store):
+    config = EvalConfig()
+    config.delivery.max_median_wpm = 100.0
+    clips = [synth_voice(WORDS, speed=1.3, seed=i) for i in range(5)]
+    out = await measure(build_context(store, clips, config=config))
+    [finding] = out.findings
+    assert finding.category == "rushed"
+    assert "the whole call" in finding.title
+    assert flags(out) == [[], [], [], [], []]
+
+
+async def test_a_short_utterance_is_not_compared_to_the_call(store):
+    """A few words give a wild rate, which is how one sentence read as "dragging"."""
+    clips = [clean(0), clean(1), clean(2), synth_voice(6, speed=0.5, seed=3)]
+    ctx = build_context(store, clips)
+    out = await measure(ctx)
+    assert flags(out)[3] == []
+
+
+async def test_an_interrupted_utterance_has_no_rate_to_judge(store):
+    """The span runs to the cut, so words said over it reads as dragging."""
+    ctx = build_context(store, [clean(0), clean(1), clean(2), synth_voice(WORDS, speed=0.65)])
+    utterance = ctx.artifact.timeline[-1]
+    utterance.interrupted = True
+    out = await measure(ctx)
+    assert flags(out)[3] == []
+
+
+async def test_rate_needs_a_clean_signal(store):
+    """Energy VAD can't find pauses near this noise, so speech time and rate are both off."""
+    config = EvalConfig()
+    config.delivery.rate_min_snr_db = 200.0
+    clips = [clean(0), clean(1), clean(2), synth_voice(WORDS, speed=1.7, seed=3)]
+    out = await measure(build_context(store, clips, config=config))
+    assert "rushed" not in flags(out)[3]
+
+
+async def test_pauses_at_sentence_ends_are_not_halting(store):
+    """Phonon leaves about 0.9 s between sentences, and that's how an utterance should sound."""
+    clip = with_pauses(synth_voice(WORDS), pause_s=0.9)
+    ctx = build_context(store, [clip])
+    words = ctx.transcripts[Speaker.BOT].words
+    plain = await measure(ctx)
+    assert flags(plain) == [["halting"]]
+    regions = ctx.regions(Speaker.BOT)
+    for region in regions[:-1]:
+        last = max((w for w in words if w.start_s < region.end_s + 0.1), key=lambda w: w.start_s)
+        last.text = "word."
+    out = await measure(ctx)
+    assert flags(out) == [[]]
+    assert out.metrics["bot"][0]["pause_count"] >= 3  # the raw count stays for the charts
+
+
+async def test_noise_from_the_personas_own_line_is_a_detail(store):
+    persona = Persona(
+        name="Rushed caller",
+        voice=VoiceRef(voice_id="v"),
+        line=LineConditions(noise="car", snr_db=12.0),
+    )
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS, persona_snapshot=persona)
+    clips = [with_noise(synth_voice(WORDS, seed=i), 8.0) for i in range(4)]
+    out = await measure(build_context(store, clips, artifact=artifact))
+    [finding] = [f for f in out.findings if f.category == "noisy"]
+    assert finding.severity == "info"
+    assert len(finding.evidence) == 4
+
+
+async def test_a_rare_abrupt_start_is_a_detail_and_a_common_one_is_not(store):
+    """One start in five reads as abrupt on clean Phonon, so one alone says nothing."""
+    cut = hard_cut(clean(4))
+    rare = await measure(
+        build_context(store, [clean(0), clean(1), clean(2), clean(3), clean(5), cut])
+    )
+    edges = [f for f in rare.findings if f.category.startswith("abrupt")]
+    assert edges and all(f.severity == "info" for f in edges)
+    common = await measure(build_context(store, [hard_cut(clean(i)) for i in range(4)]))
+    onset = next(f for f in common.findings if f.category == "abrupt_onset")
+    assert onset.severity == "minor"
 
 
 async def test_a_terrible_voice_reaches_review_and_never_fails(store):
@@ -450,7 +546,8 @@ async def test_metrics_are_per_utterance_and_serialize(store):
     assert first["utterance_id"] == ctx.artifact.timeline[0].id
     expected = {
         "speaker", "utterance_id", "start_s", "end_s", "words", "speech_s", "wpm", "pause_count",
-        "longest_pause_s", "pause_ratio", "chops", "mid_word_chops", "voiced_s",
+        "longest_pause_s", "pause_ratio", "halting_pauses", "halting_ratio", "interrupted",
+        "chops", "mid_word_chops", "voiced_s",
         "pitch_median_hz", "pitch_range_st", "pitch_std_st", "pitch_iqr_st", "snr_db",
         "onset_ms", "offset_ms", "flags",
     }  # fmt: skip

@@ -24,11 +24,16 @@ class TimingConfig(BaseModel):
     min_overlap_s: float = 0.1  # shorter overlaps are VAD edges, not people talking over each other
     dead_air_s: float = 6.0
     dead_air_major_s: float = 20.0
-    slow_response_s: float = 3.0
+    # On 18 real calls plain turns land at 1.5 to 2.5 s and tool turns at 4.2 to 4.8 s, so this
+    # sits just past a normal tool turn and points at outliers, not at every tool call.
+    slow_response_s: float = 5.0
     slow_response_major_s: float = 8.0
     talk_over_s: float = 1.0
     talk_over_major_s: float = 3.0
     barge_in_reaction_s: float = 1.0  # bot still talking this long after the caller cut in
+    # Past this share of channel speech outside the timeline's utterances, line noise is reading
+    # as speech. On 18 real calls the share was 0.46 with TV noise and at most 0.01 otherwise.
+    max_speech_off_timeline: float = 0.25
 
 
 class PronunciationConfig(BaseModel):
@@ -55,14 +60,25 @@ class DeliveryConfig(BaseModel):
     """Limits for how speech was delivered, checked as fixed ranges and against the call's median.
 
     Ranges come from 21 real clips, 12 TTS and 9 human, wideband and through the phone line, with
-    the benchmark's planted defects. They are still only that: nobody has rated them by ear.
+    the benchmark's planted defects, then 18 real calls of Phonon speech. They are still only that:
+    nobody has rated them by ear.
+
+    Rate leaves pauses out, so it reads high: Phonon's calls have medians of 174 to 330 wpm, while
+    inside one call 95% of utterances stay under 1.24 times its median. So with enough utterances
+    to know the voice, an utterance is judged against the call and the fixed range judges the
+    call's median, once. `min_wpm` and `max_wpm` are for an utterance with no call to compare to.
     """
 
     min_wpm: float = 125.0
     max_wpm: float = 250.0
+    min_median_wpm: float = 125.0
+    max_median_wpm: float = 340.0
     rate_median_ratio: float = 1.35  # rushed or dragging against the call's own pace
     min_words: int = 4  # shorter utterances can't give a meaningful rate
     min_rate_speech_s: float = 1.0
+    min_compare_words: int = 8  # shorter ones still give a rate, too rough to set against the call
+    min_compare_speech_s: float = 2.5
+    rate_min_snr_db: float = 17.0  # energy VAD loses the pauses past this: real lines read 14 to 16
     pause_s: float = 0.3  # shorter gaps count as speaking
     max_pause_ratio: float = 0.45  # share of an utterance spent in pauses
     min_pauses: int = 3
@@ -77,8 +93,9 @@ class DeliveryConfig(BaseModel):
     min_snr_db: float = 15.0
     snr_median_drop_db: float = 8.0
     abrupt_edge_ms: float = 9.0
+    # Real Phonon starts read as abrupt one time in five, so only a pattern is worth a reviewer.
+    abrupt_share_to_review: float = 0.5
     min_utterances_for_median: int = 3
-    max_findings_per_kind: int = 5
 
 
 class ListeningConfig(BaseModel):

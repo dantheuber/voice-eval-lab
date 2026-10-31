@@ -272,9 +272,14 @@ def write_summary(
         failed = sum(c.status == "fail" for c in criteria)
         unknown = sum(c.status == "unknown" for c in criteria)
         lines.append(f"Criteria: {passed} passed, {failed} failed, {unknown} unknown.")
-    if findings:
-        advisory = sum(f.advisory for f in findings)
-        lines.append(f"Findings: {len(findings)}, of which {advisory} advisory.")
+    review = [f for f in findings if f.severity != "info"]
+    details = len(findings) - len(review)
+    if review:
+        advisory = sum(f.advisory for f in review)
+        extra = f", plus {details} detail(s)" if details else ""
+        lines.append(f"Findings: {len(review)}, of which {advisory} advisory{extra}.")
+    elif details:
+        lines.append(f"Findings: none to review, {details} detail(s).")
     unchecked = unchecked_items(artifact, evaluators)
     if unchecked:
         lines.append("Not checked: " + "; ".join(unchecked) + ".")
