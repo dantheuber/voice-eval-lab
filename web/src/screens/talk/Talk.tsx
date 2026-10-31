@@ -57,6 +57,13 @@ export function TalkScreen() {
       setEndedCallId(callId); setPhase("evaluating");
     },
   });
+  // Closing the tab otherwise waits about 30 s for WebRTC to notice, and all that silence would count as the call.
+  useEffect(() => {
+    if (phase !== "incall" || !session || isMock()) return;
+    const leave = () => navigator.sendBeacon(`/api/talk/sessions/${session.sessionId}/end`);
+    window.addEventListener("pagehide", leave);
+    return () => window.removeEventListener("pagehide", leave);
+  }, [phase, session]);
   // The bot can hang up and the connection can drop, and then there's nothing left to wait for on this screen.
   const hungUp = call.state.status === "ended";
   useEffect(() => { if (phase === "incall" && hungUp && !endM.isPending && !endM.isError) endM.mutate(); }, [phase, hungUp, endM]);
