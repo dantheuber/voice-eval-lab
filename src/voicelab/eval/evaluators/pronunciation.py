@@ -11,13 +11,23 @@ the very tokens that fail a call.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from voicelab.core.models import CallMode, Evidence, Finding, Speaker, Utterance, Word
+from voicelab.core.models import (
+    CallArtifact,
+    CallMode,
+    Evidence,
+    Finding,
+    Speaker,
+    ToolCallEvent,
+    Utterance,
+    Word,
+)
 from voicelab.eval.config import PronunciationConfig
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
-from voicelab.eval.normalize import Aligned, Lexicon, Token, align, tokenize
+from voicelab.eval.normalize import Aligned, Lexicon, Token, align, sounds_alike, tokenize
+from voicelab.eval.rollup import roll_up
 from voicelab.providers.base import Transcript
 
 LIMITATION = (
@@ -26,6 +36,8 @@ LIMITATION = (
 )
 _CONFIDENCE_ONLY_MODES = (CallMode.HUMAN, CallMode.UPLOAD)
 _MAX_LISTED_WORDS = 6
+_SPELLING_KINDS = ("name", "lexicon", "url", "watch")  # numbers and ids can't sound alike
+_FOLLOWING_WORDS = 2  # a term the ASR split can have the rest of it just after the aligned word
 
 
 @dataclass
@@ -81,15 +93,46 @@ def _spoken_utterances(ctx: EvalContext) -> list[_Spoken]:
     return spoken
 
 
-def _known_names(ctx: EvalContext) -> set[str]:
+def _customer_names(artifact: CallArtifact) -> set[str]:
+    """Names from customer rows the tools returned. Plans have a `name` too, but no customer."""
     names: set[str] = set()
-    persona = ctx.artifact.persona_snapshot
-    if persona is not None:
-        names.update(persona.name.split())
-    if ctx.scenario is not None:
-        for value in ctx.scenario.facts.values():
-            names.update(w for w in value.split() if w.istitle() and w.isalpha())
+    for event in artifact.timeline:
+        if isinstance(event, ToolCallEvent) and isinstance(event.result, dict):
+            if "customer_id" in event.result and isinstance(event.result.get("name"), str):
+                names.update(event.result["name"].split())
     return names
+
+
+def _known_names(ctx: EvalContext) -> set[str]:
+    """Words that are people in this call. Watch terms and the lexicon are critical separately."""
+    names = _customer_names(ctx.artifact)
+    persona = ctx.artifact.persona_snapshot
+    if persona is not None:  # a persona's name can be a label: "Polite and overly chatty caller"
+        names.update(w for w in persona.name.split() if w.istitle())
+    if ctx.scenario is not None:
+        for key, value in ctx.scenario.facts.items():
+            if "name" in key.lower():
+                names.update(w for w in value.split() if w.isalpha())
+    return names
+
+
+def _aligned_alone(
+    spoken: _Spoken, hyp: list[Token], words: list[Word], slack_s: float
+) -> list[Aligned]:
+    """This utterance against only the words heard around it.
+
+    Aligning the whole call copes with drifting timestamps, but phrases the bot repeats ("one
+    moment, let me check that") can line up with the wrong utterance and leave this one with
+    nothing. When that happens, its own stretch of the recording is the better comparison.
+    """
+    start, end = spoken.utterance.start_s - slack_s, spoken.utterance.end_s + slack_s
+    nearby = [t for t in hyp if t.start < len(words) and start <= words[t.start].start_s <= end]
+    return align(spoken.tokens, nearby)
+
+
+def _better_of(whole: list[Aligned], alone: list[Aligned]) -> list[Aligned]:
+    """Prefer the whole-call result unless the utterance's own stretch clearly matched more."""
+    return alone if sum(a.matched for a in alone) > sum(a.matched for a in whole) else whole
 
 
 def _trim_cut_off(tokens: list[Aligned], cut_off: bool) -> list[Aligned]:
@@ -169,6 +212,24 @@ def _live_words(group: _Group, lexicon: Lexicon) -> list[str] | None:
     return [words[i] for i in indices]
 
 
+def _same_sound(said: list[str], heard: list[str], lexicon: Lexicon) -> bool:
+    return sounds_alike(_canonical(said, lexicon), _canonical(heard, lexicon))
+
+
+def _spelled_differently(
+    group: _Group, heard: list[Word], words: list[Word], lexicon: Lexicon
+) -> bool:
+    """Whether what looks like a mismatch is the same sound written another way."""
+    if group.kind not in _SPELLING_KINDS or not heard:
+        return False
+    said = group.expected.split()
+    after = words.index(heard[-1]) + 1
+    longer = [[*heard, *words[after : after + extra]] for extra in range(_FOLLOWING_WORDS + 1)]
+    # A name inside an address aligns with the whole address, so try its words one at a time.
+    candidates = [*longer, *([word] for word in heard)]
+    return any(_same_sound(said, [w.text for w in c], lexicon) for c in candidates)
+
+
 def _same_engine(ctx: EvalContext, transcript: Transcript) -> bool:
     live = ctx.artifact.providers.get("stt_live")
     evaluated = transcript.model or (ctx.deps.stt.name if ctx.deps.stt else "")
@@ -185,10 +246,11 @@ def _confirm(
         note = "ASR only: the live and eval transcripts came from the same engine, so their "
         return _Confirmation(False, note + "agreement isn't independent.")
     live_text = _canonical(live, lexicon)
-    if live_text == _canonical(group.expected.split(), lexicon):
+    expected_text = _canonical(group.expected.split(), lexicon)
+    if live_text == expected_text or sounds_alike(expected_text, live_text):
         return _Confirmation(False, "ASR only: the live engine heard it as scripted.")
     eval_text = _canonical([w.text for w in heard], lexicon)
-    if eval_text and live_text == eval_text:
+    if eval_text and (live_text == eval_text or sounds_alike(eval_text, live_text)):
         note = f'Corroborated: the live and eval engines both heard "{" ".join(live)}".'
         return _Confirmation(True, note)
     return _Confirmation(
@@ -218,15 +280,16 @@ def _mismatch_finding(
 def _low_confidence_critical_finding(
     group: _Group, heard: list[Word], span: tuple[float, float]
 ) -> Finding:
+    """The word matched, so nothing is wrong. It's a detail for anyone checking this clip."""
     lowest = min(w.confidence for w in heard if w.confidence is not None)
     quote = " ".join(w.text for w in heard)
     return Finding(
         evaluator="pronunciation",
         category="low_confidence_critical",
-        severity="minor",
+        severity="info",
         advisory=True,
         title=f"Critical {group.kind} heard with low confidence: {group.expected}",
-        detail=f'The ASR matched "{quote}", but its confidence was only {lowest:.2f}.',
+        detail=f'"{quote}" matched at confidence {lowest:.2f}',
         evidence=[Evidence(quote=quote, speaker=Speaker.BOT, start_s=span[0], end_s=span[1])],
     )
 
@@ -252,6 +315,14 @@ def _ordinary_finding(
         detail="; ".join(pairs),
         evidence=[Evidence(speaker=Speaker.BOT, start_s=utterance.start_s, end_s=utterance.end_s)],
     )
+
+
+def _ordinary_title(group: list[Finding]) -> str:
+    return f"Ordinary words differ from the script in {len(group)} utterances"
+
+
+def _confidence_title(group: list[Finding]) -> str:
+    return f"{len(group)} critical words matched at low confidence"
 
 
 def _heard_text(item: Aligned, words: list[Word]) -> str:
@@ -350,38 +421,49 @@ class PronunciationEvaluator:
         by_utterance: dict[int, list[int]] = {}
         for position, owner in enumerate(owners):
             by_utterance.setdefault(id(owner), []).append(position)
-        ordinary_total = 0
+        ordinary: list[Finding] = []
         for item in spoken:
             positions = by_utterance.get(id(item), [])
-            items = [aligned[p] for p in positions]
+            items = _better_of(
+                [aligned[p] for p in positions],
+                _aligned_alone(item, hyp, words, cfg.utterance_slack_s),
+            )
+            for position, better in zip(positions, items, strict=True):
+                aligned[position] = better
             remaining = len(_trim_cut_off(items, item.utterance.interrupted))
             for p in positions[remaining:]:
                 kept[p] = False
-            items = items[:remaining]
-            ordinary_total += sum(a.ref.critical is None for a in items)
-            finding = _ordinary_finding(item, items, words, cfg)
+            finding = _ordinary_finding(item, items[:remaining], words, cfg)
             if finding is not None:
-                out.findings.append(finding)
+                ordinary.append(finding)
 
         groups = _groups(aligned, owners, kept)
         by_kind: dict[str, dict[str, int]] = {}
         corroborated = 0
+        spelled = 0
+        doubtful: list[Finding] = []
         for group in groups:
             tally = by_kind.setdefault(group.kind, {"total": 0, "mismatched": 0})
             tally["total"] += 1
             heard = _heard_words(group.items, words)
             span = _time_span(group.items, aligned, group.position, words, group.spoken.utterance)
-            if group.mismatched:
+            if group.mismatched and _spelled_differently(group, heard, words, lexicon):
+                spelled += 1
+                for item in group.items:
+                    aligned[group.position + group.items.index(item)] = replace(item, matched=True)
+            elif group.mismatched:
                 tally["mismatched"] += 1
                 text = " ".join(w.text for w in heard)
                 confirmation = _confirm(group, heard, ctx, transcript, lexicon)
                 corroborated += confirmation.corroborated
                 out.findings.append(_mismatch_finding(group, text, span, confirmation))
             elif any(w.confidence is not None and w.confidence < cfg.low_confidence for w in heard):
-                out.findings.append(_low_confidence_critical_finding(group, heard, span))
+                doubtful.append(_low_confidence_critical_finding(group, heard, span))
+        out.findings.extend(roll_up(ordinary, key=lambda _: "all", title=_ordinary_title))
+        out.findings.extend(roll_up(doubtful, key=lambda _: "all", title=_confidence_title))
 
         counted = [a for a, keep in zip(aligned, kept, strict=True) if keep]
-        out.metrics.update(_comparison_metrics(counted, groups, by_kind))
+        out.metrics.update(_comparison_metrics(counted, groups, by_kind, spelled))
         out.metrics["critical_corroborated"] = corroborated
 
     def _confidence_pass(
@@ -396,7 +478,10 @@ class PronunciationEvaluator:
 
 
 def _comparison_metrics(
-    counted: list[Aligned], groups: list[_Group], by_kind: dict[str, dict[str, int]]
+    counted: list[Aligned],
+    groups: list[_Group],
+    by_kind: dict[str, dict[str, int]],
+    spelled: int,
 ) -> dict[str, Any]:
     matched = sum(a.matched for a in counted)
     return {
@@ -405,6 +490,7 @@ def _comparison_metrics(
         "tokens_matched": matched,
         "token_accuracy": round(matched / len(counted), 4) if counted else None,
         "critical_tokens": len(groups),
-        "critical_mismatches": sum(g.mismatched for g in groups),
+        "critical_mismatches": sum(kind["mismatched"] for kind in by_kind.values()),
+        "sound_alike": spelled,  # critical tokens the ASR spelled differently, same sound
         "critical_by_kind": by_kind,
     }

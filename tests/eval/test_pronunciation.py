@@ -7,12 +7,13 @@ from voicelab.core.models import (
     Persona,
     Scenario,
     Speaker,
+    ToolCallEvent,
     Utterance,
     VoiceRef,
 )
 from voicelab.eval.context import EvalContext, EvalDeps, EvaluatorOutput, Skip
 from voicelab.eval.evaluators.pronunciation import LIMITATION, PronunciationEvaluator
-from voicelab.eval.normalize import Lexicon, align, tokenize
+from voicelab.eval.normalize import Lexicon, align, sounds_alike, tokenize
 from voicelab.providers.base import Transcript
 
 
@@ -94,7 +95,6 @@ def test_real_differences_do_not_match(written, heard):
         ("Email help@fernhill.example now", "help", "url"),
         ("Invoice FH-4419 is paid", "fh", "id"),
         ("We use SSL here", "ssl", "acronym"),
-        ("Thanks for calling, Dana.", "dana", "name"),
     ],
 )
 def test_critical_tokens_are_classified(text, norm, kind):
@@ -263,8 +263,10 @@ async def test_wrong_amount_is_a_major_finding_with_timing(store):
 
 
 async def test_each_kind_of_critical_mismatch_is_major(store):
+    scenario = Scenario(title="t", goal="g", facts={"name": "Dana Whitfield"})
     artifact = call(
-        bot_utterance("Invoice FH-4419 for Dana on fernhill.example uses SSL.", 1.0, 9.0)
+        bot_utterance("Invoice FH-4419 for Dana on fernhill.example uses SSL.", 1.0, 9.0),
+        scenario_snapshot=scenario,
     )
     out = await evaluate(
         store, artifact, "invoice FH 4491 for Dina on fernhill dot sample uses TLS"
@@ -316,9 +318,9 @@ async def test_many_ordinary_mismatches_rise_to_minor_but_stay_advisory(store):
 async def test_low_confidence_on_a_critical_word_is_flagged_as_a_clip(store):
     artifact = call(bot_utterance("Your PIN is 4821 today", 1.0, 4.0))
     out = await evaluate(store, artifact, "your pin is 4821 today", confidence=0.3)
-    flagged = [f for f in out.findings if f.category == "low_confidence_critical"]
-    assert [f.evidence[0].quote for f in flagged] == ["pin", "4821"]
-    assert all(f.advisory for f in flagged)
+    [flagged] = [f for f in out.findings if f.category == "low_confidence_critical"]
+    assert [e.quote for e in flagged.evidence] == ["pin", "4821"]
+    assert flagged.advisory
 
 
 async def test_cut_off_utterance_compares_against_what_was_spoken(store):
@@ -613,3 +615,237 @@ def test_a_contradicted_letter_is_still_part_of_its_id():
 @pytest.mark.parametrize("anchor", ["x-ray", "X-ray.", "xray"])
 def test_a_hyphenated_anchor_is_one_word(anchor):
     assert norms(f"X as in {anchor} Y as in yellow 9 0 7 7") == norms("X Y 9 0 7 7")
+
+
+# What counts as a name ---------------------------------------------------------------------------
+
+
+def test_a_known_name_is_critical():
+    assert critical("Thanks for calling, Dana.", known_names=["Dana"]) == {"dana": "name"}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "You are on the Website Business plan.",
+        "The next plan up is Email Plus at the same rate.",
+        "Well, I'm sorry about that.",
+        "Yes, and I've checked it.",
+    ],
+)
+def test_capitals_alone_do_not_make_a_name(text):
+    assert critical(text) == {}
+
+
+async def test_a_name_from_a_tool_result_is_critical(store):
+    found = ToolCallEvent(
+        at_s=1.0, name="find_customer", result={"customer_id": "c1", "name": "Marcus Bell"}
+    )
+    artifact = call(bot_utterance("Thanks Marcus, one moment.", 2.0, 4.0))
+    artifact.timeline.insert(0, found)
+    out = await evaluate(store, artifact, "thanks markets one moment")
+    assert out.metrics["critical_by_kind"]["name"]["mismatched"] == 1
+
+
+async def test_a_plan_name_in_a_tool_result_is_not_a_person(store):
+    plans = ToolCallEvent(
+        at_s=1.0, name="list_plans", result={"plans": [{"plan_id": "p1", "name": "Email Plus"}]}
+    )
+    artifact = call(bot_utterance("The plan is Email Plus today.", 2.0, 4.0))
+    artifact.timeline.insert(0, plans)
+    out = await evaluate(store, artifact, "the plan is email plus today")
+    assert "name" not in out.metrics["critical_by_kind"]
+
+
+async def test_only_name_facts_are_names(store):
+    scenario = Scenario(
+        title="t", goal="g", facts={"name": "Tom Okafor", "reason": "Moving the business"}
+    )
+    artifact = call(bot_utterance("Moving is hard, Tom.", 2.0, 4.0), scenario_snapshot=scenario)
+    out = await evaluate(store, artifact, "moving is hard tom")
+    assert out.metrics["critical_by_kind"]["name"]["total"] == 1
+
+
+# Sound alikes ------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("said", "heard"),
+    [
+        ("Sofia", "Sophia"),
+        ("Aisha", "Ayesha"),
+        ("Rahman", "Raman"),
+        ("okafor", "ocawfor"),
+        ("rahmanlawdotexample", "ramenlawdotexample"),
+        ("marinocafe", "merinocafe"),
+        ("Marino", "Marino"),
+    ],
+)
+def test_spellings_of_one_sound_are_alike(said, heard):
+    assert sounds_alike(said, heard)
+
+
+@pytest.mark.parametrize(
+    ("said", "heard"),
+    [
+        ("Dana", "Dina"),
+        ("okafor", "oakaffair"),
+        ("hill", "hall"),
+        ("ssl", "ss"),
+        ("mx", "ms"),
+        ("fh4419", "fh4491"),
+        ("mail2example", "mail3example"),
+        ("marcus", "markets"),
+        ("Marino", "Marina"),
+        ("", "Sophia"),
+    ],
+)
+def test_real_differences_are_not_alike(said, heard):
+    assert not sounds_alike(said, heard)
+
+
+async def test_both_engines_spelling_a_name_another_way_is_no_finding(store):
+    scenario = Scenario(title="t", goal="g", facts={"name": "Sofia Marino"})
+    artifact = call(
+        bot_utterance("I found your account, Sofia.", 1.0, 4.0, heard_text="found account Sophia."),
+        scenario_snapshot=scenario,
+    )
+    out = await evaluate(store, artifact, "I found your account, Sophia.")
+    assert critical_findings(out) == []
+    assert out.metrics["critical_mismatches"] == 0
+    assert out.metrics["sound_alike"] == 1
+
+
+async def test_a_misheard_name_that_sounds_different_is_still_caught(store):
+    scenario = Scenario(title="t", goal="g", facts={"name": "Dana Whitfield"})
+    artifact = call(
+        bot_utterance("Thanks Dana, one moment.", 1.0, 4.0, heard_text="Thanks Dina, one moment."),
+        scenario_snapshot=scenario,
+    )
+    out = await evaluate(store, artifact, "thanks Dina one moment")
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_corroborated"
+
+
+async def test_a_respelled_term_heard_as_one_word_matches(store):
+    """The TTS text says "win auto", and an ASR writes what it heard as one word."""
+    scenario = Scenario(title="t", goal="g", pronunciation_watch=["nguyenauto.example"])
+    artifact = call(
+        bot_utterance("The domain is win auto dot example.", 1.0, 4.0),
+        scenario_snapshot=scenario,
+    )
+    out = await evaluate(store, artifact, "The domain is winauto.example.")
+    assert critical_findings(out) == []
+
+
+async def test_joined_and_spaced_letters_with_punctuation_match(store):
+    scenario = Scenario(title="t", goal="g", pronunciation_watch=["SSL"])
+    artifact = call(
+        bot_utterance("Your S S L certificate.", 1.0, 3.0, heard_text="Your SSL certificate."),
+        scenario_snapshot=scenario,
+    )
+    out = await evaluate(store, artifact, "Your SSL. certificate")
+    assert critical_findings(out) == []
+
+
+async def test_a_dropped_letter_both_engines_heard_stays_corroborated(store):
+    """Seen on a real call: the TTS said "S S certificate", and both engines wrote SS."""
+    scenario = Scenario(title="t", goal="g", pronunciation_watch=["SSL"])
+    artifact = call(
+        bot_utterance("Your S S L certificate.", 1.0, 3.0, heard_text="Your SS certificate."),
+        scenario_snapshot=scenario,
+    )
+    out = await evaluate(store, artifact, "Your SS certificate")
+    [finding] = critical_findings(out)
+    assert finding.category == "critical_token_corroborated"
+
+
+async def test_a_wrong_digit_is_never_excused_as_a_sound_alike(store):
+    artifact = call(bot_utterance("Invoice FH-4419 is paid.", 1.0, 4.0))
+    out = await evaluate(store, artifact, "invoice FH-4491 is paid")
+    assert len(critical_findings(out)) == 1
+
+
+async def test_the_near_word_after_a_short_heard_form_still_counts(store):
+    """A two-word term the ASR split: only the first word lines up with the folded token."""
+    artifact = call(bot_utterance("Thanks for calling Marino Cafe today.", 1.0, 4.0))
+    out = await evaluate(store, artifact, "thanks for calling Merino Cafe today")
+    assert critical_findings(out) == []
+
+
+# Noise -------------------------------------------------------------------------------------------
+
+
+async def test_ordinary_mismatches_roll_up_into_one_finding_with_every_occurrence(store):
+    artifact = call(
+        bot_utterance("please hold while I check that for you now today", 1.0, 5.0),
+        bot_utterance("thanks for waiting while I look that up for you", 10.0, 14.0),
+    )
+    out = await evaluate(
+        store,
+        artifact,
+        "please hold while I chuck that for you now today "
+        "thanks for wading while I look that up for you",
+    )
+    [finding] = [f for f in out.findings if f.category == "word_mismatch"]
+    assert len(finding.evidence) == 2
+    assert finding.severity == "info"
+    assert "2 utterances" in finding.title
+
+
+async def test_low_confidence_on_matched_words_is_one_detail_not_a_review_item(store):
+    artifact = call(bot_utterance("Your PIN is 4821 and FH-4419 today", 1.0, 4.0))
+    out = await evaluate(store, artifact, "your pin is 4821 and FH-4419 today", confidence=0.3)
+    [finding] = [f for f in out.findings if f.category == "low_confidence_critical"]
+    assert finding.severity == "info"
+    assert finding.advisory is True
+    assert len(finding.evidence) == 3
+    assert "pin" in finding.detail and "4821" in finding.detail
+
+
+async def test_a_repeated_phrase_is_not_lost_to_the_whole_call_alignment(store):
+    """Two near-identical utterances, the first cut off. Each must find its own words."""
+    first = bot_utterance(
+        "One moment. The system shows two accounts. Let me verify the billing details",
+        1.0,
+        6.0,
+        interrupted=True,
+    )
+    second = bot_utterance(
+        "One moment. The system shows two accounts. Let me verify the billing address",
+        10.0,
+        15.0,
+    )
+    artifact, paths = write_call(store, call(first, second), duration_s=30.0)
+    heard_first = timed_words("one moment the system shows two accounts let me", 1.0)
+    heard_second = timed_words(
+        "one moment the system shows two accounts let me verify the billing address", 10.0
+    )
+    words = heard_first + heard_second
+    ctx = EvalContext(artifact, paths, EvalDeps())
+    ctx.transcripts[Speaker.BOT] = Transcript(text="", words=words)
+    out = EvaluatorOutput()
+    await PronunciationEvaluator().run(ctx, out)
+    assert [f for f in out.findings if f.category == "word_mismatch"] == []
+
+
+async def test_a_name_inside_an_address_compares_against_its_own_word(store):
+    scenario = Scenario(title="t", goal="g", facts={"name": "Aisha Rahman"})
+    artifact = call(
+        bot_utterance(
+            "The account is for aisha at rahman law dot example.",
+            1.0,
+            5.0,
+            heard_text="The account is for aisha@ramenlaw.example.",
+        ),
+        scenario_snapshot=scenario,
+    )
+    out = await evaluate(store, artifact, "The account is for ayesha at ramanlaw.example.")
+    assert critical_findings(out) == []
+
+
+async def test_a_persona_label_is_not_a_person(store):
+    persona = Persona(name="Polite and overly chatty caller", voice=VoiceRef(voice_id="v"))
+    artifact = call(bot_utterance("Yes, and overly so.", 1.0, 3.0), persona_snapshot=persona)
+    out = await evaluate(store, artifact, "yes and overly so")
+    assert "name" not in out.metrics["critical_by_kind"]

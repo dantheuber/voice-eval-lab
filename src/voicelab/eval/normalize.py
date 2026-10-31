@@ -25,7 +25,6 @@ from voicelab.company.db import SEEDS_DIR
 LEXICON_FILE = SEEDS_DIR / "lexicon.yaml"
 
 _EDGE_PUNCTUATION = "\"'`.,!?;:()[]{}<>"
-_SENTENCE_END = (".", "?", "!", ":")
 
 _NUMERIC = re.compile(r"^\$?\d[\d,.\-:/]*(st|nd|rd|th|%)?$")
 _NUMBER_WITH_UNIT = re.compile(r"^(\d+)([A-Za-z]{2,})$")
@@ -304,18 +303,6 @@ def _id_tokens(text: str) -> list[str]:
     return [letters, *re.sub(r"\D", "", text)]
 
 
-def _is_sentence_start(words: Sequence[str], source: int) -> bool:
-    return source == 0 or words[source - 1].rstrip("\"')").endswith(_SENTENCE_END)
-
-
-def _name_kind(piece: _Piece, words: Sequence[str], known_names: set[str]) -> str | None:
-    if piece.text in known_names:
-        return "name"
-    original = piece.original
-    capitalized = len(original) > 1 and original[0].isupper() and original[1:].islower()
-    return "name" if capitalized and not _is_sentence_start(words, piece.source) else None
-
-
 def _is_spelled_letter(piece: _Piece) -> bool:
     return len(piece.original) == 1 and piece.original.isalpha() and piece.original.isupper()
 
@@ -328,9 +315,7 @@ def _spelled_run_end(pieces: Sequence[_Piece], start: int) -> int:
     return end
 
 
-def _classified(
-    pieces: Sequence[_Piece], words: Sequence[str], names: set[str], tlds
-) -> list[Token]:
+def _classified(pieces: Sequence[_Piece], names: set[str], tlds) -> list[Token]:
     tokens: list[Token] = []
     i = 0
     while i < len(pieces):
@@ -359,7 +344,9 @@ def _classified(
         elif _ACRONYM.match(piece.original):
             norms, kind = [text.replace(".", "").removesuffix("s")], "acronym"
         else:
-            norms, kind = _expand_word(text), _name_kind(piece, words, names)
+            # Capitals don't make a name: "Website Business" is a plan, and a transcript has them
+            # wherever the ASR felt like it. Only an entity this call knows about counts.
+            norms, kind = _expand_word(text), "name" if text in names else None
         tokens.extend(Token(n, piece.source, piece.source + 1, kind) for n in norms)
         i += 1
     return tokens
@@ -458,7 +445,7 @@ def tokenize(
     """Normalize words and mark the critical ones. `start`/`end` index back into `words`."""
     tlds = lexicon.tlds if lexicon is not None else _DEFAULT_TLDS
     names = {n.lower() for n in known_names}
-    tokens = _classified(_pieces(words, tlds), words, names, tlds)
+    tokens = _classified(_pieces(words, tlds), names, tlds)
     if lexicon is not None:
         tokens = lexicon.fold(tokens)
     tokens = _without_spelling_anchors(tokens)
@@ -492,9 +479,11 @@ class Lexicon:
             canonical = [t.norm for t in tokenize(term.split())]
             for form in forms:
                 variant = [t.norm for t in tokenize(form.split())]
-                if variant and variant != canonical:
-                    entry = (variant, canonical, _is_distinctive(variant))
-                    self._by_first_word.setdefault(variant[0], []).append(entry)
+                # An ASR writes a respelling as easily as "winauto" as "win auto".
+                for spelled in (variant, ["".join(variant)]):
+                    if variant and spelled != canonical:
+                        entry = (spelled, canonical, _is_distinctive(variant))
+                        self._by_first_word.setdefault(spelled[0], []).append(entry)
         for entries in self._by_first_word.values():
             entries.sort(key=lambda entry: len(entry[0]), reverse=True)
 
@@ -538,6 +527,54 @@ class Lexicon:
 def _is_distinctive(spoken: list[str]) -> bool:
     """Whether hearing this form means the term was meant, rather than ordinary English."""
     return len(spoken) >= 2 and not _COMMON_WORDS.intersection(spoken)
+
+
+# Sound -------------------------------------------------------------------------------------------
+
+_VOWELS = "aeiou"
+_SOUND_RULES = (
+    (re.compile(r"[^a-z0-9]"), ""),
+    (re.compile(r"ph"), "f"),
+    (re.compile(r"ck"), "k"),
+    (re.compile(r"qu"), "kw"),
+    (re.compile(r"q"), "k"),
+    (re.compile(r"x"), "ks"),
+    (re.compile(r"c(?=[eiy])"), "s"),
+    (re.compile(r"c"), "k"),
+    (re.compile(r"z"), "s"),
+    (re.compile(r"y"), "i"),
+    (re.compile(r"(?<=[aeiou])[wh](?![aeiou])"), ""),  # "caw", "rahman"
+    (re.compile(r"([aeiou])[aeiou]+"), r"\1"),  # "sofia", "aisha" and "ayesha"
+    (re.compile(r"(.)\1+"), r"\1"),
+)
+_MIN_LETTERS_FOR_VOWEL_SLIP = 7
+
+
+def _sound_key(text: str) -> str:
+    key = text.lower()
+    for pattern, replacement in _SOUND_RULES:
+        key = pattern.sub(replacement, key)
+    return key
+
+
+def sounds_alike(said: str, heard: str) -> bool:
+    """Whether two spellings are one sound, so a difference is the ASR's spelling and not speech.
+
+    Names and respelled terms come back as whatever the ASR thinks is likely: Sofia as Sophia,
+    Rahman as Raman. Both engines do it the same way, so it looks like corroboration, and it isn't.
+    This is deliberately narrow. Spelling rules only, plus one unstressed-looking vowel in a long
+    word, since "ramen law" against "rahman law" is what schwa does. A short word's vowel is the
+    word: Dana isn't Dina. Anything with a digit has to match exactly.
+    """
+    a, b = _sound_key(said), _sound_key(heard)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if any(c.isdigit() for c in a + b) or len(a) != len(b) or len(a) < _MIN_LETTERS_FOR_VOWEL_SLIP:
+        return False
+    slips = [(x, y) for x, y in zip(a, b, strict=True) if x != y]
+    return len(slips) == 1 and slips[0][0] in _VOWELS and slips[0][1] in _VOWELS and a[0] == b[0]
 
 
 # Alignment ---------------------------------------------------------------------------------------

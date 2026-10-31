@@ -35,6 +35,7 @@ class PronunciationConfig(BaseModel):
     low_confidence: float = 0.6  # ASR confidence under this marks a word as doubtful
     minor_mismatch_rate: float = 0.15  # ordinary word errors per utterance, above which it's minor
     max_low_confidence_findings: int = 10
+    utterance_slack_s: float = 2.0  # how far around an utterance its words can land
 
 
 class AudioQualityConfig(BaseModel):

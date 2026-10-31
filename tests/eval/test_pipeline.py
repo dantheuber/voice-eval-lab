@@ -402,6 +402,15 @@ def test_clip_bounds_add_context_around_evidence():
     assert (finding.clip_start_s, finding.clip_end_s) == (7.0, 18.0)
 
 
+def test_clip_bounds_leave_out_evidence_minutes_away():
+    finding = Finding(
+        evaluator="e", category="c", title="t",
+        evidence=[Evidence(start_s=100.0, end_s=102.0), Evidence(start_s=10.0, end_s=12.0)],
+    )  # fmt: skip
+    set_clip_bounds(finding, 300.0, 3.0)
+    assert (finding.clip_start_s, finding.clip_end_s) == (97.0, 105.0)
+
+
 def test_clip_bounds_clamp_to_the_call():
     finding = Finding(
         evaluator="e", category="c", title="t", evidence=[Evidence(start_s=1.0, end_s=19.0)]

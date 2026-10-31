@@ -13,7 +13,14 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from voicelab.core.models import CallArtifact, CriterionResult, EvalResult, EvaluatorRun, Finding
+from voicelab.core.models import (
+    CallArtifact,
+    CriterionResult,
+    EvalResult,
+    EvaluatorRun,
+    Evidence,
+    Finding,
+)
 from voicelab.eval.context import (
     EvalContext,
     EvalDeps,
@@ -35,6 +42,8 @@ from voicelab.eval.verdict import decide_verdict, write_summary
 from voicelab.store.artifacts import CallPaths
 
 logger = logging.getLogger(__name__)
+
+_CLIP_JOIN_S = 10.0  # evidence this near the clip plays with it
 
 
 @dataclass(frozen=True)
@@ -110,18 +119,25 @@ async def _run_one(evaluator: Evaluator, ctx: EvalContext) -> tuple[EvaluatorRun
 
 
 def set_clip_bounds(finding: Finding, duration_s: float, context_s: float) -> None:
-    """Give a finding playable bounds: its evidence plus context, clamped to the call."""
-    starts = [e.start_s for e in finding.evidence if e.start_s is not None]
-    ends = [e.end_s if e.end_s is not None else e.start_s for e in finding.evidence]
-    ends = [end for end in ends if end is not None]
-    if finding.clip_start_s is not None:
-        starts.append(finding.clip_start_s)
-    if finding.clip_end_s is not None:
-        ends.append(finding.clip_end_s)
-    if not starts:
+    """Give a finding playable bounds around its first evidence, clamped to the call.
+
+    Evidence close to it joins the clip. Evidence minutes away doesn't, since a clip is one moment
+    to listen to, and a finding that happened all call shouldn't play the whole call.
+    """
+    timed = [e for e in finding.evidence if e.start_s is not None]
+    if not timed:
         return
-    finding.clip_start_s = max(0.0, min(starts) - context_s)
-    finding.clip_end_s = min(duration_s, max(ends or starts) + context_s)
+    start, end = timed[0].start_s, _end_of(timed[0])
+    for evidence in timed[1:]:
+        if evidence.start_s > end + _CLIP_JOIN_S or _end_of(evidence) < start - _CLIP_JOIN_S:
+            break
+        start, end = min(start, evidence.start_s), max(end, _end_of(evidence))
+    finding.clip_start_s = max(0.0, start - context_s)
+    finding.clip_end_s = min(duration_s, end + context_s)
+
+
+def _end_of(evidence: Evidence) -> float:
+    return evidence.end_s if evidence.end_s is not None else evidence.start_s
 
 
 async def run_evaluation(

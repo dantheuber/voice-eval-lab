@@ -500,7 +500,7 @@ def test_hitting_the_turn_limit_before_a_beat_is_invalid_and_says_so():
     assert any("turn limit" in reason for reason in decision.reasons)
 
 
-# Fact sheet breaches around a commission -----------------------------------------------------------
+# Fact sheet breaches around a commission ----------------------------------------------------------
 
 
 def timed_breach(at_s: float | None) -> Finding:
