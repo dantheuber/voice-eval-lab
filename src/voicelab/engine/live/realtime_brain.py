@@ -143,8 +143,8 @@ class RealtimeBrain(BotBrain):
         else:
             self._release_pre_roll()
 
-    async def _finish_far_side_turn(self) -> None:
-        await self.on_far_side_finished()  # the model heard the audio, so no transcript to wait for
+    async def _words_are_in(self) -> bool:
+        return True  # the model heard the audio, so no transcript to wait for
 
     async def on_far_side_finished(self) -> None:
         """Local turn detection decided the caller is done, so ask for the reply now.

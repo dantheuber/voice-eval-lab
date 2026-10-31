@@ -186,6 +186,20 @@ class DeafSTT(FakeSTT):
         return await super().transcribe(audio, language=language, hints=hints)
 
 
+class SlowSTT(FakeSTT):
+    """Hears correctly, but takes longer than a turn is allowed to stay open."""
+
+    def __init__(self, delay_s: float) -> None:
+        super().__init__()
+        self.delay_s = delay_s
+
+    async def transcribe(
+        self, audio: AudioClip, *, language: str = "en", hints: list[str] | None = None
+    ) -> Transcript:
+        await asyncio.sleep(self.delay_s)
+        return await super().transcribe(audio, language=language, hints=hints)
+
+
 class FailingTTS(FakeTTS):
     """Works for `ok_for` lines and then raises."""
 

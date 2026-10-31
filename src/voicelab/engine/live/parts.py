@@ -11,6 +11,7 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
 from pipecat.frames.frames import (
+    DataFrame,
     Frame,
     InputAudioRawFrame,
     OutputAudioRawFrame,
@@ -113,11 +114,21 @@ class LiveSettings:
     client_buffer_s: float = 0.08  # past the tap on a mic call. See docs/LIVE_ENGINE.md, Barge-in
     settle_after_end_s: float = 1.5  # time for the far side to hear the last words of a call
     filler_after_s: float | None = 0.6  # say "one moment" if the tool call took this long to come
+    stt_timeout_s: float = 65.0  # past the adapters' own 60 s, so a failure reports their reason
 
 
 def simple_settings() -> LiveSettings:
     """For stacks with no real speech in them: the fake profile, and tests."""
     return LiveSettings(vad=EnergyVAD, turn_stop=_timed_stop, stop_timeout_s=1.5)
+
+
+@dataclass
+class TranscriptDoneFrame(DataFrame):
+    """STT has finished one stretch of speech, with or without words.
+
+    It follows that stretch's transcript through the same queue, so the words got there first. An
+    empty result sends no transcript at all, and only this tells a turn to stop waiting.
+    """
 
 
 class WrappedSTT(SegmentedSTTService):
@@ -146,6 +157,7 @@ class WrappedSTT(SegmentedSTTService):
         text = transcript.text.strip()
         if text:
             yield TranscriptionFrame(text, self._user_id, time_now_iso8601())
+        yield TranscriptDoneFrame()
 
 
 class WrappedTTS(TTSService):

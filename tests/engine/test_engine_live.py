@@ -5,6 +5,7 @@ which rightly doesn't call tones speech. Real models are in test_engine_live_mod
 """
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ from enginefakes import (
     Messages,
     Rewriting,
     Scripted,
+    SlowSTT,
     persona,
     request,
     says,
@@ -274,6 +276,35 @@ async def test_nothing_is_asked_of_the_bot_when_stt_hears_nothing(store):
 
     assert support.requests == []
     assert artifact.status == CallStatus.EVALUATING
+
+
+async def test_a_transcript_slower_than_the_turn_watchdog_is_still_answered(store):
+    """Pipecat gives up on a turn after `stop_timeout_s`. STT can take longer, and the bot used to
+    treat that as an empty turn, then never answer the words when they came."""
+    support = Scripted(default="Thanks for waiting.")
+    settings = simple_settings()
+
+    artifact = await asyncio.wait_for(
+        run_live_bot_call(
+            request(
+                mode=CallMode.LIVE_BOTS,
+                persona=persona(line=LIVE),
+                scenario=scenario(max_turns=2),
+            ),
+            stack=stack(
+                llm_caller=quick_caller(says("My email stopped working.")),
+                llm_support=support,
+                stt_live=SlowSTT(delay_s=1.0),
+            ),
+            store=store,
+            emit=Messages(),
+            settings=replace(settings, stop_timeout_s=0.3),
+        ),
+        45,
+    )
+
+    assert artifact.status == CallStatus.EVALUATING
+    assert "My email stopped working." in str(support.requests[0])
 
 
 # Failure paths -----------------------------------------------------------------------------------

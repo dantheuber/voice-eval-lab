@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+from pipecat.frames.frames import TranscriptionFrame
 
 from voicelab.agents.caller import CallerLine
 from voicelab.core.audio import AudioClip
@@ -10,10 +11,16 @@ from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
 from voicelab.engine.live.brains import BotBrain, Brain, CallerBrain
 from voicelab.engine.live.log import LiveLog
-from voicelab.engine.live.parts import LiveSettings, WrappedTTS, _smart_turn
+from voicelab.engine.live.parts import (
+    LiveSettings,
+    TranscriptDoneFrame,
+    WrappedSTT,
+    WrappedTTS,
+    _smart_turn,
+)
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.tool_checks import tool_call_problem
-from voicelab.providers.base import ToolCall, ToolDef
+from voicelab.providers.base import ToolCall, ToolDef, Transcript
 from voicelab.store.artifacts import ArtifactStore
 
 RATE = 16000
@@ -435,9 +442,25 @@ class _RecordingBrain(Brain):
     speaker = Speaker.BOT
     far_side = None
 
-    def __init__(self) -> None:
-        super().__init__(log=None, ledger=PlayoutLedger(), settings=LiveSettings(), fail=None)
+    def __init__(self, *, stt_timeout_s: float = 30.0) -> None:
+        self.failures: list[str] = []
+
+        async def fail(message: str) -> None:
+            self.failures.append(message)
+
+        super().__init__(
+            log=None,
+            ledger=PlayoutLedger(),
+            settings=LiveSettings(stt_timeout_s=stt_timeout_s),
+            fail=fail,
+        )
         self.turns: list[str] = []
+
+    def create_task(self, coroutine, name=None):
+        return asyncio.ensure_future(coroutine)
+
+    async def cancel_task(self, task, *_):
+        task.cancel()
 
     async def on_far_side_finished(self) -> None:
         self.turns.append(self.take_heard())
@@ -446,17 +469,125 @@ class _RecordingBrain(Brain):
 async def test_a_turn_end_that_overtakes_its_transcript_still_gets_the_words():
     """On a real call the stop frame won this race and the bot never answered a 6 s sentence."""
     brain = _RecordingBrain()
+    brain.far_side_spoke()
     finishing = asyncio.ensure_future(brain._finish_far_side_turn())
     await asyncio.sleep(0.02)
     brain.on_transcript("Can you explain how refunds work?")
+    brain.on_transcript_done()
     await finishing
     assert brain.turns == ["Can you explain how refunds work?"]
 
 
-async def test_a_turn_with_no_words_still_ends():
+async def test_a_turn_with_no_speech_still_ends():
     brain = _RecordingBrain()
     await brain._finish_far_side_turn()
     assert brain.turns == [""]
+
+
+async def test_a_turn_waits_for_stt_however_long_it_takes():
+    """Pipecat's 5 s watchdog can close a turn before STT answers. A fixed wait gave up, and the
+    words stayed in `heard_parts` with nothing left to answer them."""
+    brain = _RecordingBrain()
+    brain.far_side_spoke()
+    finishing = asyncio.ensure_future(brain._finish_far_side_turn())
+    await asyncio.sleep(0.4)  # longer than the wait this replaced
+    assert brain.turns == []
+    brain.on_transcript("My email stopped working.")
+    brain.on_transcript_done()
+    await finishing
+    assert brain.turns == ["My email stopped working."]
+
+
+async def test_stt_finishing_with_no_words_ends_the_turn_at_once():
+    brain = _RecordingBrain()
+    brain.far_side_spoke()
+    finishing = asyncio.ensure_future(brain._finish_far_side_turn())
+    await asyncio.sleep(0)
+    brain.on_transcript_done()
+    await asyncio.wait_for(finishing, 0.1)
+    assert brain.turns == [""]
+
+
+async def test_a_turn_waits_for_every_stretch_of_speech_in_it():
+    brain = _RecordingBrain()
+    brain.far_side_spoke()
+    brain.far_side_spoke()
+    finishing = asyncio.ensure_future(brain._finish_far_side_turn())
+    brain.on_transcript("First part.")
+    brain.on_transcript_done()
+    await asyncio.sleep(0.01)
+    assert brain.turns == []
+    brain.on_transcript("Second part.")
+    brain.on_transcript_done()
+    await finishing
+    assert brain.turns == ["First part. Second part."]
+
+
+async def test_stt_that_never_answers_fails_the_call():
+    brain = _RecordingBrain(stt_timeout_s=0.02)
+    brain.far_side_spoke()
+    await brain._finish_far_side_turn()
+    assert len(brain.failures) == 1 and "stt_live" in brain.failures[0]
+    assert brain.turns == []
+
+
+async def test_the_stt_limit_restarts_each_time_stt_moves():
+    """One slow queue isn't a dead server, so the limit is per transcription, not per turn."""
+    brain = _RecordingBrain(stt_timeout_s=0.1)
+    brain.far_side_spoke()
+    brain.far_side_spoke()
+    finishing = asyncio.ensure_future(brain._finish_far_side_turn())
+    await asyncio.sleep(0.07)
+    brain.on_transcript_done()
+    await asyncio.sleep(0.07)
+    brain.on_transcript_done()
+    await finishing
+    assert brain.failures == []
+    assert brain.turns == [""]
+
+
+async def test_speech_during_the_wait_joins_the_turn_instead_of_answering_twice():
+    """Answering the first part while the person is talking again would run two replies at once."""
+    brain = _RecordingBrain()
+    brain.far_side_spoke()
+    await brain._far_side_turn_ended()
+    await asyncio.sleep(0)
+    brain.far_side_spoke()
+    await brain._far_side_turn_began()
+    brain.on_transcript("First part.")
+    brain.on_transcript_done()
+    await asyncio.sleep(0.01)
+    assert brain.turns == []
+    await brain._far_side_turn_ended()
+    brain.on_transcript("Second part.")
+    brain.on_transcript_done()
+    await asyncio.sleep(0.01)
+    assert brain.turns == ["First part. Second part."]
+
+
+async def test_stt_reports_when_it_finished_even_with_no_words():
+    done = await _collected_stt_frames(Transcript(text="  "))
+    assert [type(frame) for frame in done] == [TranscriptDoneFrame]
+
+
+async def test_stt_reports_when_it_finished_after_its_words():
+    done = await _collected_stt_frames(Transcript(text="Hello there."))
+    assert [type(frame) for frame in done] == [TranscriptionFrame, TranscriptDoneFrame]
+
+
+async def _collected_stt_frames(transcript: Transcript) -> list:
+    class Heard:
+        name = "fixed"
+
+        async def transcribe(self, audio):
+            return transcript
+
+    async def fail(message: str) -> None:
+        raise AssertionError(message)
+
+    service = WrappedSTT(Heard(), fail=fail)
+    service._sample_rate = 16000
+    return [frame async for frame in service.run_stt(bytes(320))]
 
 
 def test_each_stretch_of_a_mic_turn_keeps_its_own_start():

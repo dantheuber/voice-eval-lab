@@ -39,7 +39,7 @@ A failure in any of them ends the call as `failed` and keeps what was recorded.
 
 Hanging up during a reply, or cancelling a live call, follows the same steps: stop the model, settle, and record what went out as an interrupted utterance, then finalize the artifact. Recording never waits, so a second cancel during settling can't lose the turn.
 
-`UserStoppedSpeakingFrame` is a system frame and a transcript isn't, so when STT is what the turn was waiting for, the end of the turn overtakes its words. The brain waits up to 0.25 s for them. Without that, a 6 s sentence with the GPU busy looked like an empty turn, and the bot never answered it.
+`UserStoppedSpeakingFrame` is a system frame and a transcript isn't, so when STT is what the turn was waiting for, the end of the turn overtakes its words. Pipecat's stop timeout can also end a turn long before STT answers. So `WrappedSTT` sends a `TranscriptDoneFrame` after every stretch of speech, words or not, and the brain counts stretches from VAD and waits until STT has finished them all. Without that, a 6 s sentence with the GPU busy looked like an empty turn, and the bot never answered it. If the person speaks again during the wait, the two turns join and get one reply. If STT gives nothing for `stt_timeout_s`, the call fails and says so.
 
 If the caller's turn then transcribes to nothing, the bot stopped for noise or echo. That's a `false_barge_in` event and a count in `metadata`, the number to watch when tuning.
 
@@ -110,5 +110,6 @@ A tool turn needs a second LLM round, and Qwen3.5-4B takes up to 2.4 s end to en
 | Smart Turn unsure wait 1 s | `parts.py` | Smart Turn called a finished sentence unfinished on 2 of 7 turns of a real mic call. Pipecat's default of 3 s turned each into a 5 to 6 s reply. Barge-in covers the opposite mistake |
 | `filler_after_s` 0.6 | `LiveSettings` | A tool turn needs a second LLM round, so a slow first round predicts a long silence |
 | `settle_s` 0.06 | `LiveSettings` | One output chunk is 40 ms |
-| `stop_timeout_s` 5 | `LiveSettings` | Ends a turn that never produced a transcript |
+| `stop_timeout_s` 5 | `LiveSettings` | Ends a turn that never produced a transcript. The brain still waits for STT after this |
+| `stt_timeout_s` 65 | `LiveSettings` | Fails a call when STT stops answering. Past the adapters' own 60 s, so their failure and its reason come first |
 | `caller_patience_s` 12 | `LiveSettings` | A caller left in silence speaks up. Pipecat's idle timer only runs from that side's own speech, so `CallerBrain` keeps its own for when it owes a reply |

@@ -8,7 +8,6 @@ brain how far the speech got through its `PlayoutLedger`.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -38,7 +37,7 @@ from voicelab.core.audio import AudioClip
 from voicelab.core.models import BargeInEvent, Speaker, Utterance
 from voicelab.engine.heard import prepare_heard_text
 from voicelab.engine.live.log import LiveLog
-from voicelab.engine.live.parts import Fail, LiveSettings
+from voicelab.engine.live.parts import Fail, LiveSettings, TranscriptDoneFrame
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.turn_based import TYPICAL_TURN_S
 from voicelab.providers.base import STT
@@ -46,7 +45,6 @@ from voicelab.providers.base import STT
 logger = logging.getLogger(__name__)
 
 _END_SLACK_S = 0.1  # the output drops a partial last chunk
-_TRANSCRIPT_IN_FLIGHT_S = 0.25  # already in the queue, so this only has to outlast a busy loop
 _HOLD_ON = re.compile(r"(?:one moment|let me check that)[.!,]?\s*$", re.IGNORECASE)
 
 
@@ -95,7 +93,10 @@ class Brain(FrameProcessor):
         self.fail = fail
         self.spoken = SpokenTurn()
         self.heard_parts: list[str] = []
-        self.words_arrived = asyncio.Event()
+        self.stretches_heard = 0  # of far-side speech, as VAD counts them
+        self.stretches_transcribed = 0  # STT has finished these, with or without words
+        self.stt_moved = asyncio.Event()
+        self.finishing: asyncio.Task | None = None  # a far-side turn still waiting for its words
         self.far_side_started_s: float | None = None
         self.far_side_ended_s: float | None = None
         self.task: asyncio.Task | None = None  # the model work for the turn in progress
@@ -167,14 +168,17 @@ class Brain(FrameProcessor):
             return
         if isinstance(frame, TranscriptionFrame):
             self.on_transcript(frame.text)
+        elif isinstance(frame, TranscriptDoneFrame):
+            self.on_transcript_done()
         elif isinstance(frame, VADUserStartedSpeakingFrame):
+            self.far_side_spoke()
             self.far_side_started_s = self.log.now() - frame.start_secs
         elif isinstance(frame, VADUserStoppedSpeakingFrame):
             self.far_side_ended_s = self.log.now() - frame.stop_secs
         elif isinstance(frame, UserStartedSpeakingFrame):
-            await self.on_far_side_started()
+            await self._far_side_turn_began()
         elif isinstance(frame, UserStoppedSpeakingFrame):
-            self.create_task(self._finish_far_side_turn())
+            await self._far_side_turn_ended()
         elif isinstance(frame, InterruptionFrame):
             await self.on_interrupted()
         elif isinstance(frame, BotStartedSpeakingFrame) and direction == FrameDirection.UPSTREAM:
@@ -195,18 +199,53 @@ class Brain(FrameProcessor):
         made = sum(segment.produced_s for segment in segments)
         return all(s.finished for s in segments) and self.ledger.played_s >= made - _END_SLACK_S
 
-    async def _finish_far_side_turn(self) -> None:
-        """Wait for the words of the turn that just ended, if they're on their way.
+    def far_side_spoke(self) -> None:
+        self.stretches_heard += 1
 
-        `UserStoppedSpeakingFrame` is a system frame and a transcript isn't, so it overtakes one.
-        That happens whenever STT is what the turn was waiting for, which on a real call meant a
-        6 s sentence with the GPU busy. The turn looked empty, and the bot never answered it.
+    def on_transcript_done(self) -> None:
+        self.stretches_transcribed += 1
+        self.stt_moved.set()
+
+    async def _far_side_turn_began(self) -> None:
+        await self.on_far_side_started()
+        await self._stop_finishing()  # the turn it was waiting on carries on into this one
+
+    async def _far_side_turn_ended(self) -> None:
+        self.finishing = self.create_task(self._finish_far_side_turn())
+
+    async def _stop_finishing(self) -> None:
+        if self.finishing is not None:
+            await self.cancel_task(self.finishing)
+            self.finishing = None
+
+    async def _finish_far_side_turn(self) -> None:
+        words_are_in = await self._words_are_in()
+        self.finishing = None
+        if words_are_in:
+            await self.on_far_side_finished()
+
+    async def _words_are_in(self) -> bool:
+        """Wait for STT to finish every stretch of the turn that just ended. False if it never did.
+
+        `UserStoppedSpeakingFrame` is a system frame and a transcript isn't, so it overtakes one,
+        and Pipecat's stop timeout can end a turn long before STT answers. Either way, a turn that
+        doesn't wait looks empty and the bot never answers it. STT reports every stretch it
+        finishes, so this needs no guess at how long that takes. The limit only catches a server
+        that never answers.
         """
-        if not self.heard_parts:
-            self.words_arrived.clear()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self.words_arrived.wait(), _TRANSCRIPT_IN_FLIGHT_S)
-        await self.on_far_side_finished()
+        while self.stretches_transcribed < self.stretches_heard:
+            self.stt_moved.clear()
+            try:
+                await asyncio.wait_for(self.stt_moved.wait(), self.settings.stt_timeout_s)
+            except TimeoutError:
+                limit = self.settings.stt_timeout_s
+                await self.fail(f"stt_live failed: no transcript after {limit:.0f} s")
+                return False
+        return True
+
+    async def cleanup(self) -> None:
+        await self._stop_finishing()  # the wait is long enough to outlive the call
+        await super().cleanup()
 
     def begin_turn(self) -> None:
         self.ledger.reset()
@@ -227,7 +266,6 @@ class Brain(FrameProcessor):
 
     def on_transcript(self, text: str) -> None:
         self.heard_parts.append(text)
-        self.words_arrived.set()
         self.note_heard(text)
 
     def note_heard(self, text: str) -> None:
@@ -268,7 +306,8 @@ class BotBrain(Brain):
         return self.ledger.spoken_text
 
     async def on_far_side_started(self) -> None:
-        self.caller_started_s = self.far_side_started_s
+        if self.finishing is None:  # otherwise the turn still waiting on STT started first
+            self.caller_started_s = self.far_side_started_s
 
     async def on_far_side_finished(self) -> None:
         heard = self.take_heard()
