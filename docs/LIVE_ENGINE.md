@@ -35,9 +35,11 @@ A failure in any of them ends the call as `failed` and keeps what was recorded.
 1. VAD fires and `UserTurnProcessor` broadcasts `InterruptionFrame`. The output drops queued audio and TTS cancels.
 2. `BotBrain.on_interrupted` stops the model. For a cascade that closes the `respond` stream, so later sentences are never generated and later tool rounds never run.
 3. After `settle_s`, long enough for the chunk being written to finish, the `PlayoutLedger` turns seconds played into words finished. TTS gives no word timing, so a word's share of its sentence follows its characters, and a word still playing at the cut doesn't count.
-4. `SupportBot.on_interrupted` rewrites history to those words, and the utterance and `BargeInEvent` go on the timeline.
+4. `SupportBot.on_interrupted` rewrites history to those words, and the utterance and `BargeInEvent` go on the timeline. Only finished sentences stay in the bot's own turn. The words of the sentence it was cut off in go in front of the caller's next turn, as a note. Qwen3.5-4B copies its last turn: history ending "two charges of forty nine" made it end later replies at "forty nine", 7 times in 8, and every marker put on that text got copied too. With the note, none were cut in 16 trials.
 
 Hanging up during a reply, or cancelling a live call, follows the same steps: stop the model, settle, and record what went out as an interrupted utterance, then finalize the artifact. Recording never waits, so a second cancel during settling can't lose the turn.
+
+`UserStoppedSpeakingFrame` is a system frame and a transcript isn't, so when STT is what the turn was waiting for, the end of the turn overtakes its words. The brain waits up to 0.25 s for them. Without that, a 6 s sentence with the GPU busy looked like an empty turn, and the bot never answered it.
 
 If the caller's turn then transcribes to nothing, the bot stopped for noise or echo. That's a `false_barge_in` event and a count in `metadata`, the number to watch when tuning.
 
@@ -76,7 +78,9 @@ The caller's pipeline has interruptions off: it only cuts in when told to, and i
 
 Profiles with `support_engine: realtime` use `RealtimeBrain`, on the support side only. As a caller, LFM3 slipped into the agent's role.
 
-- The server has no VAD, so Pipecat decides when a turn ends and `commit_turn` asks for the reply.
+- The server has no VAD, so Pipecat decides when a turn ends and `commit_turn` asks for the reply. It asks only if audio reached the current socket since the last ask. The server treats anything else as an error, and that comes up when a pause ended a turn and a cut-in then replaced the session.
+- The pipeline reports started before the session is up, so `greet` waits for the connection to settle. Skipping that left both sides silent until the call timed out.
+- The server holds one session per slot and this profile has one, so `max_calls: 1` caps a run at one call at a time.
 - It doesn't wait for STT, which runs beside the model and feeds the record and session rebuilds.
 - Mic audio only goes to the model during a turn, with 400 ms of pre-roll, because anything sent stays in context.
 - Tool calls go through `tool_checks.py` and run one at a time in order. A bad call gets an error as its result.

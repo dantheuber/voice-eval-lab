@@ -59,7 +59,7 @@ A run is a batch of bot-to-bot calls. Each pairs a scenario (what the caller wan
    - **Model profile.**
    - **Call mode.** `live` runs in real time with measured timing. `turn-based` is slower than real time with each side waiting, and timing isn't measured. `auto` picks from the profile.
    - **Line conditions.** `per persona` uses each persona's own line. The others apply one condition to every call.
-   - **Concurrency.** 2 live calls fit the GPU. Turn-based can go to 4. More than one two-sided call at once was not covered by the benchmarks.
+   - **Concurrency.** 2 live calls fit the GPU. Turn-based can go to 4. More than one two-sided call at once was not covered by the benchmarks. `local-realtime` runs one at a time, because its server holds one session.
 4. Press **Launch** or `Ctrl Enter`.
 
 The run page streams the transcript as it happens. **Pause after current calls** and **Stop** are at the top. Stopping marks the calls in flight as failed.
@@ -113,7 +113,7 @@ During the call:
 - `m` mutes you.
 - `Esc` twice ends the call.
 
-The call is evaluated the same way as a bot call, and the screen links to the review when it's done. Mic calls always have real timing, so overlaps and barge-in reaction get measured. If the bot stops for noise or echo and your turn transcribes to nothing, the call logs a `false_barge_in`.
+When the bot hangs up the screen moves on by itself, and closing the tab ends the call straight away. If a model fails mid-call, the screen says so and keeps what was recorded. The call is evaluated the same way as a bot call, and the screen links to the review when it's done. Mic calls always have real timing, so overlaps and barge-in reaction get measured. If the bot stops for noise or echo and your turn transcribes to nothing, the call logs a `false_barge_in`.
 
 ## Write a persona
 
@@ -122,7 +122,7 @@ A persona is who the caller bot pretends to be. Open **Personas**, then choose t
 1. **Who they are.** Name, age, temperament, and a one-line summary for lists.
 2. **Speaking style.** This goes into the caller LLM's instructions word for word, so write instructions: "Short sentences. Trails off when confused." Not a biography.
 3. **Scales.** Patience, verbosity, interruption tendency, and tech savviness, each 1 to 5.
-4. **Voice.** Pick a TTS voice and use the preview line to hear it. Under `local-default`, caller voices are the Pocket presets. Those are the 14 presets cleared for use, and any other name fails the call.
+4. **Voice.** Pick a TTS voice and use the preview line to hear it. The list comes from the active profile's caller TTS. Under `local-default` those are the 14 Pocket presets cleared for use. Under `local-fast` they're Phonon voices. A named voice belongs to one TTS, so a run on another profile is refused before it starts. The default, shown as "the profile's own voice", works on all of them.
 5. **Line conditions.** Codec, background noise, SNR, packet loss, and one-way latency, applied to this persona's audio before the bot hears it. Lower SNR is noisier. Packet loss and line noise were not covered by the benchmarks.
 6. **How this reads to the caller model** shows the exact instructions the caller LLM gets. Read it before saving.
 
