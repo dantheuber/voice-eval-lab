@@ -484,7 +484,7 @@ class _QuietCaller(CallerBrain):
     def create_task(self, coroutine, name=None):
         return asyncio.ensure_future(coroutine)
 
-    async def cancel_task(self, task, timeout=None):
+    async def cancel_task(self, task, *_):
         task.cancel()
 
 
