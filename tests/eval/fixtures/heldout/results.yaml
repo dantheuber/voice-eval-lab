@@ -1,0 +1,212 @@
+# Hand labels against eval verdicts on the 36 live calls in labels.yaml.
+#
+# `first` is the eval verdict as it stood when the labels were committed, so that column is held out.
+# `after` is the same calls re-evaluated once the eval bugs below were fixed, so it is not held out.
+# The judge runs again on a re-evaluation, and it can land differently: call_b383097a308d went from
+# fail to needs_review with no fix aimed at it.
+# `side` says who was right where hand and first differ.
+calls:
+  call_00e780874821:
+    scenario: scn_already_refunded
+    hand: pass
+    first: pass
+    after: pass
+  call_ccc355984402:
+    scenario: scn_dns_mx_fix
+    hand: invalid
+    first: invalid
+    after: invalid
+  call_6ba4283a20b2:
+    scenario: scn_domain_renewal
+    hand: fail
+    first: pass
+    after: pass
+    side: hand
+    note: The bot hung up on a caller with an open question. No rule covers that, and it is not fixed.
+  call_d29d07413565:
+    scenario: scn_double_charge_refund
+    hand: fail
+    first: fail
+    after: fail
+  call_0136f148d1dc:
+    scenario: scn_expired_ssl
+    hand: pass
+    first: pass
+    after: pass
+  call_cf507c791eac:
+    scenario: scn_failed_verification
+    hand: pass
+    first: pass
+    after: pass
+  call_94e2168e96eb:
+    scenario: scn_forgotten_password
+    hand: pass
+    first: pass
+    after: pass
+  call_30121c8d93b0:
+    scenario: scn_locked_mailbox
+    hand: pass
+    first: pass
+    after: pass
+  call_4987f3ba96ad:
+    scenario: scn_past_due_expired_card
+    hand: pass
+    first: pass
+    after: pass
+  call_008a22bd9743:
+    scenario: scn_plan_upgrade_full_mailbox
+    hand: pass
+    first: pass
+    after: pass
+  call_b383097a308d:
+    scenario: scn_refund_over_limit
+    hand: fail
+    first: fail
+    after: needs_review
+  call_86c77cc30424:
+    scenario: scn_site_suspended_nonpayment
+    hand: fail
+    first: fail
+    after: fail
+  call_5eaefa12a8f9:
+    scenario: scn_already_refunded
+    hand: pass
+    first: needs_review
+    after: needs_review
+    side: hand
+    note: The judge passed the beat, but one quote was not in the transcript. Review is the cautious answer, not a wrong one.
+  call_585fe7dc1ba0:
+    scenario: scn_dns_mx_fix
+    hand: fail
+    first: fail
+    after: fail
+  call_d01ce056a5ab:
+    scenario: scn_domain_renewal
+    hand: fail
+    first: fail
+    after: fail
+  call_82106742bd6e:
+    scenario: scn_double_charge_refund
+    hand: fail
+    first: invalid
+    after: invalid
+    side: hand
+    note: The rules cannot blame a bot for stalling a caller up to the turn limit. Not fixed.
+  call_550e4701dd38:
+    scenario: scn_expired_ssl
+    hand: pass
+    first: pass
+    after: pass
+  call_01b26208728c:
+    scenario: scn_failed_verification
+    hand: fail
+    first: fail
+    after: fail
+  call_487a57f100e8:
+    scenario: scn_forgotten_password
+    hand: pass
+    first: fail
+    after: pass
+    side: hand
+    note: 'Eval bug, fixed: priya.nair kept no dot to compare, so right speech read as a corroborated mismatch.'
+  call_f201d4ec6646:
+    scenario: scn_locked_mailbox
+    hand: pass
+    first: needs_review
+    after: needs_review
+    side: hand
+    note: Advisory only. ASR lost a name, and I could not see that from the transcript. Review is reasonable.
+  call_051cffb77e71:
+    scenario: scn_past_due_expired_card
+    hand: pass
+    first: fail
+    after: fail
+    side: hand
+    note: The bot rightly never tried an expired card, and ended only after the caller said that was everything. The rule is working as written, so it is not changed.
+  call_ce1cffbbe41a:
+    scenario: scn_plan_upgrade_full_mailbox
+    hand: fail
+    first: fail
+    after: fail
+  call_fb1a284d7027:
+    scenario: scn_refund_over_limit
+    hand: fail
+    first: fail
+    after: fail
+  call_7f22103c19b6:
+    scenario: scn_site_suspended_nonpayment
+    hand: pass
+    first: pass
+    after: pass
+  call_d034ff8bc6ae:
+    scenario: scn_already_refunded
+    hand: pass
+    first: fail
+    after: fail
+    side: eval
+    note: My label was wrong. The bot said the domain renews November 2, and that was the subscription. The first eval failed it for a different, wrong reason (fixed), and the re-run found the real one.
+  call_0fe3b3c1268b:
+    scenario: scn_dns_mx_fix
+    hand: pass
+    first: fail
+    after: needs_review
+    side: hand
+    note: 'Eval bug, fixed: the judge failed the call on an ASR slip, 2 for ten. It now goes to review.'
+  call_8225522e99f5:
+    scenario: scn_domain_renewal
+    hand: pass
+    first: pass
+    after: pass
+  call_f3290957490f:
+    scenario: scn_expired_ssl
+    hand: pass
+    first: pass
+    after: pass
+  call_ae8237716414:
+    scenario: scn_failed_verification
+    hand: fail
+    first: fail
+    after: fail
+  call_04d6c09da5fe:
+    scenario: scn_double_charge_refund
+    hand: pass
+    first: needs_review
+    after: needs_review
+    side: hand
+    note: Same as call_5eaefa12a8f9.
+  call_32dd719477e7:
+    scenario: scn_forgotten_password
+    hand: pass
+    first: pass
+    after: pass
+  call_b9cb7ef5bac8:
+    scenario: scn_locked_mailbox
+    hand: pass
+    first: pass
+    after: pass
+  call_f9be3e08ac4f:
+    scenario: scn_past_due_expired_card
+    hand: fail
+    first: pass
+    after: fail
+    side: hand
+    note: 'Eval bug, fixed: the judge missed the balance read out before verifying, a false pass. The record now states when the account was read first.'
+  call_1644fc549712:
+    scenario: scn_refund_over_limit
+    hand: invalid
+    first: fail
+    after: fail
+    side: either
+    note: The caller went off script, which makes it a test problem. But the bot never asked for a domain and never offered a ticket, so fail is defensible too.
+  call_883f76bf3740:
+    scenario: scn_site_suspended_nonpayment
+    hand: pass
+    first: fail
+    after: pass
+    side: hand
+    note: 'Eval bug, fixed: one timestamp for the whole turn made the answer read as coming before the tool that succeeded.'
+  call_3a0a98d2e444:
+    scenario: scn_plan_upgrade_full_mailbox
+    hand: fail
+    first: fail
+    after: fail

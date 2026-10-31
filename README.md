@@ -109,13 +109,13 @@ Accuracy and quality:
 
 - Nobody has listened to the benchmark audio. Voice quality was checked with ASR, which shows the words came out and says nothing about how they sound.
 - Human speech in the benchmarks is one LibriSpeech speaker and one JFK clip. Real callers, accents, and real phone lines were never tested. Neither were packet loss and line noise.
-- The judge's accuracy rests on 18 real calls that its prompts were tuned on, with no held-out set. It's weakest on `general_no_invented_facts`, which accounts for 2 of its 3 misses.
+- The judge's accuracy on the 18 calls its prompts were tuned on is a ceiling. On 36 held-out calls the eval matched hand-labeled verdicts on 24, see the bot tuning results below. It's weakest on `general_no_invented_facts`, which accounts for 2 of its 3 misses on the tuning calls.
 - Hand labels are one reader's. 37 of the 225 accept more than one answer, because a careful reader could go either way.
 - Delivery limits come from 21 clips with planted defects and 18 real calls of Phonon. They caught 105 of 105 within a call and 95 of 105 on fixed limits, with 1 false flag on 21 clean clips, and they were never checked against listener ratings. Rate limits are calibrated to this one voice.
 - Sound-alike matching lets a name or term through on spelling rules and one vowel in a long word, so a real mispronunciation that close would pass.
 - No audio model hears delivery. LFM3-Audio, Gemma 4 E2B, and Voxtral all found 0 of 20 planted defects.
 - STT reports no usable word confidence. Qwen3-ASR gives none, and Parakeet says 1.0 on every word, so pronunciation confidence comes from Whisper alone.
-- Before spoken-id handling, no live two-bot call reached a refund. The fix spells ids phone-style, and came back right 10 of 10 on ten numbers. Live pass rates are in the results section once measured.
+- Before spoken-id handling, no live two-bot call reached a refund. The fix spells ids phone-style, and came back right 10 of 10 on ten numbers. Noise is another matter: on noisy lines STT still drops digits from a zip or PIN. Live pass rates are in the bot tuning results below.
 
 Live calls:
 
@@ -173,7 +173,7 @@ Nothing else grew, so there's no sign of a leak in that length of call. Longer c
 | Restart during a run | 8 s. Calls in flight are marked failed with their recordings, and queued ones resume by themselves |
 | Closing the tab on a mic call | Finalized in 1 s |
 
-Of 12 calls on `local-default` on a clean line, 2 passed, 6 failed, 3 were invalid, and 1 needs review. The failures read as real: a double refund, a refund after a failed PIN, a mis-heard address sent to a tool. Treat that as a sample, not a pass rate.
+Before the bots were tuned, of 12 calls on `local-default` on a clean line, 2 passed, 6 failed, 3 were invalid, and 1 needs review. The failures read as real: a double refund, a refund after a failed PIN, a mis-heard address sent to a tool. Treat that as a sample, not a pass rate. The numbers in the first table are from before tuning too, and the bot tuning results below have newer ones.
 
 The first run of these tests found problems unit tests couldn't. After a barge-in stopped the bot on "two charges of forty nine", it ended later replies on those words too. The bot went silent when STT was slower than the end of the turn. A caller could be left holding on "one moment" and the call sat silent for 15 minutes. Realtime calls stalled or failed outright, and a mic call needed the internet because the browser library fetched code from Daily's CDN. All are fixed, and these numbers are from after the fixes.
 
@@ -202,6 +202,51 @@ What changed the numbers:
 - The judge's 400 tokens went on reasoning, then it was asked the same thing again. Reasoning is off, one request covers every criterion, and each reply writes its evidence before its status. `draft-mtp` speculation gives the same output at 30 t/s instead of 12.
 - The judge reads speech and tool calls as one timeline. It's told who ended the call and when the bot verified, and a rule the record can answer never reaches it.
 - Qwen3.5-4B was tried as the judge, at about 18 s a call. It scored 90.7% against 95.6% before rules moved to the record, and passed one bot failure, so 27B stayed.
+
+### Bot tuning results
+
+Measured on 2026-10-31 on `local-default`. After tuning both bots, 36 live bot calls ran through the app, 3 for each seed scenario. Each scenario had 3 different personas on their own lines, so all 9 personas and their noise are in the mix. The earlier 12 calls used 2 personas. [The tuning doc](docs/research/bot-tuning-2026-10.md) has why the first calls failed and what changed.
+
+| Measure | Before, 12 calls | After, 36 calls |
+| --- | --- | --- |
+| Pass | 2, 17% | 15, 42% |
+| Fail | 6 | 16 |
+| Needs review | 1 | 3 |
+| Invalid | 3, 25% | 2, 6% |
+| Reply p50 per call | 1.77 to 2.39 s, median 2.06 s | 1.83 to 2.99 s, median 2.22 s |
+
+The targets were under 15% invalid and at least 50% passing. Invalid met its target and pass did not. Read by hand, 21 of the 36 earned a pass, or 58%. Once the eval bugs below were fixed, the same 36 calls came out at 16 pass, 13 fail, 5 needs review, and 2 invalid. That's 44%, and those verdicts aren't held out.
+
+Plain turns and tool turns both start about 0.2 s later than before, 1.52 s to 1.73 s and 1.79 s to 2.04 s at the median by turn. Speech now waits until a round has no tool call, and that wait is the likely cause. The two sets of calls differ in persona and noise, so it isn't a clean comparison.
+
+In the text loop with live STT's mishearings, the same scoring went from 4 of 36 to 27 of 36. Its scores are proxies for comparing prompts.
+
+#### Held-out check
+
+Each of the 36 calls was labeled by hand from its transcript, tool log, and database diff, and the labels were committed before any verdict was read. They're in `tests/eval/fixtures/heldout/`, with every call's verdicts in `results.yaml`.
+
+| Hand label | Calls | Eval agreed, first run | Eval agreed, after fixes |
+| --- | --- | --- | --- |
+| `pass` | 21 | 13 | 15 |
+| `fail` | 13 | 10 | 10 |
+| `invalid` | 2 | 1 | 1 |
+| All | 36 | 24 | 26 |
+
+The first-run column is the held-out result. The fixes came from these same calls, so the last column isn't held out. Of the 12 disagreements in the first run:
+
+- 4 were eval bugs, now fixed with tests. One timestamp for a whole turn made answers read as coming before the tools that produced them. An address written `priya.nair` lost its "dot", so correct speech read as a mismatch. A judge failed a call on an ASR slip, "2" for "ten", and that kind of fail now goes to review. The judge also missed a bot reading out a balance before verifying, a false pass, so the record now says when the account was read before verifying.
+- 3 went to review where a person would pass the call. Two were quotes not found in the transcript, and one was advisory findings. That's caution, not a wrong answer.
+- 3 are gaps in the rules, left as they are. A bot that hangs up on a confused caller still passes. A bot that stalls a caller up to the turn limit comes out invalid. A bot that skips a step for a good reason, by not charging a card it can see has expired, fails if it then ends the call.
+- 1 was my label. The bot gave a wrong renewal date that I missed by hand.
+- 1 could go either way.
+
+What's still weak on these calls:
+
+- The bot refunded $189 past its limit in 1 of 3 calls on that scenario, and read account details before verifying in 2 of 36.
+- When a caller wrongly said it didn't know its PIN, the bot renewed a domain 5 times with nobody verified.
+- It sometimes says it did something without doing it, like restoring a site.
+- It invents reasons and facts under pressure.
+- Digits are the weak spot on noisy lines. The check on digit counts saves the caller's tries, but a call can still spend minutes getting an address or phone number across.
 
 ## Repo layout
 

@@ -89,6 +89,20 @@ A 12-call live pilot then found what text can't. It was stopped after 5 calls, s
 - An angry persona refused its last step, since its mood outranked the step.
 - The bot quoted a charge it had never looked up.
 
+## What the live calls showed
+
+The 36-call run and the held-out comparison are in the [README](../../README.md#held-out-check), and each call's verdicts are in `tests/eval/fixtures/heldout/results.yaml`. Failures that remain, by what the hand labels found:
+
+| Cause | Calls of 36 |
+| --- | --- |
+| Changed something without a clear yes, or with nobody verified | 3 |
+| Refunded past the limit | 1 |
+| Read or disclosed account details before verifying | 2 |
+| Said something false or never looked up, or said a change was done without doing it | 3 |
+| Never offered a way forward, or ended the call on a caller with an open question | 2 |
+| Refused a correct caller without running the check | 1 |
+| Refunded with no stated amount and no yes | 1 |
+
 ## Not tried
 
 - Qwen3.5-9B. There's no GGUF on this machine, so it needs a 5.7 GB download, and the research doc lists it at 34 t/s against 65 t/s. Speech now waits for a whole round, so generation speed adds directly to first audio, and most remaining failures are decisions a prompt or a rule could address. It may still be worth a measured try for the caller alone, where first audio doesn't count.
