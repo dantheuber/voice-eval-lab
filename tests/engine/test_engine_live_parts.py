@@ -122,6 +122,31 @@ def test_nothing_is_echo_while_the_bot_is_silent():
     assert not any(flags)
 
 
+def test_echo_is_caught_before_vad_could_fire_on_it():
+    far = babble(1.0, seed=1)
+    detector = EchoDetector()
+
+    flags = []
+    for out, heard in zip(frames(far), frames(far * 0.2), strict=True):
+        detector.add_outgoing(out, RATE)
+        flags.append(detector.is_echo(heard, RATE))
+
+    assert all(flags[3:10])  # VAD needs 200 ms, which is ten of these frames
+
+
+def test_a_person_cutting_in_as_the_bot_starts_is_not_blanked():
+    far = babble(1.0, seed=1, gain=0.1)
+    person = babble(1.0, seed=2, gain=0.4)
+    detector = EchoDetector()
+
+    flags = []
+    for out, heard in zip(frames(far), frames(person), strict=True):
+        detector.add_outgoing(out, RATE)
+        flags.append(detector.is_echo(heard, RATE))
+
+    assert np.mean(flags[3:15]) < 0.3
+
+
 def test_echo_is_watched_for_just_after_the_bot_stops():
     far = np.concatenate([babble(2.0, seed=1), np.zeros(RATE, dtype=np.float32)])
     mic = far * 0.15

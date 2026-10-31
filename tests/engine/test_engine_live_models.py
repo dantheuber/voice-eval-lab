@@ -169,14 +169,11 @@ class Phone:
     async def _listen(self, track) -> None:
         while True:
             frame = await track.recv()
-            samples = frame.to_ndarray().astype(np.float32).reshape(-1) / 32768
+            channels = len(frame.layout.channels)
+            samples = frame.to_ndarray().astype(np.float32).reshape(-1)[::channels] / 32768
             self.loudest = max(self.loudest, float(np.abs(samples).max()))
-            if self.echo_gain and frame.sample_rate:
-                mono = (
-                    samples[:: frame.layout.channels] if len(frame.layout.channels) > 1 else samples
-                )
-                clip = AudioClip.from_samples(mono * self.echo_gain, frame.sample_rate)
-                self.mic.say(clip)
+            if self.echo_gain:
+                self.mic.say(AudioClip.from_samples(samples * self.echo_gain, frame.sample_rate))
 
     async def dial(self, session) -> None:
         await self.pc.setLocalDescription(await self.pc.createOffer())
@@ -238,7 +235,7 @@ async def test_a_real_voice_on_the_mic_cuts_the_bot_off(store):
     assert overlap(played.text, greeting.spoken_text) > 0.5, played.text
 
 
-@pytest.mark.parametrize("gain", [0.05, 0.2])
+@pytest.mark.parametrize("gain", [0.05, 0.2, 0.4])
 async def test_the_bot_does_not_interrupt_itself_through_the_speakers(store, gain):
     phone = Phone(echo_gain=gain)
     session, _ = await _mic_session(store, phone)

@@ -4,6 +4,9 @@ Browser echo cancellation removes most of the echo, and what's left is enough to
 make the bot interrupt itself. Echo is the outgoing audio again, a little later and quieter, so
 its level follows the outgoing level's rise and fall. A person's speech doesn't. Comparing level
 contours instead of waveforms survives the codec and the speaker, which change the waveform.
+
+A contour takes 400 ms to fill, and VAD fires at 200 ms, so the first moments of each bot turn go
+by level alone: echo is much quieter than the speech causing it, and a person cutting in isn't.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ _MAX_DELAY_STEPS = 40  # speaker, room, and network delay up to 400 ms
 _HOLD_STEPS = 30  # echo keeps arriving for a moment after the bot stops
 _MIN_CORRELATION = 0.7
 _SILENT_LEVEL = 1e-4
+_ONSET_STEPS = 10  # the last 100 ms of each side, while there's too little contour to compare
+_ONSET_RATIO = 0.6
 
 
 class LevelContour:
@@ -54,24 +59,31 @@ class EchoDetector:
         self._bot = LevelContour(keep)
         self._min_correlation = min_correlation
         self._quiet_steps = _HOLD_STEPS + 1  # the bot hasn't spoken yet
+        self._speaking_steps = 0
 
     def add_outgoing(self, samples: np.ndarray, rate: int) -> None:
         new = self._bot.add(samples, rate)
         recent = list(self._bot.levels)[-new:] if new else []
         if any(level > _SILENT_LEVEL for level in recent):
+            if self._quiet_steps > _HOLD_STEPS:
+                self._speaking_steps = 0
             self._quiet_steps = 0
+            self._speaking_steps += new
         else:
             self._quiet_steps += new
 
     def is_echo(self, samples: np.ndarray, rate: int) -> bool:
         """Check one mic frame. Quiet mic audio is never echo, since there's nothing to remove."""
         self._mic.add(samples, rate)
-        if self._quiet_steps > _HOLD_STEPS or len(self._mic.levels) < _WINDOW_STEPS:
+        if self._quiet_steps > _HOLD_STEPS or not self._mic.levels:
             return False
         mic = np.array(self._mic.levels)
         bot = np.array(self._bot.levels)
-        if mic.max() < _SILENT_LEVEL or len(bot) < _WINDOW_STEPS:
+        if mic.max() < _SILENT_LEVEL or len(bot) == 0:
             return False
+        if self._speaking_steps < _WINDOW_STEPS or len(mic) < _WINDOW_STEPS:
+            loudest_bot = bot[-_ONSET_STEPS:].max()
+            return bool(mic[-_ONSET_STEPS:].max() < loudest_bot * _ONSET_RATIO)
         latest_start = len(bot) - _WINDOW_STEPS
         for start in range(latest_start, max(-1, latest_start - _MAX_DELAY_STEPS), -1):
             window = bot[start : start + _WINDOW_STEPS]
