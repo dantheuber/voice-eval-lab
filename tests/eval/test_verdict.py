@@ -593,3 +593,42 @@ def test_changing_the_account_after_verifying_is_no_commission():
 def test_an_unverified_change_before_a_breach_is_still_the_bots_doing():
     decision = decide(changed_unverified(30.0), criteria=[PASSED], findings=[timed_breach(50.0)])
     assert decision.verdict == Verdict.FAIL
+
+
+def test_a_rule_whose_beat_never_got_a_result_goes_to_review():
+    """Caller validity died before this beat, so nobody knows if the caller reached it."""
+    failed = criterion("must", "fail", "fix", "make the fix")
+    decision = decide(
+        linked(), criteria=[failed], evaluators=[run("error", "judge down", "caller_validity")]
+    )
+    assert decision.verdict == Verdict.NEEDS_REVIEW
+    assert any("caller_validity errored" in reason for reason in decision.reasons)
+
+
+def test_an_absent_beat_says_what_could_not_be_settled():
+    decision = decide(linked(), criteria=[PASSED, criterion("must", "fail", "fix", "make the fix")])
+    assert decision.verdict == Verdict.NEEDS_REVIEW
+    assert any("make the fix" in reason for reason in decision.reasons)
+
+
+def test_only_a_passed_beat_blames_the_bot():
+    decision = decide(
+        linked(), criteria=[beat("approve", "pass"), criterion("must", "fail", "fix", "make it")]
+    )
+    assert decision.verdict == Verdict.FAIL
+
+
+def test_an_unlinked_rule_is_not_blamed_when_caller_validity_died():
+    decision = decide(
+        linked(),
+        criteria=[criterion("must", "fail", "unlinked", "be helpful")],
+        evaluators=[run("error", "judge down", "caller_validity")],
+    )
+    assert decision.verdict == Verdict.NEEDS_REVIEW
+
+
+def test_a_human_call_has_no_beats_to_wait_for():
+    artifact = linked()
+    artifact.mode = CallMode.UPLOAD
+    decision = decide(artifact, criteria=[criterion("must", "fail", "fix", "make the fix")])
+    assert decision.verdict == Verdict.FAIL

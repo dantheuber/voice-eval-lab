@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 from voicelab.core.models import (
     CallArtifact,
+    CallMode,
     CriterionResult,
     EvaluatorRun,
     Finding,
@@ -25,6 +26,8 @@ UNEXPECTED_CHANGE = "unexpected_change"
 
 _BLOCKING_SEVERITIES = ("major", "critical")
 _RULE_KINDS = ("must", "must_not", "state")
+_SCRIPTED_MODES = (CallMode.LIVE_BOTS, CallMode.TURN_BASED)
+_CALLER_VALIDITY = "caller_validity"
 _MAX_LISTED = 5
 _MAX_DISAGREEMENTS = 3
 
@@ -77,7 +80,7 @@ def decide_verdict(
             )
         return VerdictDecision(Verdict.FAIL, reasons)
 
-    blamed, excused = _omissions(scenario, criteria, proven, beats, bool(missed))
+    blamed, excused, undecided = _omissions(artifact, criteria, proven, beats, evaluators)
     if missed and _ended_by(artifact, "bot_ended"):
         steps = "; ".join(c.text for c in missed)
         reasons = [f"the bot ended the call before the caller reached: {steps}"]
@@ -93,6 +96,7 @@ def decide_verdict(
 
     review = _review_reasons(criteria, findings, evaluators, config)
     review += [f"not counted against the bot, the caller never reached: {c.text}" for c in excused]
+    review += [f"couldn't tell if the caller got as far as: {c.text}" for c in undecided]
     if review:
         return VerdictDecision(Verdict.NEEDS_REVIEW, review)
     return VerdictDecision(Verdict.PASS)
@@ -168,33 +172,49 @@ def _with_breach(
 
 
 def _omissions(
-    scenario: Scenario | None,
+    artifact: CallArtifact,
     criteria: list[CriterionResult],
     proven: set[tuple[str, str]],
     beats: dict[str, CriterionResult],
-    any_missed: bool,
-) -> tuple[list[CriterionResult], list[CriterionResult]]:
-    """Failed rules that weren't commissions: those the bot answers for, and those it doesn't.
+    evaluators: list[EvaluatorRun],
+) -> tuple[list[CriterionResult], list[CriterionResult], list[CriterionResult]]:
+    """Failed rules that weren't commissions: blamed, excused, and undecided.
 
-    A rule linked to a beat depends on that beat alone. An unlinked rule could depend on any of
-    them, so one missed beat excuses it. A beat nobody could decide leaves the rule in neither
-    list, and its `unknown` status sends the call to review.
+    Only a beat that passed puts a linked rule on the bot, and only a beat that failed excuses it.
+    Any other beat leaves the question open, including one with no result because caller validity
+    died first. A call with no scripted caller has no beat to wait for, so its rules stand. An
+    unlinked rule could depend on any beat, so one missed beat excuses it, and with caller
+    validity dead nobody can say.
     """
-    links = _beat_links(scenario)
+    links = _beat_links(artifact.scenario_snapshot)
+    required = artifact.scenario_snapshot.beats if artifact.scenario_snapshot else []
+    any_missed = any(
+        beat.required and beats.get(beat.id) is not None and beats[beat.id].status == "fail"
+        for beat in required
+    )
+    scripted = artifact.mode in _SCRIPTED_MODES
+    validity_died = any(
+        run.name == _CALLER_VALIDITY and run.status == "error" for run in evaluators
+    )
     blamed: list[CriterionResult] = []
     excused: list[CriterionResult] = []
+    undecided: list[CriterionResult] = []
     for criterion in criteria:
         key = (criterion.kind, criterion.criterion_id)
         if criterion.status != "fail" or criterion.kind not in _RULE_KINDS or key in proven:
             continue
-        beat = beats.get(links.get(key) or "")
-        if links.get(key) is None:
-            (excused if any_missed else blamed).append(criterion)
-        elif beat is None or beat.status == "pass":
+        link = links.get(key)
+        beat = beats.get(link) if link else None
+        if link is None:
+            (excused if any_missed else undecided if validity_died else blamed).append(criterion)
+        elif beat is None:
+            (undecided if scripted else blamed).append(criterion)
+        elif beat.status == "pass":
             blamed.append(criterion)
         elif beat.status == "fail":
             excused.append(criterion)
-    return blamed, excused
+        # An undecided beat is left out here, and its own `unknown` sends the call to review.
+    return blamed, excused, undecided
 
 
 def _beat_links(scenario: Scenario | None) -> dict[tuple[str, str], str | None]:
