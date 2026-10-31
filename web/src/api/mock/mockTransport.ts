@@ -361,6 +361,7 @@ export function createMockTransport(): Transport {
       { name: "transcript_judge", status: sc ? "ok" : "skipped", reason: sc ? "" : "No scenario selected, no rubric.", durationS: 18, model: "Qwen3.6-35B-A3B", metrics: {} },
       { name: "audio_quality", status: "ok", reason: "", durationS: 2, model: "nisqa", metrics: { mos: 4.0 } },
       { name: "audio_listening", status: "ok", reason: "", durationS: 7, model: "LFM3-Audio-2B", metrics: {} },
+      { name: "delivery", status: "ok", reason: "", durationS: 2, model: null, metrics: FX.deliveryMetrics(r.speech.bot, []) },
     ];
     let closed = false; s.onCloseInternal = () => { closed = true; };
     (async () => {

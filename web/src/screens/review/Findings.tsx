@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Finding, ReviewPayload, Verdict } from "@/api/types";
 import { Button, HealthDot, Icon, Kbd, VerdictBadge } from "@/components/ui";
 import { evalName, fmtClock, sevClass, sevLabel, verdictLabel } from "@/lib/format";
+import { categoryLabel, categoryNote, deliveryAt, deliveryFor, deliveryLine, isAdvisoryEvaluator, orderedEvaluators, summarizeEvaluator, type DeliveryMetrics } from "@/lib/evaluators";
 import { useReview } from "@/store/review";
 import s from "./review.module.css";
 import { pinLabel } from "./Transcript";
@@ -22,6 +23,9 @@ export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
   const [a, b] = clipRange(f, payload.call.durationS);
   const intendedHeard = f.evaluator === "pronunciation" && f.detail.includes("Intended:");
   const save = () => { onSaveNote(f, draft.trim()); setNoteOpen(null); };
+  const catLabel = categoryLabel(f), catNote = categoryNote(f);
+  // An audio listener's claim is checked against the measured delivery of the same utterance; the measurement wins.
+  const measured = f.evaluator === "audio_listening" ? deliveryAt(deliveryFor(payload.eval?.evaluators), f.clipStartS, f.clipEndS) : null;
   return (
     <div className={`${s.finding} ${selected ? s.sel : ""} ${f.advisory ? s.advisory : ""}`} data-finding={f.id} role="button" tabIndex={0} aria-pressed={selected}
       onClick={() => select(f.id)} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) onPlay(f); }}>
@@ -29,12 +33,14 @@ export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
         <span className={`sev ${sc}`}>{sevLabel[sc]}</span>
         <span className={s.t}>{fmtClock(f.clipStartS ?? 0)}</span>
         {f.humanVerdict && <span className={`${s.state} ${s[f.humanVerdict]}`}>{f.humanVerdict}</span>}
-        <span className={s.src}>{evalName(f.evaluator)}</span>
+        <span className={s.src}>{evalName(f.evaluator)}{catLabel && catLabel !== evalName(f.evaluator) ? <> · <span title={catNote}>{catLabel}</span></> : null}</span>
       </div>
       <div className={s.ft}>{f.title}</div>
       <div className={s.fe}>
-        {f.evidence.length > 0 && !intendedHeard ? f.evidence.map((e, i) => <div key={i}><span className={s.q}>"{e.quote}"</span>{e.speaker ? <span className="faint"> {e.speaker}{e.startS != null ? `, ${fmtClock(e.startS)}` : ""}</span> : null}</div>) : null}
-        <div className={f.evidence.length && !intendedHeard ? "faint" : ""} style={{ marginTop: f.evidence.length && !intendedHeard ? 3 : 0 }}>{f.detail}</div>
+        {f.evidence.filter((e) => e.quote).length > 0 && !intendedHeard ? f.evidence.filter((e) => e.quote).map((e, i) => <div key={i}><span className={s.q}>"{e.quote}"</span>{e.speaker ? <span className="faint"> {e.speaker}{e.startS != null ? `, ${fmtClock(e.startS)}` : ""}</span> : null}</div>) : null}
+        <div className={f.evidence.some((e) => e.quote) && !intendedHeard ? "faint" : ""} style={{ marginTop: f.evidence.some((e) => e.quote) && !intendedHeard ? 3 : 0 }}>{f.detail}</div>
+        {catNote && <div className="faint" style={{ marginTop: 3 }}>{catNote}</div>}
+        {measured && <div style={{ marginTop: 3 }}><span className="faint">Measured on this utterance:</span> <code>{deliveryLine(measured)}</code>{measured.flags.length ? <span className="faint">, flagged {measured.flags.map((x) => categoryLabel({ category: x })).join(", ")}</span> : <span className="faint">, no delivery flags. The measurement wins over the listener's impression.</span>}</div>}
       </div>
       <div className={s.fx}>
         <Button size="sm" onClick={(e) => { e.stopPropagation(); onPlay(f); }} aria-label={`Play clip ${fmtClock(a)} to ${fmtClock(b)}`}><Icon name="play" /> clip {fmtClock(a)}-{fmtClock(b)} <Kbd>↵</Kbd></Button>
@@ -110,34 +116,49 @@ export function verdictAllowed(v: Verdict, machine: Verdict | null, human: Verdi
   return true;
 }
 
+/* Driven by the server's evaluator list, so a new evaluator shows up without a frontend change. */
 export function Evaluators({ payload, pending }: { payload: ReviewPayload; pending: boolean }) {
   const evs = payload.eval?.evaluators ?? [];
-  const order = ["transcript_judge", "caller_validity", "state", "timing", "pronunciation", "audio_quality", "audio_listening"];
-  const list = order.map((n) => evs.find((e) => e.name === n) ?? null);
+  const findings = payload.eval?.findings ?? [];
+  const names = orderedEvaluators(evs, findings, pending);
   return (
     <table className={s.evals} style={{ width: "100%", borderCollapse: "collapse" }}><tbody>
-      {order.map((n, i) => { const e = list[i]; return (
+      {names.map((n) => { const e = evs.find((x) => x.name === n) ?? null; return (
         <tr key={n}>
-          <td style={{ width: 120 }}>{evalName(n)}{n === "audio_listening" && <div className={s.adv}>advisory</div>}</td>
-          <td>{!e ? (pending ? <HealthDot state="loading">waiting</HealthDot> : <span className="faint">not run</span>) : e.status === "skipped" ? <span className="faint">Skipped. {e.reason}</span> : e.status === "error" ? <span style={{ color: "var(--fail)" }}>Error. {e.reason}</span> : <>{summarize(e.name, e.metrics)}</>}
+          <td style={{ width: 120 }}>{evalName(n)}{isAdvisoryEvaluator(n, findings) && <div className={s.adv}>advisory</div>}</td>
+          <td>{!e ? (pending ? <HealthDot state="loading">waiting</HealthDot> : <span className="faint">not run</span>) : e.status === "skipped" ? <span className="faint">Skipped. {e.reason}</span> : e.status === "error" ? <span style={{ color: "var(--fail)" }}>Error. {e.reason}</span> : <>{summarizeEvaluator(e.name, e.metrics)}</>}
             {e?.model && <div className="faint mono" style={{ fontSize: 10 }}>{e.model}</div>}</td>
         </tr>); })}
     </tbody></table>
   );
 }
 
-function summarize(name: string, m: Record<string, unknown>): string {
-  const g = (k: string) => m[k] as number | undefined;
-  switch (name) {
-    case "transcript_judge": return g("criteriaTotal") != null ? `${g("criteriaPass")} of ${g("criteriaTotal")} criteria pass${g("unknown") ? `, ${g("unknown")} uncertain` : ""}` : "done";
-    case "caller_validity": return g("checkpointsTotal") != null ? `${g("checkpointsReached")} of ${g("checkpointsTotal")} checkpoints` : "done";
-    case "state": return g("expected") != null ? (g("missing") ? `${g("missing")} of ${g("expected")} expected changes missing` : "all expected changes present") : "done";
-    case "timing": return g("reply_p50_s") != null ? `p50 reply ${g("reply_p50_s")} s, ${g("overlaps") ?? 0} overlaps, ${g("dead_air_events") ?? 0} dead-air events` : "done";
-    case "pronunciation": return g("criticalTokens") != null ? `${g("mismatches")} critical token mismatch of ${g("criticalTokens")}` : "done";
-    case "audio_quality": return g("mos") != null ? `MOS ${g("mos")}${g("baseline") != null ? ` (baseline ${g("baseline")})` : ""}${m.clipping ? ", clipping" : ""}` : "done";
-    case "audio_listening": return g("notes") != null ? `${g("notes")} advisory note${g("notes") === 1 ? "" : "s"}` : "done";
-    default: return "done";
-  }
+/* Per-utterance delivery measurements for the bot: rate, pitch movement, pauses, noise. Advisory; it checks the audio listener. */
+export function DeliveryPanel({ payload, onSeek }: { payload: ReviewPayload; onSeek: (t: number) => void }) {
+  const run = payload.eval?.evaluators.find((r) => r.name === "delivery");
+  if (!run) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>Not run on this call.</div>;
+  if (run.status !== "ok") return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>{run.status === "skipped" ? "Skipped." : "Error."} {run.reason}</div>;
+  const d: DeliveryMetrics | null = deliveryFor([run]);
+  if (!d) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>No per-utterance metrics in this result.</div>;
+  const fmt = (v: number | null, digits = 0, unit = "") => (v == null ? <span className="faint">–</span> : `${v.toFixed(digits)}${unit}`);
+  return (
+    <div>
+      <div className="faint" style={{ padding: "6px 12px 0", fontSize: 11 }}>Bot only, measured from the signal. Medians: {d.medians.wpm != null ? `${Math.round(d.medians.wpm)} wpm` : "no rate"}, pitch IQR {d.medians.pitchIqrSt != null ? `${d.medians.pitchIqrSt.toFixed(1)} st` : "–"}, SNR {d.medians.snrDb != null ? `${Math.round(d.medians.snrDb)} dB` : "–"}.{d.wpmNote ? ` ${d.wpmNote}.` : ""} Where this disagrees with the audio listener, the measurement wins.</div>
+      <table className={s.delivery}>
+        <thead><tr><th>at</th><th className="num" title="words per minute of speech time">wpm</th><th className="num" title="pitch interquartile range in semitones, median Hz in the title">pitch</th><th className="num" title="pause count and longest pause">pauses</th><th className="num" title="signal to noise ratio, 300 to 3400 Hz">SNR</th><th>flags</th></tr></thead>
+        <tbody>{d.bot.map((u, i) => (
+          <tr key={u.utteranceId ?? i} onClick={() => onSeek(u.startS)} tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onSeek(u.startS)} className={u.flags.length ? s.flagged : ""}>
+            <td className="mono">{fmtClock(u.startS)}</td>
+            <td className="num mono">{fmt(u.wpm)}</td>
+            <td className="num mono" title={u.pitchMedianHz != null ? `median ${Math.round(u.pitchMedianHz)} Hz, range ${u.pitchRangeSt?.toFixed(1) ?? "–"} st` : "not enough voiced speech"}>{fmt(u.pitchIqrSt, 1, " st")}</td>
+            <td className="num mono" title={`${Math.round(u.pauseRatio * 100)}% of the utterance was silence`}>{u.pauseCount}{u.pauseCount ? <span className="faint"> / {u.longestPauseS.toFixed(1)} s</span> : null}</td>
+            <td className="num mono">{fmt(u.snrDb, 0, " dB")}</td>
+            <td className="faint">{u.flags.map((x) => categoryLabel({ category: x })).join(", ")}{u.chops ? `${u.flags.length ? ", " : ""}${u.chops} chop${u.chops === 1 ? "" : "s"}` : ""}</td>
+          </tr>))}</tbody>
+      </table>
+      {d.limitation && <div className="faint" style={{ padding: "4px 12px 8px", fontSize: 10 }}>{d.limitation}</div>}
+    </div>
+  );
 }
 
 export function VerdictBar({ payload, human, onSet, pending }: { payload: ReviewPayload; human: Verdict | null; onSet: (v: Verdict) => void; pending: boolean }) {

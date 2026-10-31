@@ -14,7 +14,7 @@ import { fmtClock, fmtDuration, sevClass, verdictLabel } from "@/lib/format";
 import type { CallWsMessage, Finding, ReviewPayload, Verdict } from "@/api/types";
 import { Waveform } from "./Waveform";
 import { Transcript } from "./Transcript";
-import { DbDiff, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, selectFirstOpen, verdictAllowed } from "./Findings";
+import { DbDiff, DeliveryPanel, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, selectFirstOpen, verdictAllowed } from "./Findings";
 import { useAudio } from "./useAudio";
 import s from "./review.module.css";
 
@@ -216,6 +216,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
             {payload.timing ? <dl className={s.kvs}><dt>reply p50 / p95</dt><dd>{payload.timing.replyP50S} s / {payload.timing.replyP95S} s</dd><dt>overlaps</dt><dd>{payload.timing.overlaps}</dd><dt>dead air events</dt><dd>{payload.timing.deadAirEvents}</dd><dt>barge-in stop time</dt><dd>{payload.timing.bargeStopS != null ? `${payload.timing.bargeStopS} s` : "no barge-ins"}</dd></dl>
               : <dl className={s.kvs}><dt>reply latency</dt><dd className={s.na}>{isTurn ? "not measured (turn-based)" : pending ? "waiting" : "not measured"}</dd><dt>overlaps</dt><dd className={s.na}>not measured</dd><dt>dead air</dt><dd className={s.na}>not measured</dd></dl>}
           </div>
+          <div className={s.sec}><div className={s.sh}>Delivery, measured <span className="tag" title="Advisory. Limits come from a small corpus, no listener ratings.">advisory</span></div><DeliveryPanel payload={payload} onSeek={seek} /></div>
           <div className={s.sec}><div className={s.sh}>Evaluators</div><Evaluators payload={payload} pending={pending} /></div>
           <VerdictBar payload={payload} human={human} onSet={setVerdict} pending={pending} />
         </aside>

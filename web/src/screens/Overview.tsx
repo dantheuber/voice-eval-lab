@@ -3,6 +3,7 @@ import { Shell } from "@/components/Shell";
 import { Button, Empty, HealthDot, Kbd, ModeBadge, Note, Panel, PassRate, QueryState, RateBar, RateLegend, Skeleton, Untested } from "@/components/ui";
 import { useOverview, useProfiles } from "@/api/queries";
 import { isUntested } from "@/lib/untested";
+import { isAdvisoryEvaluator } from "@/lib/evaluators";
 import { endpoints } from "@/api/client";
 import { ciText, valid } from "@/lib/stats";
 import { evalName, fmtAgo, fmtWhen } from "@/lib/format";
@@ -103,7 +104,7 @@ function OverviewBody({ d }: { d: Overview }) {
           <table className="t"><tbody>{d.health.map((h) => <tr key={h.role}><td style={{ width: 130 }}>{h.name}</td><td className="mono faint">{h.model}</td><td className="right"><HealthDot state={h.state}>{h.detail}{h.state === "loading" && h.elapsedS != null ? `, ${h.elapsedS} s` : ""}</HealthDot></td></tr>)}</tbody></table>
         </Panel>
         <Panel flush title="Most common open findings" meta="last 7 days">
-          <table className="t"><tbody>{d.topOpenFindings.map((f) => <tr key={f.title}><td>{f.title}</td><td className="faint">{evalName(f.evaluator)}{f.evaluator === "audio_listening" ? ", advisory" : ""}</td><td className="num">{f.count}</td></tr>)}</tbody></table>
+          <table className="t"><tbody>{d.topOpenFindings.map((f) => <tr key={f.title}><td>{f.title}</td><td className="faint">{evalName(f.evaluator)}{isAdvisoryEvaluator(f.evaluator) ? ", advisory" : ""}</td><td className="num">{f.count}</td></tr>)}</tbody></table>
         </Panel>
       </div>
     </>

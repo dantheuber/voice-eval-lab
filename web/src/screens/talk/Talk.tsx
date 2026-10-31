@@ -9,6 +9,7 @@ import { useHotkeys } from "@/hooks/useHotkeys";
 import { useSocket } from "@/hooks/useSocket";
 import { toast } from "@/store/toast";
 import { evalName, fmtClock } from "@/lib/format";
+import { isAdvisoryEvaluator, orderedEvaluators } from "@/lib/evaluators";
 import { isMock } from "@/api/transport";
 import type { CallWsMessage, EvaluatorRun, Finding, LineConditions, TalkSession } from "@/api/types";
 import { useMic } from "./useMic";
@@ -172,7 +173,8 @@ function Evaluating({ callId, onAgain, onOpen }: { callId: string; onAgain: () =
     if (m.type === "finding") setFindings((f) => [...f, m.finding]);
     if (m.type === "eval") setDone(m.eval.verdict);
   }, { onClose: () => setClosed(true) });
-  const order = ["timing", "state", "pronunciation", "transcript_judge", "audio_quality", "audio_listening"];
+  // Server-reported evaluators first (any new one appears automatically), then the expected set still to come.
+  const order = orderedEvaluators(evals, findings, !done && !closed);
   const running = order.find((n) => !evals.some((e) => e.name === n));
   return (
     <div className="panel" style={{ maxWidth: 720, margin: "0 auto" }}>
@@ -182,7 +184,7 @@ function Evaluating({ callId, onAgain, onOpen }: { callId: string; onAgain: () =
           <tr><td style={{ width: 90, padding: "6px 0" }}><span className="v pass">done</span></td><td>Recording saved<div className="faint">stereo, you left, bot right</div></td></tr>
           {order.map((n) => { const e = evals.find((x) => x.name === n); const fs = findings.filter((f) => f.evaluator === n); return (
             <tr key={n}><td style={{ padding: "6px 0" }}>{e ? (e.status === "skipped" ? <span className="v queued">skipped</span> : e.status === "error" ? <VerdictBadge v="failed" /> : <span className="v pass">done</span>) : n === running && !done && !closed ? <VerdictBadge v="running" /> : <VerdictBadge v="queued" />}</td>
-              <td>{evalName(n)}{n === "audio_listening" ? " (advisory)" : ""}<div className="faint">{e?.status === "skipped" ? e.reason : fs.length ? `${fs.length} finding${fs.length === 1 ? "" : "s"}: ${fs.map((f) => f.title).join("; ")}` : e ? "no findings" : n === "transcript_judge" && n === running ? "waiting on the judge LLM" : ""}</div></td></tr>); })}
+              <td>{evalName(n)}{isAdvisoryEvaluator(n, findings) ? " (advisory)" : ""}<div className="faint">{e?.status === "skipped" ? e.reason : fs.length ? `${fs.length} finding${fs.length === 1 ? "" : "s"}: ${fs.map((f) => f.title).join("; ")}` : e ? "no findings" : n === "transcript_judge" && n === running ? "waiting on the judge LLM" : ""}</div></td></tr>); })}
         </tbody></table>
         <div className="btn-row" style={{ marginTop: 24 }}><Button variant="primary" onClick={onOpen}>{done ? "Open review" : "Open review as results arrive"}</Button><Button onClick={onAgain}>Call again</Button><span className="faint">You can leave. The call appears in the review queue when evals finish.</span></div>
       </div>

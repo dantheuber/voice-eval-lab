@@ -315,11 +315,12 @@ export const reviewA = ((): T.ReviewPayload => {
   ];
   const findings: T.Finding[] = [
     F("fnd_a1", "timing", "dead_air", "minor", "Dead air 2.9 s before bot answered", "Caller finished at 00:21.0, bot started at 00:22.4 after a 1.4 s gap, then paused again. Threshold 2.0 s.", [15.4, 22.4]),
-    F("fnd_a2", "pronunciation", "critical_token", "major", "Invoice number read as \"FH forty-four ninety\"", "Intended: \"invoice FH-4419\". Independent ASR heard: \"invoice FH forty-four ninety\". Critical token mismatch on a reference number.", [45.3, 51.1], { criterionId: "FH-4419", evidence: [{ quote: "I can see invoice FH forty-four ninety was charged twice", speaker: "bot", startS: 45.3, endS: 51.1 }] }),
+    F("fnd_a2", "pronunciation", "critical_token_corroborated", "major", "Invoice number read as \"FH forty-four ninety\"", "Intended: \"invoice FH-4419\". Independent ASR heard: \"invoice FH forty-four ninety\"; the bot's own STT heard the same. Critical token mismatch on a reference number.", [45.3, 51.1], { criterionId: "FH-4419", evidence: [{ quote: "I can see invoice FH forty-four ninety was charged twice", speaker: "bot", startS: 45.3, endS: 51.1 }] }),
     F("fnd_a3", "timing", "barge_in_stop", "info", "Bot kept talking 1.5 s after barge-in", "Caller interrupted at 01:08.1. Bot audio continued until 01:09.6. Target under 0.5 s.", [66.9, 70.5]),
     F("fnd_a4", "transcript_judge", "rule", "critical", "Wrong refund timeframe stated", "Policy says refunds take 5 to 7 business days. The bot promised 24 hours.", [90.9, 103.2], { criterionId: "refund_timeframe", evidence: [{ quote: "You'll see that back on your card within 24 hours", speaker: "bot", startS: 90.9, endS: 96.0 }] }),
     F("fnd_a5", "state", "missing_change", "critical", "No refund issued in the database", "Expected a refunds row for FH-4419, $49.99. No issue_refund tool call in the timeline and no row.", [142.9, 154.3], { criterionId: "refund_added" }),
     F("fnd_a6", "audio_listening", "delivery", "minor", "Apology sounded flat", "Listener model: \"Delivery is even and fast, no change in tone for the apology.\"", [125.6, 136.4], { advisory: true, evidence: [{ quote: "I'm very sorry for the inconvenience this has caused", speaker: "bot", startS: 125.6, endS: 131.0 }] }),
+    F("fnd_a7", "delivery", "rushed", "minor", "Speech rushed: 212 wpm", "Rate is 1.41x the call's median of 150 wpm.", [90.9, 103.2], { advisory: true, evidence: [{ quote: "", speaker: "bot", startS: 90.9, endS: 103.2 }] }),
   ];
   const criteria: T.CriterionResult[] = [
     { criterionId: "verify_first", kind: "must", text: sc.must[0].text, status: "pass", reason: "", evidence: [{ quote: "Can I get the billing zip code and PIN on the account?", speaker: "bot", startS: 9.6, endS: 14.2 }] },
@@ -340,6 +341,7 @@ export const reviewA = ((): T.ReviewPayload => {
     { name: "pronunciation", status: "ok", reason: "", durationS: 11.0, model: "whisper-large-v3, no prompt", metrics: { criticalTokens: 14, mismatches: 1 } },
     { name: "audio_quality", status: "ok", reason: "", durationS: 2.2, model: "nisqa", metrics: { mos: 3.9, baseline: 4.0, clipping: false } },
     { name: "audio_listening", status: "ok", reason: "", durationS: 9.8, model: "LFM3-Audio-2B", metrics: { notes: 1 } },
+    { name: "delivery", status: "ok", reason: "", durationS: 3.1, model: null, metrics: deliveryMetrics(speech.bot, [8]) },
   ];
   const dbChanges: T.DbChange[] = [{ table: "tickets", key: { id: "tkt_2291" }, kind: "insert", before: null, after: { customer_id: "cus_1001", subject: "Duplicate charge FH-4419, refund requested" } }];
   const artifact: T.CallArtifact = {
@@ -398,7 +400,7 @@ export const reviewB = ((): T.ReviewPayload => {
     { kind: "db", t: 104.3, detail: "INSERT refunds (id=FH-R-2304, invoice_id=FH-4419, amount_cents=4999)" },
   ];
   const findings: T.Finding[] = [
-    F("fnd_b1", "pronunciation", "critical_token", "minor", "Billing zip read back with digits swapped", "Intended: \"97214\". ASR heard: \"nine seven two four one\". Critical token.", [44.0, 49.3], { criterionId: "97214" }),
+    F("fnd_b1", "pronunciation", "critical_token_asr_only", "minor", "Billing zip read back with digits swapped", "Intended: \"97214\". Independent ASR heard: \"nine seven two four one\"; the bot's STT heard it correctly. Critical token, one engine only.", [44.0, 49.3], { criterionId: "97214", advisory: true }),
     F("fnd_b2", "transcript_judge", "rule", "minor", "Refund timeframe vague", "Bot: \"a few business days\". Rule asks for 5 to 7 business days. Judge marked uncertain and asked for review.", [86.0, 97.5], { criterionId: "refund_timeframe", evidence: [{ quote: "You'll have it back in a few business days", speaker: "bot", startS: 86.0, endS: 90.0 }] }),
     F("fnd_b3", "audio_listening", "delivery", "info", "Closing felt rushed", "Listener model: \"Final sentence is noticeably faster than the rest.\"", [139.0, 150.9], { advisory: true }),
   ];
@@ -421,6 +423,7 @@ export const reviewB = ((): T.ReviewPayload => {
     { name: "pronunciation", status: "ok", reason: "", durationS: 10.2, model: "whisper-large-v3, no prompt", metrics: { criticalTokens: 16, mismatches: 1 } },
     { name: "audio_quality", status: "ok", reason: "", durationS: 2.0, model: "nisqa", metrics: { mos: 4.1, baseline: 4.0 } },
     { name: "audio_listening", status: "ok", reason: "", durationS: 8.1, model: "LFM3-Audio-2B", metrics: { notes: 1 } },
+    { name: "delivery", status: "ok", reason: "", durationS: 2.9, model: null, metrics: deliveryMetrics(speech.bot, [11]) },
   ];
   const artifact: T.CallArtifact = {
     id, mode: "turn_based", status: "done", timingIsReal: false, batchId: "batch_0141", personaId: pe.id, scenarioId: sc.id, personaSnapshot: pe, scenarioSnapshot: sc,
@@ -475,6 +478,7 @@ export function genericReview(summary: T.CallSummary): T.ReviewPayload {
     { name: "pronunciation", status: "ok", reason: artifact.hasIntendedText ? "" : "Reduced: ASR vs ASR, no intended text.", durationS: 9, model: "whisper-large-v3, no prompt", metrics: {} },
     { name: "audio_quality", status: "ok", reason: "", durationS: 2, model: "nisqa", metrics: { mos: 4.0 } },
     { name: "audio_listening", status: "ok", reason: "", durationS: 7, model: "LFM3-Audio-2B", metrics: {} },
+    { name: "delivery", status: "ok", reason: "", durationS: 2, model: null, metrics: deliveryMetrics(speech.bot, []) },
   ];
   return {
     call: artifact, summary,
@@ -514,3 +518,25 @@ export const compareFixture = (a: T.RunSummary, b: T.RunSummary): T.Compare => (
   ],
   worst: { criterionId: "offers_ticket", deltaPts: -21, callIds: ["call_3f172c3d4e5f"] },
 });
+
+/* Delivery evaluator metrics in the evaluator's own snake_case shape (see src/voicelab/eval/evaluators/delivery.py). */
+export function deliveryMetrics(botSegs: [number, number][], rushedIdx: number[]): Record<string, unknown> {
+  const r = (i: number, k: number) => Math.abs(Math.sin(i * 9.17 + k * 3.3)) % 1;
+  const bot = botSegs.map(([a, b], i) => {
+    const rushed = rushedIdx.includes(i);
+    const dur = b - a;
+    const speech = +(dur * (0.82 + 0.1 * r(i, 1))).toFixed(3);
+    const wpm = rushed ? 212 : Math.round(140 + 24 * r(i, 2));
+    return {
+      speaker: "bot", utterance_id: `utt_${i}`, start_s: a, end_s: b, words: Math.round((wpm * speech) / 60), speech_s: speech, wpm,
+      pause_count: Math.round(2 * r(i, 3)), longest_pause_s: +(0.3 + 0.4 * r(i, 4)).toFixed(3), pause_ratio: +(0.04 + 0.08 * r(i, 5)).toFixed(3),
+      chops: 0, mid_word_chops: 0, voiced_s: +(speech * 0.6).toFixed(3), pitch_median_hz: Math.round(180 + 20 * r(i, 6)), pitch_range_st: +(5 + 3 * r(i, 7)).toFixed(3),
+      pitch_std_st: +(1 + 0.6 * r(i, 8)).toFixed(3), pitch_iqr_st: +(1.6 + 1.2 * r(i, 9)).toFixed(3), snr_db: +(24 + 8 * r(i, 10)).toFixed(3),
+      onset_ms: Math.round(90 + 120 * r(i, 11)), offset_ms: Math.round(110 + 140 * r(i, 12)), flags: rushed ? ["rushed"] : [],
+    };
+  });
+  return {
+    bot, caller: [], medians: { wpm: 150, pitch_iqr_st: 2.2, snr_db: 28 }, flag_counts: rushedIdx.length ? { rushed: rushedIdx.length } : {},
+    limitation: "Delivery limits come from 21 clips and no listener ratings. On a phone line, pitch is read from harmonics because the band removes the fundamental, and SNR covers 300 to 3400 Hz.",
+  };
+}

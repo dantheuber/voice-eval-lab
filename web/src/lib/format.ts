@@ -54,11 +54,7 @@ export function sevClass(severity: Severity, advisory: boolean): SevClass {
 }
 export const sevLabel: Record<SevClass, string> = { high: "high", med: "med", low: "low", adv: "advisory, cannot fail the call" };
 
-export const evaluatorLabel: Record<string, string> = {
-  transcript_judge: "transcript judge", caller_validity: "caller validity", state: "state assertions", timing: "timing",
-  pronunciation: "pronunciation", audio_quality: "audio quality", audio_listening: "audio listening",
-};
-export const evalName = (e: string) => evaluatorLabel[e] ?? e.replace(/_/g, " ");
+export { evalName, evaluatorLabels as evaluatorLabel } from "./evaluators";
 
 export function interruptionScale(rate: number): number {
   return Math.min(5, Math.max(1, Math.round(rate * 4) + 1));
