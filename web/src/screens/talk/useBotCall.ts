@@ -61,6 +61,7 @@ export function useBotCall(botAudioRef: React.RefObject<HTMLAudioElement | null>
       const [{ PipecatClient, RTVIEvent }, { SmallWebRTCTransport }] = await Promise.all([import("@pipecat-ai/client-js"), import("@pipecat-ai/small-webrtc-transport")]);
       if (stale()) return;
       const mic = new LocalMic(opts.deviceId);
+      const segments = new Set<number>();
       const transport = new SmallWebRTCTransport({ iceServers: session.iceServers, mediaManager: asMediaManager(mic) });
       let clientHandle: InstanceType<typeof PipecatClient> | null = null;
       // Captured before connect() so end() or unmount during connection still releases the mic.
@@ -78,7 +79,8 @@ export function useBotCall(botAudioRef: React.RefObject<HTMLAudioElement | null>
           onBotStoppedSpeaking: () => up({ botSpeaking: false }),
           onBotInterrupted: () => { up({ botSpeaking: false }); endBotLine(); },
           onUserTranscript: (d) => addLine("you", d.text, d.final),
-          onBotOutput: (d) => { if (d.text.trim()) addBotText(d.text.trim()); },
+          // A sentence arrives more than once as it moves from generated to spoken, under one segment id.
+          onBotOutput: (d) => { const seen = d.segment_id != null && segments.has(d.segment_id); if (d.segment_id != null) segments.add(d.segment_id); if (!seen && d.text.trim()) addBotText(d.text.trim()); },
           onBotTtsStopped: endBotLine,
           onServerMessage: (data: unknown) => { const v = (data as { voicelab?: VoicelabServerMessage })?.voicelab; if (v) onServer(v); },
           onTrackStarted: (track, participant) => { if (!participant?.local && track.kind === "audio" && botAudioRef.current) { botAudioRef.current.srcObject = new MediaStream([track]); botAudioRef.current.play().catch(() => undefined); } },
