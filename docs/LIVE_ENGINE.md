@@ -72,7 +72,7 @@ Run together, `AC9077` came out of TTS as "AC nineteen seventy seven" and went i
 
 - `speech.py` spells ids phone-style ("F, as in frank. H, as in house. Four, four, one, nine.") and reads digits as comma-separated words. Measured on ten numbers through real TTS and STT, that came back right 10 of 10 on every voice, against 5 of 10 for spaced numerals on Pocket.
 - `heard.py` collapses spelled forms for the brains. The word after "as in" outranks the letter before it, so "S as in Frank" is F. `heard_text` in the artifact stays raw STT output.
-- `find_customer` accepts what a recognizer writes. It also compares against how an address sounds, since `nguyenauto.example` is said as "win auto" and no spelling match recovers that. A near match comes back flagged `close_match` so the bot confirms it.
+- Lookups accept what a recognizer writes, such as "bell hardware dot example". They also compare against how an address sounds, since `nguyenauto.example` is said as "win auto" and no spelling match recovers that. A near match is only offered: `find_customer` returns `did_you_mean` and other tools refuse with the same suggestion, so the bot reads it back and then uses the exact address. No tool reads or changes an account on a near match, and matches that span two customers aren't offered at all. A misheard address costs one extra exchange with the caller. On the old behaviour it could change another customer's DNS.
 
 ## Hold
 

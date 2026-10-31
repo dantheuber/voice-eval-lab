@@ -16,6 +16,7 @@ import contextlib
 import difflib
 import re
 import sqlite3
+from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
@@ -186,10 +187,7 @@ def _mailbox(db: CompanyDb, address: str) -> dict[str, Any]:
     exact = _spoken_address(address)
     found = db.row("SELECT * FROM mailboxes WHERE address = ?", exact)
     if found is None:
-        close = _closest_row(db, exact, _MAILBOX_VALUES)
-        found = close and db.row("SELECT * FROM mailboxes WHERE address = ?", close["value"])
-    if found is None:
-        raise ToolRejected(f"no mailbox {address}")
+        raise _not_found(db, f"no mailbox {address}", exact, _MAILBOX_VALUES)
     return found
 
 
@@ -197,10 +195,7 @@ def _website(db: CompanyDb, domain: str) -> dict[str, Any]:
     exact = _clean_domain(_spoken_address(domain))
     found = db.row("SELECT * FROM websites WHERE domain = ?", exact)
     if found is None:
-        close = _closest_row(db, exact, _DOMAIN_VALUES)
-        found = close and db.row("SELECT * FROM websites WHERE domain = ?", close["value"])
-    if found is None:
-        raise ToolRejected(f"no website for {domain}")
+        raise _not_found(db, f"no website for {domain}", exact, _DOMAIN_VALUES)
     return found
 
 
@@ -208,10 +203,7 @@ def _domain(db: CompanyDb, domain: str) -> dict[str, Any]:
     exact = _clean_domain(_spoken_address(domain))
     found = db.row("SELECT * FROM domains WHERE name = ?", exact)
     if found is None:
-        close = _closest_row(db, exact, _DOMAIN_VALUES)
-        found = close and db.row("SELECT * FROM domains WHERE name = ?", close["value"])
-    if found is None:
-        raise ToolRejected(f"no domain {domain}")
+        raise _not_found(db, f"no domain {domain}", exact, _DOMAIN_VALUES)
     return found
 
 
@@ -293,18 +285,31 @@ def _said_aloud(address: str) -> str:
 
 
 def _closest_row(db: CompanyDb, heard: str, sql: str) -> dict[str, Any] | None:
-    """The address `heard` nearly matches. Identity is still checked by zip and PIN.
+    """The address `heard` nearly matches, to offer for confirmation. Tools never act on this.
 
-    Near matches on two customers mean the guess can't pick between them, so neither wins.
+    Every candidate counts, and keys can collide since `a-b.example` and `ab.example` reduce to
+    the same letters. Near matches on two customers mean a guess can't pick, so neither is offered.
     """
-    keyed: dict[str, dict[str, Any]] = {}
+    keyed: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in db.rows(sql):
-        keyed[_letters_digits(row["value"])] = row
-        keyed[_letters_digits(_said_aloud(row["value"]))] = row
-    close = difflib.get_close_matches(_letters_digits(heard), keyed, n=3, cutoff=_CLOSE_MATCH)
-    if len({keyed[match]["customer_id"] for match in close}) != 1:
+        for key in {_letters_digits(row["value"]), _letters_digits(_said_aloud(row["value"]))}:
+            keyed[key].append(row)
+    wanted = _letters_digits(heard)
+    matches = difflib.get_close_matches(wanted, keyed, n=max(1, len(keyed)), cutoff=_CLOSE_MATCH)
+    rows = [row for match in matches for row in keyed[match]]
+    if len({row["customer_id"] for row in rows}) != 1:
         return None
-    return keyed[close[0]]
+    return rows[0]
+
+
+def _not_found(db: CompanyDb, problem: str, heard: str, sql: str) -> ToolRejected:
+    """Near is not enough to touch an account on, so the bot has to check with the caller."""
+    close = _closest_row(db, heard, sql)
+    if close is None:
+        return ToolRejected(problem)
+    return ToolRejected(
+        f"{problem}. Did you mean {close['value']}? Check with the caller, then use it exactly."
+    )
 
 
 @_tool(
@@ -351,13 +356,7 @@ def find_customer(
         close = _closest_row(db, host, _DOMAIN_VALUES)
     if close is None:
         return {"found": False}
-    customer = _customer(db, close["customer_id"])
-    return {
-        "found": True,
-        "customer_id": customer["id"],
-        "name": customer["name"],
-        "close_match": close["value"],
-    }
+    return {"found": False, "did_you_mean": close["value"]}
 
 
 @_tool(

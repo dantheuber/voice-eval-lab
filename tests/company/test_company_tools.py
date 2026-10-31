@@ -616,26 +616,24 @@ def test_find_customer_takes_what_a_speech_recognizer_writes(db, arguments):
     assert found == {"found": True, "customer_id": "cus_1001", "name": "Dana Whitfield"}
 
 
-def test_a_nearly_right_domain_is_found_and_flagged_so_the_bot_can_confirm(db):
+def test_a_nearly_right_domain_asks_the_bot_to_confirm(db):
     found = ToolDispatcher(db).dispatch(
         "find_customer", {"domain": "whitfeild landscaping.example"}
     )
 
-    assert found["customer_id"] == "cus_1001"
-    assert found["close_match"] == "whitfieldlandscaping.example"
+    assert found == {"found": False, "did_you_mean": "whitfieldlandscaping.example"}
 
 
-def test_a_nearly_right_email_is_found_and_flagged(db):
+def test_a_nearly_right_email_asks_the_bot_to_confirm(db):
     found = ToolDispatcher(db).dispatch("find_customer", {"email": "evelin@hartfamily.example"})
 
-    assert found["customer_id"] == "cus_1003" and "close_match" in found
+    assert found == {"found": False, "did_you_mean": "evelyn@hartfamily.example"}
 
 
 def test_a_name_is_matched_on_how_it_sounds(db):
     found = ToolDispatcher(db).dispatch("find_customer", {"domain": "winauto.example"})
 
-    assert found["customer_id"] == "cus_1007"
-    assert found["close_match"] == "nguyenauto.example"
+    assert found == {"found": False, "did_you_mean": "nguyenauto.example"}
 
 
 def test_a_different_business_is_not_a_close_match(db):
@@ -654,24 +652,72 @@ def test_customer_ids_match_in_any_case(db):
     ("tool", "arguments", "expected"),
     [
         ("renew_ssl", {"domain": "merinocafe.example"}, "marinocafe.example"),
-        ("restore_site", {"domain": "bell hardware dot example"}, "bellhardware.example"),
+        ("restore_site", {"domain": "bellhardwear.example"}, "bellhardware.example"),
         ("get_dns_records", {"domain": "winauto.example"}, "nguyenauto.example"),
         ("renew_domain", {"domain": "thomson photo dot example"}, "thompsonphoto.example"),
+        ("unlock_mailbox", {"address": "Evelyn@HeartFamily.example"}, "evelyn@hartfamily"),
     ],
 )
-def test_tools_act_on_the_address_they_nearly_heard(db, tool, arguments, expected):
+def test_a_nearly_heard_address_is_offered_and_nothing_is_changed(db, tool, arguments, expected):
+    before = db.conn.total_changes
+
     result = ToolDispatcher(db).dispatch(tool, arguments)
 
-    assert "error" not in result
-    assert expected in {result.get("domain"), result.get("name")}
+    assert f"Did you mean {expected}" in result["error"]
+    assert db.conn.total_changes == before
 
 
-def test_mailbox_tools_act_on_the_address_they_nearly_heard(db):
-    result = ToolDispatcher(db).dispatch(
-        "unlock_mailbox", {"address": "Evelyn@HeartFamily.example"}
+@pytest.mark.parametrize(
+    ("tool", "arguments"),
+    [
+        ("restore_site", {"domain": "bell hardware dot example"}),
+        ("renew_ssl", {"domain": "https://www.marinocafe.example/"}),
+        ("unlock_mailbox", {"address": "Evelyn at HartFamily dot example"}),
+    ],
+)
+def test_an_address_said_aloud_is_still_exact(db, tool, arguments):
+    assert "error" not in ToolDispatcher(db).dispatch(tool, arguments)
+
+
+def add_domain(db, domain: str, customer_id: str) -> None:
+    db.conn.execute(
+        "INSERT INTO domains VALUES (?, ?, '2030-01-01', 0, 1500)",
+        (domain, customer_id),
     )
 
-    assert result == {"address": "evelyn@hartfamily.example", "locked": False}
+
+def test_two_owners_of_one_spelling_are_not_guessed_between(db):
+    add_domain(db, "a-b.example", "cus_1001")
+    add_domain(db, "ab.example", "cus_1003")
+    tools = ToolDispatcher(db)
+    before = db.conn.total_changes
+
+    changed = tools.dispatch(
+        "update_dns_record", {"domain": "ab.exampl", "type": "A", "value": "192.0.2.9"}
+    )
+    found = tools.dispatch("find_customer", {"domain": "ab.exampl"})
+
+    assert "Did you mean" not in changed["error"]
+    assert found == {"found": False}
+    assert db.conn.total_changes == before
+
+
+def test_owners_past_the_first_few_matches_still_make_it_ambiguous(db):
+    for number, customer in enumerate(["cus_1003"] + ["cus_1001"] * 3):
+        add_domain(db, f"sunnyside{number}.example", customer)
+
+    found = ToolDispatcher(db).dispatch("find_customer", {"domain": "sunnyside.example"})
+
+    assert found == {"found": False}
+
+
+def test_an_exact_address_works_beside_a_near_one(db):
+    add_domain(db, "a-b.example", "cus_1001")
+    add_domain(db, "ab.example", "cus_1003")
+
+    found = ToolDispatcher(db).dispatch("find_customer", {"domain": "ab.example"})
+
+    assert found["customer_id"] == "cus_1003"
 
 
 def test_a_different_website_is_still_refused(db):
