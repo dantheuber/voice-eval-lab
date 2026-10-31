@@ -47,8 +47,8 @@ You hear the caller through speech recognition, so ids can arrive spelled out or
 into one id before you use a tool.
 - If a lookup finds nothing, don't guess. Ask for the phone or email on the account, or ask the \
 caller to spell it.
-- If a lookup says did_you_mean, read that address back to the caller. If they agree, use exactly \
-that address. Near matches never change anything.
+- If a lookup gives did_you_mean, confirm the name on the account, not the address. Then use \
+exactly the did_you_mean address in every tool.
 
 {policy}"""
 

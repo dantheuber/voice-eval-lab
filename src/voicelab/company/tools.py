@@ -285,7 +285,7 @@ def _said_aloud(address: str) -> str:
 
 
 def _closest_row(db: CompanyDb, heard: str, sql: str) -> dict[str, Any] | None:
-    """The address `heard` nearly matches, to offer for confirmation. Tools never act on this.
+    """The address `heard` nearly matches, to offer. No tool acts on a near match.
 
     Every candidate counts, and keys can collide since `a-b.example` and `ab.example` reduce to
     the same letters. Near matches on two customers mean a guess can't pick, so neither is offered.
@@ -356,7 +356,16 @@ def find_customer(
         close = _closest_row(db, host, _DOMAIN_VALUES)
     if close is None:
         return {"found": False}
-    return {"found": False, "did_you_mean": close["value"]}
+    # Reading the address back can't settle this: "merino" and "marino" sound the same to the
+    # caller too. So this finds the account, for the bot to confirm by name and verify as usual,
+    # and hands over the exact address, which is the only one any other tool will take.
+    customer = _customer(db, close["customer_id"])
+    return {
+        "found": True,
+        "customer_id": customer["id"],
+        "name": customer["name"],
+        "did_you_mean": close["value"],
+    }
 
 
 @_tool(

@@ -616,24 +616,31 @@ def test_find_customer_takes_what_a_speech_recognizer_writes(db, arguments):
     assert found == {"found": True, "customer_id": "cus_1001", "name": "Dana Whitfield"}
 
 
-def test_a_nearly_right_domain_asks_the_bot_to_confirm(db):
+def test_a_nearly_right_domain_finds_the_account_and_gives_the_exact_address(db):
     found = ToolDispatcher(db).dispatch(
         "find_customer", {"domain": "whitfeild landscaping.example"}
     )
 
-    assert found == {"found": False, "did_you_mean": "whitfieldlandscaping.example"}
+    assert found == {
+        "found": True,
+        "customer_id": "cus_1001",
+        "name": "Dana Whitfield",
+        "did_you_mean": "whitfieldlandscaping.example",
+    }
 
 
-def test_a_nearly_right_email_asks_the_bot_to_confirm(db):
+def test_a_nearly_right_email_finds_the_account_and_gives_the_exact_address(db):
     found = ToolDispatcher(db).dispatch("find_customer", {"email": "evelin@hartfamily.example"})
 
-    assert found == {"found": False, "did_you_mean": "evelyn@hartfamily.example"}
+    assert found["customer_id"] == "cus_1003"
+    assert found["did_you_mean"] == "evelyn@hartfamily.example"
 
 
 def test_a_name_is_matched_on_how_it_sounds(db):
     found = ToolDispatcher(db).dispatch("find_customer", {"domain": "winauto.example"})
 
-    assert found == {"found": False, "did_you_mean": "nguyenauto.example"}
+    assert found["customer_id"] == "cus_1007"
+    assert found["did_you_mean"] == "nguyenauto.example"
 
 
 def test_a_different_business_is_not_a_close_match(db):
