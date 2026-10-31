@@ -91,9 +91,9 @@
 .fnote { margin-top: 6px; }
 .fnote textarea { min-height: 44px; }
 .saved { font-size: var(--fs-1); color: var(--ink-2); padding: 4px 8px; background: var(--bg-3); border-radius: var(--r-1); }
-.rubric { width: 100%; border-collapse: collapse; font-size: var(--fs-1); }
-.rubric td { padding: 6px var(--s-3); border-top: 1px solid var(--line-1); vertical-align: top; }
-.rubric td:first-child { width: 70px; white-space: nowrap; }
+.rubric { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-1); }
+.rubric td { padding: 6px var(--s-3); border-top: 1px solid var(--line-1); vertical-align: top; overflow-wrap: anywhere; }
+.rubric td:first-child { width: 128px; }
 .rubric .q { color: var(--ink-2); font-style: italic; margin-top: 2px; }
 .rubric .q a { font-style: normal; font-family: var(--font-mono); font-size: var(--fs-0); }
 .rubric .kind { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
