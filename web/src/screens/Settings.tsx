@@ -80,7 +80,7 @@ export function SettingsScreen() {
             <Panel flush title="Model servers" actions={loading.length ? <HealthDot state="loading">{loading.length} loading</HealthDot> : <HealthDot state="ok">all ready</HealthDot>}>
               <QueryState q={health} what="model health" skeleton={<div style={{ padding: 12 }}><Skeleton rows={6} /></div>}>
                 {(d) => <>
-                  {d.items.map((h) => <div key={h.role} className={s.serverRow}><HealthDot state={h.state} /><div style={{ flex: 1, minWidth: 0 }}><div>{h.name}</div><div className={s.m}>{h.model}</div></div><span className="faint nowrap">{h.detail}{h.state === "loading" && h.elapsedS != null ? `, ${h.elapsedS} s` : ""}</span>{h.state === "down" && <Button size="sm" variant="ghost" onClick={() => restart.mutate(h.role)}>restart</Button>}</div>)}
+                  {d.items.map((h) => <div key={h.role} className={s.serverRow}><HealthDot state={h.state} /><div style={{ flex: 1, minWidth: 0 }}><div>{h.name}</div><div className={s.m}>{h.model}</div></div><span className={h.state === "down" ? "faint" : "faint nowrap"}>{h.detail}{h.state === "loading" && h.elapsedS != null ? `, ${h.elapsedS} s` : ""}</span>{h.state === "down" && <Button size="sm" variant="ghost" onClick={() => restart.mutate(h.role)}>restart</Button>}</div>)}
                   {loading.map((h) => <div key={h.role} style={{ padding: "8px 12px" }}><Note kind="warn">{h.name} loading{h.elapsedS != null ? `, ${h.elapsedS} s` : ""}. {h.usualS != null ? `Usually under ${h.usualS} s on this GPU.` : ""} Evals queue until it reports ready; calls are not blocked.</Note></div>)}
                 </>}
               </QueryState>

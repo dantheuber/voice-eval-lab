@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import socket
 import sqlite3
 import sys
@@ -104,6 +105,26 @@ def test_health_covers_every_role(client):
         "elapsedS",
         "usualS",
     }
+
+
+def test_health_shows_who_holds_a_servers_port(client, rig, waiter):
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen()
+        port = holder.getsockname()[1]
+        profile = rig.services.profiles.require("local-default")
+        profile.roles["llm_support"]["url"] = f"http://127.0.0.1:{port}/v1"
+        llm = LocalService(name="llm", command=["sleep", "30"], port=port)
+        profile.services.append(llm)
+        rig.run_on_loop(lambda: rig.services.supervisor.apply([llm], start=True))
+
+        def reported():
+            items = client.get("/api/health").json()["items"]
+            found = next(item for item in items if item["role"] == "llm_support")
+            return found if found["state"] == "down" else None
+
+        assert f"pid {os.getpid()}" in waiter(reported)["detail"]
+        assert client.get("/api/health").json()["ready"] is False
 
 
 def test_health_without_a_profile_is_not_ready(tmp_path):

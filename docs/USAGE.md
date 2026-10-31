@@ -48,6 +48,8 @@ Useful variations:
 
 If `run.sh` says a port is taken, it tells you which process holds it. It won't start until that port is free.
 
+`voicelab serve` run directly makes the same check for each model server. A health answer doesn't say which model a server has, so a server on the port is only used if it has the same command and directory, which is what a killed voicelab leaves behind. Anything else stays down, and `/settings` and `/api/health` show who holds the port.
+
 ## Run a scenario
 
 A run is a batch of bot-to-bot calls. Each pairs a scenario (what the caller wants) with a persona (who is calling).

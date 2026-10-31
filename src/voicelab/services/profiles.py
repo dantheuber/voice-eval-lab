@@ -266,9 +266,10 @@ class ProfileManager:
     async def wait_for_servers(self, profile: Profile, timeout_s: float) -> None:
         await self.supervisor.reconcile(profile.services)
         if not await self.supervisor.wait_ready(profile.services, timeout_s):
-            raise ModelNotReady(
-                "profile", profile.id, reason=f"model servers not ready after {timeout_s:.0f} s"
-            )
+            reason = f"model servers not ready after {timeout_s:.0f} s"
+            down = self.supervisor.why_down(profile.services)
+            reason = f"{reason}: {down}" if down else reason
+            raise ModelNotReady("profile", profile.id, reason=reason)
 
     # Health --------------------------------------------------------------------------------------
 

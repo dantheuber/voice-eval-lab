@@ -12,6 +12,7 @@ import pytest
 import yaml
 
 from voicelab.core.profiles import LocalService, Profile
+from voicelab.services import supervisor as supervisor_module
 from voicelab.services.errors import ModelNotReady
 from voicelab.services.profiles import ProfileManager
 from voicelab.services.settings import Settings
@@ -180,17 +181,13 @@ async def test_stop_reaches_the_servers_children(supervisor, tmp_path):
 
 async def test_never_kills_a_server_it_did_not_start(supervisor):
     port = free_port()
-    foreign = await asyncio.create_subprocess_exec(
-        sys.executable, str(SERVER), str(port), stdout=asyncio.subprocess.PIPE
-    )
+    foreign = await foreign_server(port, "--ready-after", "0")
     try:
-        await foreign.stdout.readline()
         await supervisor.apply([service(port)], start=True)
-        await until(lambda: supervisor.statuses()["svc"].state == "ok")
+        await until(lambda: supervisor.statuses()["svc"].state == "down")
         status = supervisor.statuses()["svc"]
         assert status.managed is False
         assert status.pid is None
-        assert "not started by voicelab" in status.detail
         await supervisor.restart("svc")
         await supervisor.stop_all()
         await asyncio.sleep(0.2)
@@ -198,6 +195,99 @@ async def test_never_kills_a_server_it_did_not_start(supervisor):
     finally:
         foreign.kill()
         await foreign.wait()
+
+
+def port_is_open(port: int) -> bool:
+    with socket.socket() as probe:
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+async def foreign_server(port: int, *flags: str, cwd: Path | None = None):
+    """A healthy server voicelab didn't start, once it's listening."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable, str(SERVER), str(port), *flags, stdout=asyncio.subprocess.PIPE, cwd=cwd
+    )
+    await process.stdout.readline()
+    await until(lambda: port_is_open(port))  # it says so before it binds
+    return process
+
+
+async def test_a_healthy_foreign_server_is_not_taken_for_ours(supervisor):
+    """A Qwen server on the LFM port answers health checks, and results got labeled LFM."""
+    port = free_port()
+    foreign = await foreign_server(port, "--ready-after", "0")
+    try:
+        await supervisor.apply([service(port)], start=True)
+        await until(lambda: supervisor.statuses()["svc"].state == "down")
+        status = supervisor.statuses()["svc"]
+        assert f"port {port} is held by" in status.detail
+        assert f"pid {foreign.pid}" in status.detail
+        assert status.managed is False
+        assert status.pid is None
+        assert not await supervisor.wait_ready(running(supervisor, "svc"), 0.1)
+        await supervisor.stop_all()
+        assert foreign.returncode is None
+    finally:
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_the_same_command_from_another_checkout_is_not_ours(supervisor, tmp_path):
+    """Relative model paths mean another directory can be another model."""
+    port = free_port()
+    foreign = await foreign_server(port, cwd=tmp_path)
+    try:
+        await supervisor.apply([service(port)], start=True)
+        await until(lambda: supervisor.statuses()["svc"].state == "down")
+        assert f"pid {foreign.pid}" in supervisor.statuses()["svc"].detail
+    finally:
+        foreign.kill()
+        await foreign.wait()
+
+
+async def test_a_server_left_from_an_earlier_voicelab_is_used(tmp_path):
+    """Same command, same directory. It's what a killed voicelab leaves behind, and it's the right
+    model, so it's watched and never signalled."""
+    instance = ServiceSupervisor(tmp_path / "logs", poll_s=0.05, cwd=Path.cwd())
+    port = free_port()
+    left_behind = await foreign_server(port)
+    try:
+        await instance.apply([service(port)], start=True)
+        await until(lambda: instance.statuses()["svc"].state == "ok")
+        status = instance.statuses()["svc"]
+        assert status.managed is False
+        assert status.pid is None
+        await instance.stop_all()
+        await asyncio.sleep(0.2)
+        assert left_behind.returncode is None
+    finally:
+        await instance.stop_all()
+        left_behind.kill()
+        await left_behind.wait()
+
+
+async def test_a_conflict_clears_once_the_port_is_free(supervisor):
+    port = free_port()
+    foreign = await foreign_server(port, "--ready-after", "0")
+    await supervisor.apply([service(port)], start=True)
+    await until(lambda: supervisor.statuses()["svc"].state == "down")
+    foreign.kill()
+    await foreign.wait()
+    assert await supervisor.wait_ready(running(supervisor, "svc"), 10.0)
+    assert supervisor.statuses()["svc"].managed is True
+
+
+def test_a_port_holder_is_found_by_its_listening_socket():
+    with socket.socket() as holder:
+        holder.bind(("127.0.0.1", 0))
+        holder.listen()
+        found = supervisor_module.port_holder(holder.getsockname()[1])
+    assert found.pid == os.getpid()
+    assert found.name
+
+
+def test_a_free_port_has_no_holder():
+    assert supervisor_module.port_holder(free_port()) is None
 
 
 async def test_a_port_held_by_something_else_is_down_and_left_alone(supervisor):
@@ -314,6 +404,21 @@ async def test_health_does_not_credit_a_different_server(supervisor, tmp_path):
     await manager.ready(manager.require("default"), 10.0)
     llm = next(h for h in manager.health(manager.require("fast")) if h.role == "llm_support")
     assert llm.state == "off"
+
+
+async def test_a_run_waiting_on_a_held_port_says_who_holds_it(supervisor, tmp_path):
+    port = free_port()
+    foreign = await foreign_server(port, "--ready-after", "0")
+    try:
+        manager = _manager(tmp_path, supervisor, [_profile("default", service(port, name="llm"))])
+        with pytest.raises(ModelNotReady, match=f"pid {foreign.pid}"):
+            await manager.ready(manager.require("default"), 0.3)
+        llm = next(h for h in manager.health(manager.require("default")) if h.role == "llm_support")
+        assert llm.state == "down"
+        assert f"pid {foreign.pid}" in llm.detail
+    finally:
+        foreign.kill()
+        await foreign.wait()
 
 
 async def test_work_in_flight_keeps_its_servers(supervisor, tmp_path):

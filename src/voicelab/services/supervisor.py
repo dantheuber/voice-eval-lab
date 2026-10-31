@@ -2,8 +2,11 @@
 
 Each `LocalService` runs in its own process group with its log in `data/logs/`. A crash restarts it
 with growing backoff, and a server that stops answering health checks is treated as crashed. The
-only processes ever signalled are ones this supervisor spawned: a server already on the port is
-watched and reported, never touched, because the machine runs other people's model servers.
+only processes ever signalled are ones this supervisor spawned, because the machine runs other
+people's model servers. A server already on the port isn't used either, since answering health
+checks says nothing about which model it has, and a call would be labeled with the wrong one. It's
+reported with who holds the port. The exception is the very same command from the same directory,
+which is what a killed voicelab leaves behind.
 """
 
 from __future__ import annotations
@@ -33,6 +36,21 @@ logger = logging.getLogger(__name__)
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]")
 _GROUP_POLL_S = 0.05
 _DEAD_STATES = ("Z", "X")
+_LISTENING = "0A"
+
+
+@dataclass(frozen=True)
+class PortHolder:
+    """A process listening on a port. Its name and pid go on the LAN dashboard, and the rest of its
+    command line doesn't, because that can hold anything, such as a key."""
+
+    pid: int
+    name: str
+    command: tuple[str, ...]
+    cwd: Path | None
+
+    def __str__(self) -> str:
+        return f"{self.name} (pid {self.pid})"
 
 
 @dataclass
@@ -161,22 +179,26 @@ class ServiceSupervisor:
         entry = self._entries.get(service.name)
         return entry is not None and entry.service == service and entry.state == "ok"
 
+    def why_down(self, services: Iterable[LocalService]) -> str | None:
+        """What's wrong with the first of these that is down, as opposed to still loading."""
+        for service in services:
+            entry = self._entries.get(service.name)
+            if entry is not None and entry.state == "down":
+                return f"{service.name}: {entry.detail}"
+        return None
+
     # Supervision -------------------------------------------------------------------------------
 
     async def _supervise(self, entry: _Entry) -> None:
         backoff = self.min_backoff_s
         service = entry.service
         while True:
-            if await self._answers(service):
+            if _port_taken(service.port):
                 entry.managed = False
-                self._set(entry, "ok", "running, not started by voicelab")
+                await self._report_port(entry)
                 await asyncio.sleep(self.poll_s)
                 continue
             entry.managed = True
-            if _port_taken(service.port):
-                self._set(entry, "down", f"port {service.port} is held by another process")
-                await asyncio.sleep(self.poll_s)
-                continue
             reason, healthy_s = await self._run_once(entry)
             if healthy_s >= self.stable_s:
                 backoff = self.min_backoff_s
@@ -185,6 +207,26 @@ class ServiceSupervisor:
             self._set(entry, "down", f"{reason}, restarting in {backoff:.0f} s")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, self.max_backoff_s)
+
+    async def _report_port(self, entry: _Entry) -> None:
+        """Something we didn't start is on this port. Use it only if it's provably this server."""
+        service = entry.service
+        holder = await asyncio.to_thread(port_holder, service.port)
+        if holder is not None and self._is_this_server(holder, service):
+            if await self._answers(service):
+                self._set(entry, "ok", "running, not started by this voicelab")
+            else:
+                self._set(entry, "loading", "starting, not started by this voicelab")
+            return
+        who = holder or "a process owned by another user"
+        self._set(entry, "down", f"port {service.port} is held by {who}, not by voicelab")
+
+    def _is_this_server(self, holder: PortHolder, service: LocalService) -> bool:
+        """The same arguments from the same directory, so the same relative model paths. It's the
+        end of the command line that counts, since a script's shebang puts its interpreter first."""
+        wanted = tuple(service.command)
+        same_command = holder.command[-len(wanted) :] == wanted
+        return same_command and holder.cwd == self.cwd.resolve()
 
     async def _run_once(self, entry: _Entry) -> tuple[str, float]:
         """Run the server until it fails. Returns why, and how long it was healthy."""
@@ -332,6 +374,49 @@ def _port_taken(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.settimeout(0.5)
         return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _listening_sockets(port: int) -> set[str]:
+    """The inodes of sockets listening on this port, from the kernel's tables."""
+    found = set()
+    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+        with contextlib.suppress(OSError), open(table) as lines:
+            for line in lines.readlines()[1:]:
+                fields = line.split()
+                if fields[3] == _LISTENING and int(fields[1].rsplit(":", 1)[1], 16) == port:
+                    found.add(fields[9])
+    return found
+
+
+def _read_holder(pid: str) -> PortHolder | None:
+    root = Path("/proc") / pid
+    try:
+        command = (root / "cmdline").read_text().split("\0")[:-1]
+        name = (root / "comm").read_text().strip()
+        cwd = (root / "cwd").resolve()
+    except OSError:  # it exited while we looked
+        return None
+    return PortHolder(int(pid), name, tuple(command), cwd)
+
+
+def port_holder(port: int) -> PortHolder | None:
+    """Who is listening on a port. None if nobody is, or only a process we can't look inside."""
+    wanted = {f"socket:[{inode}]" for inode in _listening_sockets(port)}
+    if not wanted:
+        return None
+    for process in Path("/proc").glob("[0-9]*"):
+        if _open_files(process) & wanted:
+            return _read_holder(process.name)
+    return None
+
+
+def _open_files(process: Path) -> set[str]:
+    links = set()
+    with contextlib.suppress(OSError):  # it exited, or it's another user's
+        for descriptor in (process / "fd").iterdir():
+            with contextlib.suppress(OSError):  # a file can close while we look
+                links.add(os.readlink(descriptor))
+    return links
 
 
 def group_members(group: int) -> set[int]:

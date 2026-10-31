@@ -27,6 +27,14 @@ function show({ aws = { region: null, credentials: "found", problem: null, teste
   render(<QueryClientProvider client={new QueryClient()}><MemoryRouter><Tooltip.Provider><SettingsScreen /></Tooltip.Provider></MemoryRouter></QueryClientProvider>);
 }
 
+describe("model servers", () => {
+  it("shows who holds a port in full, on as many lines as it takes", async () => {
+    const detail = "port 18102 is held by llama-server (pid 4321), not by voicelab";
+    show({ health: [{ ...healthy, state: "down", detail }] });
+    expect(await screen.findByText(detail)).not.toHaveClass("nowrap");
+  });
+});
+
 describe("AWS credentials", () => {
   it("says why boto3 couldn't use what it found", async () => {
     show({ aws: { region: null, credentials: "not_found", problem: "Partial credentials found in env, missing: AWS_SECRET_ACCESS_KEY", testedAgainstLive: false } });
