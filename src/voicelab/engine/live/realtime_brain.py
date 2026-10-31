@@ -143,6 +143,8 @@ class RealtimeBrain(BotBrain):
         """
         self._user_talking = False
         self.barged_at_s = None
+        if self.call_over:
+            return
         self.begin_turn()
         self._reply = self.ledger.start_segment("")
         self._reply_audio_started = False

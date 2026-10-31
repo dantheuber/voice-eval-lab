@@ -328,6 +328,37 @@ async def test_cancelling_a_live_call_writes_the_recording_and_propagates(store)
     assert messages.of("callDone")[0]["call"]["status"] == "failed"
 
 
+async def test_cancelling_a_live_call_during_a_reply_keeps_the_words_that_went_out(store):
+    messages = Messages()
+    long_reply = " ".join(["This reply takes a long time to say out loud."] * 4)
+    run = asyncio.create_task(
+        run_live_bot_call(
+            request(mode=CallMode.LIVE_BOTS, persona=persona(line=LIVE)),
+            stack=stack(
+                llm_caller=quick_caller(says("I need some help.")),
+                llm_support=Scripted(default=long_reply),
+            ),
+            store=store,
+            emit=messages,
+            settings=simple_settings(),
+        )
+    )
+    async with asyncio.timeout(20):
+        while "long time" not in str(messages.of("partial")):  # noqa: ASYNC110
+            await asyncio.sleep(0.05)
+    await asyncio.sleep(1.5)
+
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+
+    saved = store.read_artifact("call_test")
+    replies = [e for e in saved.timeline if isinstance(e, Utterance)]
+    cut = next(r for r in replies if "long time" in r.intended_text)
+    assert cut.speaker == Speaker.BOT and cut.interrupted
+    assert cut.spoken_text and cut.intended_text.startswith(cut.spoken_text)
+
+
 async def test_run_bot_call_routes_live_mode_to_the_live_engine(store):
     artifact = await asyncio.wait_for(
         run_bot_call(

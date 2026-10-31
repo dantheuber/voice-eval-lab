@@ -134,6 +134,15 @@ class Brain(FrameProcessor):
     def working(self) -> bool:
         return self.task is not None and not self.task.done()
 
+    async def stop_for_hang_up(self) -> None:
+        """The call is ending. Stop the model and let the chunk being written go out."""
+        self.call_over = True
+        await self.stop_work()
+        await asyncio.sleep(self.settings.settle_s)
+
+    def close_cut_off_turn(self) -> None:
+        """Record what got out of a turn the call ended during. This must never wait."""
+
     async def speak(self, segments: AsyncIterator[SpeechText]) -> None:
         """Push sentences as they come. Closing `segments` stops the model at the next word."""
         self.turn_open = True
@@ -302,6 +311,14 @@ class BotBrain(Brain):
         self.spoken.clear()
         return item
 
+    async def stop_for_hang_up(self) -> None:
+        self.cut_pending = True  # nothing still on its way may extend or close the turn
+        await super().stop_for_hang_up()
+
+    def close_cut_off_turn(self) -> None:
+        if self.turn_open:
+            self.close_turn(interrupted=self.played_text != self.intended_text)
+
     async def on_interrupted(self) -> None:
         if not self.turn_open or self.cut_pending:
             return
@@ -451,6 +468,11 @@ class CallerBrain(Brain):
     async def on_speech_paused(self) -> None:
         if not self.turn_open or not self.all_speech_out or self.spoken.started_s is None:
             return
+        self._log_line(self.intended)
+        if self.leaving is not None:
+            await self._hang_up(self.leaving)
+
+    def _log_line(self, spoken_text: str) -> None:
         self.turn_open = False
         self.log.utterance(
             Utterance(
@@ -458,12 +480,15 @@ class CallerBrain(Brain):
                 start_s=self.spoken.started_s,
                 end_s=self.spoken.ended_s,
                 intended_text=self.intended,
-                spoken_text=self.intended,
+                spoken_text=spoken_text,
+                interrupted=spoken_text != self.intended,
             ),
             far_side_listens=True,
         )
-        if self.leaving is not None:
-            await self._hang_up(self.leaving)
+
+    def close_cut_off_turn(self) -> None:
+        if self.turn_open and self.spoken.started_s is not None:
+            self._log_line(self.ledger.spoken_text)
 
     async def _hang_up(self, line: CallerLine) -> None:
         self.leaving = None

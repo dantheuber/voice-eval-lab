@@ -92,6 +92,7 @@ class LiveTalkSession:
         )
         self.log = LiveLog(self.artifact, store, self._to_browser)
         self.connection: SmallWebRTCConnection | None = None
+        self.pipeline: Any = None
         self.worker: PipelineWorker | None = None
         self.run_task: asyncio.Task[None] | None = None
         self.brain: Any = None
@@ -163,7 +164,8 @@ class LiveTalkSession:
             echo.add_outgoing(clip)
             self.log.recorder.write_frame(Speaker.BOT, clip)
 
-        stage = (LineStage(line),) if line is not None else ()
+        inbound = (LineStage(line, seed=0),) if line is not None else ()
+        outbound = (LineStage(line, seed=1),) if line is not None else ()
         pipeline, _ = voice_pipeline(
             transport,
             settings=self.settings,
@@ -173,9 +175,10 @@ class LiveTalkSession:
             tts_service=tts,
             tap=PlayoutTap(audio_out),
             wait_for_transcript=tts is not None,
-            before_vad=(*stage, MicRecorder(self.log), echo),
-            after_brain=stage,
+            before_vad=(*inbound, MicRecorder(self.log), echo),
+            after_brain=outbound,
         )
+        self.pipeline = pipeline
         self.worker = PipelineWorker(
             pipeline,
             params=PipelineParams(audio_in_sample_rate=rate, audio_out_sample_rate=_OUT_RATE),
@@ -245,7 +248,14 @@ class LiveTalkSession:
         self._finished = True
         if self.artifact.status != CallStatus.FAILED:
             self.artifact.status = CallStatus.EVALUATING
-        self._close_out()
+        try:
+            if self.brain is not None:
+                await self.brain.stop_for_hang_up()
+        finally:
+            # Nothing here waits, so a cancel during the settling above can't lose the call.
+            if self.brain is not None:
+                self.brain.close_cut_off_turn()
+            self._close_out()
         await self._stop()
         await self.log.close()
         return self.artifact

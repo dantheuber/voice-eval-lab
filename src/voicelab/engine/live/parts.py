@@ -181,10 +181,9 @@ class WrappedTTS(TTSService):
                     num_channels=1,
                     context_id=context_id,
                 )
+            segment.finished = True  # only now is the audio made the sentence's real length
         except Exception as failure:
             await self._fail(f"{self._role} failed: {failure!r}")
-        finally:
-            segment.finished = True
 
 
 class PlayoutTap(FrameProcessor):
@@ -246,7 +245,10 @@ class MicRecorder(FrameProcessor):
 
 
 class LineStage(FrameProcessor):
-    """A phone line in a mic call's path: mic audio inbound, bot audio outbound.
+    """One direction of a phone line in a mic call's path.
+
+    A call needs one of these for each direction. Pipecat gives a processor a single next stage,
+    so one placed in the pipeline twice would send the mic straight to the output.
 
     Mic calls run the pipeline's input at the line's rate when there's a codec, since a person on
     a real phone line would reach the bot at 8 kHz.
@@ -254,19 +256,12 @@ class LineStage(FrameProcessor):
 
     def __init__(self, conditions: LineConditions, seed: int = 0, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._to_bot = PhoneLine(conditions, seed=seed * 2)
-        self._to_caller = PhoneLine(conditions, seed=seed * 2 + 1)
+        self._line = PhoneLine(conditions, seed=seed)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, InputAudioRawFrame):
-            clip = self._to_bot.process_frame(AudioClip(frame.audio, frame.sample_rate))
-            if clip.n_samples:
-                frame.audio, frame.sample_rate = clip.pcm, clip.sample_rate
-                await self.push_frame(frame, direction)
-            return
-        if isinstance(frame, TTSAudioRawFrame):
-            clip = self._to_caller.process_frame(AudioClip(frame.audio, frame.sample_rate))
+        if isinstance(frame, InputAudioRawFrame | TTSAudioRawFrame):
+            clip = self._line.process_frame(AudioClip(frame.audio, frame.sample_rate))
             if clip.n_samples:
                 frame.audio, frame.sample_rate = clip.pcm, clip.sample_rate
                 await self.push_frame(frame, direction)

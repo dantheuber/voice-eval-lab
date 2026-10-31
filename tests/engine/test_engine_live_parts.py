@@ -1,9 +1,13 @@
+import asyncio
+
 import numpy as np
 import pytest
 
+from voicelab.core.audio import AudioClip
 from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
 from voicelab.engine.live.log import LiveLog
+from voicelab.engine.live.parts import WrappedTTS
 from voicelab.engine.speech_ledger import PlayoutLedger
 from voicelab.engine.tool_checks import tool_call_problem
 from voicelab.providers.base import ToolCall, ToolDef
@@ -65,6 +69,55 @@ def test_a_sentence_still_in_tts_is_measured_by_its_length():
     ledger.add_played(0.6)
 
     assert ledger.spoken_text == "one two"
+
+
+class HalfASentence:
+    """Makes half a second of a sentence and then takes its time over the rest."""
+
+    name = "half-a-sentence"
+    sample_rate = RATE
+
+    async def stream(self, text, *, voice_id, style=None):
+        yield AudioClip(bytes(RATE), RATE)
+        await asyncio.sleep(60)
+
+
+async def cut_tts_after_first_clip(ledger: PlayoutLedger, sentence: str) -> None:
+    async def ignore(_message: str) -> None: ...
+
+    tts = WrappedTTS(HalfASentence(), voice_id="v", ledger=ledger, fail=ignore, role="tts_bot")
+    stream = tts.run_tts(sentence, "context")
+    await anext(stream)
+    await stream.aclose()
+
+
+async def test_a_sentence_cut_off_in_tts_still_counts_by_its_length():
+    ledger = PlayoutLedger()
+    sentence = "one two three four five six seven eight"
+
+    await cut_tts_after_first_clip(ledger, sentence)
+    ledger.add_played(0.5)
+
+    assert ledger.intended_text == sentence
+    assert len(ledger.spoken_text.split()) <= 1
+
+
+async def test_a_sentence_that_finished_in_tts_counts_by_its_audio():
+    class Whole(HalfASentence):
+        async def stream(self, text, *, voice_id, style=None):
+            yield AudioClip(bytes(RATE), RATE)
+
+    async def ignore(_message: str) -> None: ...
+
+    ledger = PlayoutLedger()
+    sentence = "one two three four five six seven eight"
+    tts = WrappedTTS(Whole(), voice_id="v", ledger=ledger, fail=ignore, role="tts_bot")
+
+    frames_out = [frame async for frame in tts.run_tts(sentence, "context")]
+    ledger.add_played(0.5)
+
+    assert frames_out and ledger.segments[0].finished
+    assert ledger.spoken_text == sentence
 
 
 def test_tts_finishing_a_sentence_after_a_new_turn_began_is_harmless():
@@ -198,7 +251,7 @@ def test_a_quiet_person_already_talking_when_the_bot_starts_is_not_blanked():
     far = babble(1.0, seed=1, gain=0.4)
     detector = EchoDetector()
 
-    flags = [detector.is_echo(heard, RATE) for heard in frames(person[: RATE])]
+    flags = [detector.is_echo(heard, RATE) for heard in frames(person[:RATE])]
     for out, heard in zip(frames(far), frames(person[RATE:]), strict=True):
         detector.add_outgoing(out, RATE)
         flags.append(detector.is_echo(heard, RATE))

@@ -19,6 +19,7 @@ from voicelab.core.models import (
     CallArtifact,
     CallMode,
     CallStatus,
+    LineConditions,
     Speaker,
     Utterance,
 )
@@ -134,10 +135,10 @@ def utterances(artifact: CallArtifact, speaker: Speaker | None = None) -> list[U
     return [u for u in found if speaker is None or u.speaker == speaker]
 
 
-async def open_call(store: ArtifactStore, *, emit=None, **adapters):
+async def open_call(store: ArtifactStore, *, emit=None, line=None, **adapters):
     built = stack(stt_live=adapters.pop("stt_live", HeardWhatever()), **adapters)
     session = await create_live_talk_session(
-        TalkRequest("call_talk"),
+        TalkRequest("call_talk", line=line),
         stack=built,
         store=store,
         emit=emit or Messages(),
@@ -189,6 +190,59 @@ async def test_talking_over_the_bot_stops_it_and_leaves_only_what_was_played(sto
     history = [m for m in support.requests[0] if m.role == "assistant"]
     assert history[-1].content == greeting.spoken_text
     assert utterances(artifact, Speaker.BOT)[1].intended_text == "All right."
+
+
+def linked_path(pipeline: Any) -> list[Any]:
+    """Follow the links Pipecat made. A stage listed twice keeps only its last one."""
+    path = [pipeline.processors[0]]
+    while path[-1].next is not None and path[-1].next not in path:
+        path.append(path[-1].next)
+    return path
+
+
+async def test_a_phone_line_on_a_mic_call_leaves_every_stage_in_the_path(store):
+    line = LineConditions(codec="mulaw_8k", one_way_latency_ms=20)
+    session, browser = await open_call(store, line=line, llm_support=Scripted(default="All right."))
+
+    path = linked_path(session.pipeline)
+    await session.end()
+    await browser.close()
+
+    assert path == session.pipeline.processors
+
+
+async def test_a_caller_on_a_phone_line_reaches_the_bot(store):
+    line = LineConditions(codec="mulaw_8k", one_way_latency_ms=20)
+    support = Scripted(default="All right.")
+    session, browser = await open_call(store, line=line, llm_support=support)
+
+    await wait_until(lambda: browser.loudest > 0.02)
+    await asyncio.sleep(0.5)
+    browser.mic.talking = True
+    await asyncio.sleep(0.8)
+    browser.mic.talking = False
+    await wait_until(lambda: bool(support.requests))
+    await asyncio.sleep(1.0)
+    artifact = await session.end()
+    await browser.close()
+
+    assert utterances(artifact, Speaker.CALLER)[0].heard_text == "Hold on please."
+    assert AudioClip.from_file(store.paths("call_talk").caller).duration_s > 1
+
+
+async def test_hanging_up_during_a_reply_keeps_the_words_that_went_out(store):
+    session, browser = await open_call(store, llm_support=Scripted(default="All right."))
+
+    await wait_until(lambda: browser.loudest > 0.02)
+    await asyncio.sleep(1.0)
+    artifact = await session.end()
+    await browser.close()
+
+    greeting = utterances(artifact, Speaker.BOT)[0]
+    assert greeting.interrupted
+    assert greeting.spoken_text and greeting.spoken_text != greeting.intended_text
+    assert greeting.intended_text.startswith(greeting.spoken_text)
+    assert store.read_artifact("call_talk").timeline == artifact.timeline
 
 
 async def test_noise_that_turns_out_to_be_nothing_is_counted_as_a_false_barge_in(store):

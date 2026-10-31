@@ -143,9 +143,13 @@ class _LiveBotCall:
             logger.exception("call %s failed", self.artifact.id)
             await self.fail(f"{type(failure).__name__}: {failure}")
         finally:
-            # The artifact goes to disk before anything that waits, so a second cancel can't
-            # lose the recording.
-            self._close_out()
+            try:
+                await asyncio.gather(*(brain.stop_for_hang_up() for brain in self.brains))
+            finally:
+                # Nothing here waits, so a second cancel can't lose the recording.
+                for brain in self.brains:
+                    brain.close_cut_off_turn()
+                self._close_out()
             await self._stop_pipelines()
             self.log.send_waiting_turns()
             self.log.post(progress.call_done(self.artifact))
