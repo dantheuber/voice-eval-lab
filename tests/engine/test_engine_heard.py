@@ -46,3 +46,15 @@ def test_the_anchor_word_outranks_a_misheard_letter():
 )
 def test_ordinary_speech_is_left_alone(ordinary):
     assert prepare_heard_text(ordinary) == ordinary
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "X as in x-ray Y as in yellow 9 0 7 7",
+        "X, as in x-ray. Y, as in yellow. Nine, zero, seven, seven.",
+        "X as in x ray Y as in yellow 9077",
+    ],
+)
+def test_the_anchor_for_x_is_read_however_it_was_written(said):
+    assert "XY9077" in prepare_heard_text(said)

@@ -373,7 +373,12 @@ def _merge_span(tokens: list[Token], start: int, end: int, kind: str) -> None:
 
 
 def _without_spelling_anchors(tokens: list[Token]) -> list[Token]:
-    """ "F, as in frank" is a way of saying F, however the rest of it came through the ASR."""
+    """ "F, as in frank" is a way of saying F, however the rest of it came through the ASR.
+
+    That holds only when the letter and the word agree. "F as in Sam" reads as S to the bot, and
+    "S as in Frank" came from an S on the audio, so a contradiction keeps both sides and can't
+    match either id. It stays one letter of its id, so the mismatch lands on the id.
+    """
     kept: list[Token] = []
     i = 0
     while i < len(tokens):
@@ -385,8 +390,13 @@ def _without_spelling_anchors(tokens: list[Token]) -> list[Token]:
             and (tokens[i + 1].norm, tokens[i + 2].norm) == ("as", "in")
         )
         if anchored:
-            kept.append(replace(token, end=tokens[i + 3].end, critical="acronym"))
-            i += 4
+            anchor = tokens[i + 3].norm
+            end = i + 4
+            if anchor == "x" and end < len(tokens) and tokens[end].norm == "ray":
+                end += 1  # the hyphen in "x-ray" splits it into two tokens
+            norm = token.norm if anchor[:1] == token.norm else f"{token.norm}|{anchor[:1]}"
+            kept.append(replace(token, norm=norm, end=tokens[end - 1].end, critical="acronym"))
+            i = end
         else:
             kept.append(token)
             i += 1

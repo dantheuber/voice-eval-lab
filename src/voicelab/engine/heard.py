@@ -69,9 +69,13 @@ def _anchor_word(tokens: list[_Token], position: int) -> tuple[str, int] | None:
         following = position + 2
     else:
         return None
-    if following >= len(tokens) or not tokens[following].word.isalpha():
+    if following >= len(tokens) or not tokens[following].word.replace("-", "").isalpha():
         return None
-    return tokens[following].word, following - position + 1
+    word = tokens[following].word
+    if word.lower() == "x" and following + 1 < len(tokens):
+        if tokens[following + 1].word.lower() == "ray":  # STT also writes it as two words
+            following += 1
+    return word, following - position + 1
 
 
 def _spelled_id(tokens: list[_Token], start: int) -> tuple[str, int]:
