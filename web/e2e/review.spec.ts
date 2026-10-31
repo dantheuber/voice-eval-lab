@@ -22,7 +22,7 @@ test.describe("call review keyboard loop", () => {
     await page.keyboard.press("y");
     await expect(first.getByText("confirmed")).toBeVisible();
     await expect(page.getByText("finding 2 of 6")).toBeVisible();
-    await expect(page.getByText("4 open", { exact: true })).toBeVisible();
+    await expect(page.getByText("3 open", { exact: true })).toBeVisible();
 
     // n dismisses finding 2 and advances
     await page.keyboard.press("n");
