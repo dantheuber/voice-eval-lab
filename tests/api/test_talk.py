@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 from conftest import PAIR
 from fakes import build_rig
 
 from voicelab.core.profiles import LocalService
+from voicelab.services.errors import Conflict
 
 BODY = {"scenarioId": None, "personaId": None, "line": None, "record": True, "profile": None}
 
@@ -222,3 +226,134 @@ def test_shutdown_ends_open_sessions(tmp_path):
     with rig.client as client:
         open_session(client)
     assert rig.talk.sessions[0].ended == 1
+
+
+# A profile with one session ----------------------------------------------------------------------
+
+
+def one_session(rig, profile_id="local-default"):
+    profiles = rig.services.profiles
+    profiles.items[profile_id] = profiles.require(profile_id).model_copy(update={"max_calls": 1})
+
+
+def let_the_bot_call_finish(rig):
+    async def release():
+        rig.runner.hold = False
+        rig.runner.release.set()
+
+    rig.run_on_loop(release)
+
+
+def test_a_mic_call_is_refused_while_a_bot_call_is_on_the_line(client, rig, start_run, waiter):
+    one_session(rig)
+    rig.runner.hold = True
+    start_run()
+    waiter(lambda: rig.runner.requests)
+
+    response = client.post("/api/talk/sessions", json=BODY)
+
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["code"] == "profile_busy"
+    assert "1 call at a time" in error["message"]
+    assert "wait" in error["message"].lower()
+    assert error["detail"]["maxCalls"] == 1
+    assert rig.talk.requests == []
+    assert not rig.services.gate.active
+    let_the_bot_call_finish(rig)
+
+
+def test_the_refusal_says_how_long_when_the_run_has_timed_a_call(client, rig, start_run, waiter):
+    one_session(rig)
+    rig.runner.hold = True
+    run = start_run(reps=2)["run"]
+    waiter(lambda: rig.runner.requests)
+    calls = client.get(f"/api/runs/{run['id']}").json()["calls"]
+    rig.services.calls.update(calls[1]["id"], status="done", duration_s=180.0)
+
+    error = client.post("/api/talk/sessions", json=BODY).json()["error"]
+
+    assert 0 < error["detail"]["waitS"] <= 180
+    assert f"about {round(error['detail']['waitS'])} s" in error["message"]
+    let_the_bot_call_finish(rig)
+
+
+def test_a_mic_call_can_start_once_the_bot_call_has_finished(client, rig, start_run, waiter):
+    one_session(rig)
+    rig.runner.hold = True
+    run = start_run()["run"]
+    waiter(lambda: rig.runner.requests)
+    assert client.post("/api/talk/sessions", json=BODY).status_code == 409
+    let_the_bot_call_finish(rig)
+    waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
+    open_session(client)
+
+
+def test_a_bot_call_being_evaluated_leaves_the_session_free(client, rig, start_run, waiter):
+    """Eval uses other servers, so a person doesn't have to wait for it."""
+    one_session(rig)
+    rig.evals.hold = True
+    run = start_run()["run"]
+    calls = lambda: client.get(f"/api/runs/{run['id']}").json()["calls"]  # noqa: E731
+    waiter(lambda: calls()[0]["status"] == "evaluating")
+    open_session(client)
+
+
+def test_a_bot_call_still_loading_gives_way_to_a_mic_call(client, rig, start_run, waiter):
+    """Nothing is on the line yet, and mic calls go first."""
+    one_session(rig)
+    profiles = rig.services.profiles
+    real, loaded, loading = profiles.ready, asyncio.Event(), []
+
+    async def slow_ready(profile, timeout_s):
+        loading.append(profile.id)
+        await loaded.wait()
+        return await real(profile, timeout_s)
+
+    async def finish_loading():
+        loaded.set()
+
+    profiles.ready = slow_ready
+    run = start_run()["run"]
+    waiter(lambda: loading)
+    session = open_session(client)
+    rig.run_on_loop(finish_loading)
+    time.sleep(0.05)
+    assert rig.runner.requests == []
+    client.post(f"/api/talk/sessions/{session['sessionId']}/end")
+    waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
+    assert len(rig.runner.requests) == 1
+
+
+def test_a_failed_mic_setup_gives_the_session_back(tmp_path, waiter):
+    rig = build_rig(tmp_path, raise_server_exceptions=False)
+    one_session(rig)
+    rig.talk.fail_with = RuntimeError("no webrtc")
+    with rig.client as client:
+        assert client.post("/api/talk/sessions", json=BODY).status_code == 500
+        run = client.post("/api/runs", json={"pairs": [PAIR]}).json()["run"]
+        waiter(lambda: client.get(f"/api/runs/{run['id']}").json()["run"]["status"] == "done")
+        rig.talk.fail_with = None
+        assert client.post("/api/talk/sessions", json=BODY).status_code == 201
+
+
+def test_a_second_person_starting_during_setup_is_refused(client, rig):
+    """Models can take a moment to check, and the mic call's claim has to come before that."""
+    one_session(rig)
+    profile = rig.services.profiles.require("local-default")
+    real = rig.services.profiles.require_ready
+    outcomes = []
+
+    async def and_try_again(*args, **options):
+        stack = await real(*args, **options)
+        try:
+            await rig.services.talks.create(
+                scenario_id=None, persona_id=None, line=None, record=True, profile_id=profile.id
+            )
+        except Conflict as exc:
+            outcomes.append(exc.message)
+        return stack
+
+    rig.services.profiles.require_ready = and_try_again
+    open_session(client)
+    assert outcomes == ["a mic call is already live"]

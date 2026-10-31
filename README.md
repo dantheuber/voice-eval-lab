@@ -124,7 +124,7 @@ Live calls:
 - More than one two-sided call at once, and eval running during a live call, were not benchmarked. A busy GPU shows: with something else using it, mic reply p50 went from about 2 s to 2.8 s.
 - The Scenario sheet on the Talk screen doesn't track your place. Nothing follows the beats on a mic call, and `caller_validity` is skipped there.
 - `local-fast`: Parakeet loops on repeated digits, which matters here because spoken ids are the core of the product.
-- `local-realtime`: LFM3 fires `get_invoices` before the lookup result exists, has one voice, gives no user transcript, and needs a session rebuild on every barge-in. It can't play the caller, and it runs one call at a time. In real calls it loops on asking for the same detail, so expect long calls that go nowhere.
+- `local-realtime`: LFM3 fires `get_invoices` before the lookup result exists, has one voice, gives no user transcript, and needs a session rebuild on every barge-in. It can't play the caller, and it runs one call at a time, bot or mic. During a bot call a mic call is refused with how long to wait. In real calls it loops on asking for the same detail, so expect long calls that go nowhere.
 - A mono upload is split by energy, a real guess that puts words on the wrong side. Reply latency, overlap, and barge-in checks are skipped on it.
 
 Scope and setup:

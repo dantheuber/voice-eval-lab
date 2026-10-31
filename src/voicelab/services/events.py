@@ -70,4 +70,5 @@ class LiveGate:
             self._clear.set()
 
     async def wait_clear(self) -> None:
-        await self._clear.wait()
+        while self._holders:  # a new mic call can start before a waiter gets to run
+            await self._clear.wait()

@@ -10,7 +10,7 @@ This is the contract between `web/` and the FastAPI app in `src/voicelab/api`. T
 - Nullable means "not known or not measured". A null timing value is rendered as "n/a" with a reason. Never send `0` to mean "not measured".
 - Counts, not percentages. The UI computes pass rates and Wilson intervals from `{ pass, fail, needsReview, invalid }`. Invalid is always returned separately and never folded into fail.
 - Lists that can grow are paginated with `?cursor=&limit=` and return `{ items, nextCursor }`. `nextCursor` is null on the last page.
-- Errors: non-2xx with `{ "error": { "code": "not_found" | "invalid" | "conflict" | "model_not_ready" | "internal", "message": "...", "detail": {...} } }`. `model_not_ready` carries `detail: { role, model, elapsedS, usualS }` so the UI can show the loading state.
+- Errors: non-2xx with `{ "error": { "code": "not_found" | "invalid" | "conflict" | "profile_busy" | "model_not_ready" | "internal", "message": "...", "detail": {...} } }`. `model_not_ready` carries `detail: { role, model, elapsedS, usualS }` so the UI can show the loading state. `profile_busy` is a 409 that carries `detail: { profile, maxCalls, waitS }`, and `waitS` is null when the run has no finished call to estimate from.
 - IDs are the model ids: `call_…`, `per_…`, `scn_…`, `fnd_…`, `batch_…`. The UI calls a batch a "run"; the API uses `run` in paths and `batchId` in fields, both meaning the same `batch_id` from `CallArtifact`.
 - Mutations are `POST` for create and actions, `PUT` for full replace. Responses return the updated resource.
 
@@ -241,7 +241,7 @@ The client sends `{ "type": "watch", "callId": string }` to choose which concurr
 The mic call uses Pipecat's `SmallWebRTCTransport`. The browser uses `@pipecat-ai/client-js` and `@pipecat-ai/small-webrtc-transport`; the server runs `pipecat.transports.smallwebrtc`.
 
 - `POST /api/talk/sessions` body `{ "scenarioId": string | null, "personaId": string | null, "line": LineConditions | null, "record": boolean, "profile": string | null }`
-  → 201 `{ "sessionId": string, "callId": string, "offerUrl": "/api/talk/sessions/<sessionId>/offer", "iceServers": [], "sheet": { "youAre": string, "problem": string, "beats": Beat[], "mustNotSay": string[] } | null }`
+  → 201 `{ "sessionId": string, "callId": string, "offerUrl": "/api/talk/sessions/<sessionId>/offer", "iceServers": [], "sheet": { "youAre": string, "problem": string, "beats": Beat[], "mustNotSay": string[] } | null }`, or 409 `profile_busy` when bot calls fill the profile's `maxCalls`. Mic calls go ahead of queued bot calls, not ones already on the line.
   503 `model_not_ready` if the bot LLM, STT, or TTS is loading, with the role in `detail`.
 - `POST /api/talk/sessions/:sessionId/offer` is the Pipecat small-WebRTC signalling endpoint. Body `{ "sdp": string, "type": "offer", "pc_id": string | null, "restart_pc": boolean }` → `{ "sdp": string, "type": "answer", "pc_id": string }`. These four keys are snake_case because Pipecat's client sends them that way; do not camelCase this one route.
 - `POST /api/talk/sessions/:sessionId/end` → `{ "callId": string }`. The recording is finalised and evaluation starts; follow `/ws/calls/:callId`.

@@ -365,6 +365,13 @@ class CallIndex:
             (batch_id,),
         )
 
+    def mean_recorded_seconds(self, batch_id: str) -> float | None:
+        """How long a run's calls were on the line, with no evaluation in the number."""
+        return self.db.value(
+            "SELECT avg(duration_s) FROM calls WHERE batch_id = ? AND duration_s IS NOT NULL",
+            (batch_id,),
+        )
+
     def batch_progress(self, batch_id: str) -> dict[str, Any]:
         rows = self.db.rows(
             "SELECT status, count(*) AS n FROM calls WHERE batch_id = ? GROUP BY status",

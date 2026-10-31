@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
-import { Button, Field, HealthDot, Icon, Kbd, ModeBadge, Note, Panel, Seg, VerdictBadge } from "@/components/ui";
+import { Button, ErrorBox, Field, HealthDot, Icon, Kbd, ModeBadge, Note, Panel, Seg, VerdictBadge } from "@/components/ui";
 import { useHealth, usePersonas, useProfiles, useScenarios } from "@/api/queries";
 import { endpoints } from "@/api/client";
 import { useHotkeys } from "@/hooks/useHotkeys";
@@ -10,7 +10,7 @@ import { useSocket } from "@/hooks/useSocket";
 import { toast } from "@/store/toast";
 import { evalName, fmtClock } from "@/lib/format";
 import { isAdvisoryEvaluator, orderedEvaluators } from "@/lib/evaluators";
-import { isMock } from "@/api/transport";
+import { ApiError, isMock } from "@/api/transport";
 import type { CallWsMessage, EvaluatorRun, Finding, LineConditions, TalkSession } from "@/api/types";
 import { useMic } from "./useMic";
 import { useBotCall } from "./useBotCall";
@@ -76,6 +76,7 @@ export function TalkScreen() {
   useEffect(() => { if (call.state.status === "error" && phase === "incall") toast(call.state.error ?? "Call error", 4000); }, [call.state.status, call.state.error, phase]);
 
   const nav = useNavigate();
+  const lineBusy = create.error instanceof ApiError && create.error.code === "profile_busy";
   return (
     <Shell crumbs={["Talk to the bot"]} keys={[["Start call", "Enter"], ["End call", "Esc Esc"], ["Mute mic", "m"]]}>
       <audio ref={botAudio} autoPlay playsInline style={{ display: "none" }} />
@@ -109,8 +110,9 @@ export function TalkScreen() {
                   <Field label="Line condition applied to your audio" style={{ marginTop: 12 }}><select className="in" value={line} onChange={(e) => setLine(e.target.value as typeof line)}><option value="none">none (clean)</option><option value="phone">8 kHz mu-law</option><option value="noisy">noisy mobile, 2% loss</option></select></Field>
                 </div>
               </div>
+              {lineBusy && <div style={{ padding: "0 12px 12px" }}><ErrorBox error={create.error} retry={() => create.mutate()} /></div>}
               <div className="ph" style={{ borderTop: "1px solid var(--line-1)", borderBottom: 0, justifyContent: "flex-end", gap: 12 }}>
-                {create.isError && <span style={{ color: "var(--fail)", fontSize: 12 }}>{(create.error as Error).message}</span>}
+                {create.isError && !lineBusy && <span style={{ color: "var(--fail)", fontSize: 12 }}>{(create.error as Error).message}</span>}
                 <span className="faint">Profile <span className="mono">{profiles.data?.activeId ?? "…"}</span>{notReady.length ? <>, <HealthDot state={notReady[0].state}>{notReady.map((h) => h.name).join(", ")} {notReady[0].state === "down" ? "down" : "loading"}{notReady[0].elapsedS != null ? `, ${notReady[0].elapsedS} s` : ""}</HealthDot></> : ", bot models ready"}{health.data?.items.find((h) => h.role === "llm_judge")?.state === "loading" ? " (judge loading, evals queue)" : ""}</span>
                 <Button variant="primary" size="lg" onClick={() => create.mutate()} disabled={create.isPending || notReady.length > 0 || !!mic.error}>{create.isPending ? "Connecting…" : <>Start call <Kbd>↵</Kbd></>}</Button>
               </div>

@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketDisconnect
 from voicelab.api.routes import live
 from voicelab.core.models import CallStatus, LineConditions, Verdict
 from voicelab.services.errors import Conflict
+from voicelab.services.runs import RunPlan
 
 
 def released(rig):
@@ -129,13 +130,48 @@ def test_concurrency_one_runs_each_call_through_its_eval_first(client, start_run
     assert len(rig.runner.requests) == 2
 
 
-def test_a_profile_with_one_session_runs_one_call_at_a_time(client, start_run, rig):
+def test_a_profile_with_one_session_runs_one_call_at_a_time(client, start_run, rig, waiter):
     profiles = rig.services.profiles
     profiles.items["local-default"] = profiles.require("local-default").model_copy(
         update={"max_calls": 1}
     )
+    rig.runner.hold = True
     run = start_run(reps=2, concurrency=2)["run"]
     assert rig.services.runs.get(run["id"])["concurrency"] == 1
+    waiter(lambda: "running" in statuses(client, run["id"]))
+    assert statuses(client, run["id"]) == ["queued", "running"]
+    assert len(rig.runner.requests) == 1
+    rig.run_on_loop(released(rig))
+    waiter(lambda: run_of(client, run["id"])["run"]["status"] == "done")
+    assert len(rig.runner.requests) == 2
+
+
+def test_a_stored_concurrency_cannot_get_past_the_profiles_limit(client, rig, waiter):
+    """A run keeps its concurrency across restarts, and the profile may have been capped since."""
+    profiles = rig.services.profiles
+    rig.runner.hold = True
+    plan = RunPlan(
+        pairs=[(PAIR["scenarioId"], PAIR["personaId"])],
+        reps=2,
+        profile="local-default",
+        mode="auto",
+        concurrency=2,
+    )
+    run_id, _ = rig.services.worker.create(plan)
+    assert rig.services.runs.get(run_id)["concurrency"] == 2
+    profiles.items["local-default"] = profiles.require("local-default").model_copy(
+        update={"max_calls": 1}
+    )
+
+    async def wake() -> None:
+        rig.services.worker.wake()
+
+    rig.run_on_loop(wake)
+    waiter(lambda: "running" in statuses(client, run_id))
+    time.sleep(0.05)
+    assert statuses(client, run_id) == ["queued", "running"]
+    rig.run_on_loop(released(rig))
+    waiter(lambda: run_of(client, run_id)["run"]["status"] == "done")
 
 
 def test_concurrency_two_runs_two_at_once(client, start_run, rig, waiter):

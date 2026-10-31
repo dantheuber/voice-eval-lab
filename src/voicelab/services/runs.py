@@ -267,7 +267,7 @@ class RunWorker:
         for run in self.runs.active():
             rows = self.calls.in_batch(run["id"])
             queued = [row for row in rows if row["status"] == "queued"]
-            room = run["concurrency"] - len(self._tasks)
+            room = self._concurrency(run) - len(self._tasks)
             for row in queued[: max(room, 0)]:
                 try:
                     self._start(run, row)
@@ -276,6 +276,12 @@ class RunWorker:
                     self._settle(run["id"])
             if any(row["status"] in ("queued", "running", "evaluating") for row in rows):
                 return
+
+    def _concurrency(self, run: dict[str, Any]) -> int:
+        """A run keeps its number across restarts, and the profile may have been capped since."""
+        profile = self.profiles.items.get(run["profile"])
+        limit = profile.max_calls if profile is not None else None
+        return min(run["concurrency"], limit or run["concurrency"])
 
     def _start(self, run: dict[str, Any], row: dict[str, Any]) -> None:
         # Status moves to running here, not in the task, so the next pass can't pick it twice.
@@ -364,7 +370,11 @@ class RunWorker:
                 seed=row["seed"],
                 line=LineConditions.model_validate(run["line"]) if run["line"] else None,
             )
-            return await runner(request, stack=stack, store=self.store, emit=emit)
+            self.profiles.take_call_slot(profile)
+            try:
+                return await runner(request, stack=stack, store=self.store, emit=emit)
+            finally:
+                self.profiles.free_call_slot(profile)
         finally:
             self.profiles.release(profile)
 

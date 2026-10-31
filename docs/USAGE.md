@@ -59,7 +59,7 @@ A run is a batch of bot-to-bot calls. Each pairs a scenario (what the caller wan
    - **Model profile.**
    - **Call mode.** `live` runs in real time with measured timing. `turn-based` is slower than real time with each side waiting, and timing isn't measured. `auto` picks from the profile.
    - **Line conditions.** `per persona` uses each persona's own line. The others apply one condition to every call.
-   - **Concurrency.** 2 live calls fit the GPU. Turn-based can go to 4. More than one two-sided call at once was not covered by the benchmarks. `local-realtime` runs one at a time, because its server holds one session.
+   - **Concurrency.** 2 live calls fit the GPU. Turn-based can go to 4. More than one two-sided call at once was not covered by the benchmarks. `local-realtime` runs one at a time, because its server holds one session. A mic call counts too: it goes ahead of queued bot calls, but during a bot call the Talk screen tells you to wait for that call to end.
 4. Press **Launch** or `Ctrl Enter`.
 
 The run page streams the transcript as it happens. **Pause after current calls** and **Stop** are at the top. Stopping marks the calls in flight as failed.

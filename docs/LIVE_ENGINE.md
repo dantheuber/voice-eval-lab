@@ -80,7 +80,7 @@ Profiles with `support_engine: realtime` use `RealtimeBrain`, on the support sid
 
 - The server has no VAD, so Pipecat decides when a turn ends and `commit_turn` asks for the reply. It asks only if audio reached the current socket since the last ask. The server treats anything else as an error, and that comes up when a pause ended a turn and a cut-in then replaced the session.
 - The pipeline reports started before the session is up, so `greet` waits for the connection to settle. Skipping that left both sides silent until the call timed out.
-- The server holds one session per slot and this profile has one, so `max_calls: 1` caps a run at one call at a time.
+- The server holds one session per slot and this profile has one, so `max_calls: 1` limits the profile to one call at a time, bot or mic. A mic call goes ahead of queued bot calls. If a bot call is already on the line, it gets a 409 `profile_busy` that says to wait for that call.
 - It doesn't wait for STT, which runs beside the model and feeds the record and session rebuilds.
 - Mic audio only goes to the model during a turn, with 400 ms of pre-roll, because anything sent stays in context.
 - Tool calls go through `tool_checks.py` and run one at a time in order. A bad call gets an error as its result.

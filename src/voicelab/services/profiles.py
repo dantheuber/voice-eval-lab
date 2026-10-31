@@ -7,6 +7,7 @@ import contextlib
 import logging
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -111,6 +112,7 @@ class ProfileManager:
         self.paths: dict[str, Path] = {}
         self._stacks: dict[str, ProviderStack] = {}
         self._held: list[Profile] = []  # one entry per piece of work using a profile's servers
+        self._calls: Counter[str] = Counter()  # calls on the line per profile, bot and mic alike
         self._released = asyncio.Event()
         self.reload()
 
@@ -249,6 +251,17 @@ class ProfileManager:
         position = next(i for i, held in enumerate(self._held) if held.id == profile.id)
         del self._held[position]
         self._released.set()
+
+    def has_call_slot(self, profile: Profile) -> bool:
+        """Whether another call fits. `max_calls` is what its servers can hold, whoever is calling.
+        Holds can't tell this: they also cover eval, and any number can share a profile."""
+        return profile.max_calls is None or self._calls[profile.id] < profile.max_calls
+
+    def take_call_slot(self, profile: Profile) -> None:
+        self._calls[profile.id] += 1
+
+    def free_call_slot(self, profile: Profile) -> None:
+        self._calls[profile.id] -= 1
 
     async def wait_for_servers(self, profile: Profile, timeout_s: float) -> None:
         await self.supervisor.reconcile(profile.services)

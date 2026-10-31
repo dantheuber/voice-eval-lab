@@ -149,6 +149,9 @@ export function ErrorBox({ error, retry, what }: { error: unknown; retry?: () =>
     const d = e.detail as { role?: string; model?: string; elapsedS?: number; usualS?: number } | undefined;
     return <Note kind="warn"><b>{d?.role ?? "A model"} is loading</b>{d?.model ? ` (${d.model})` : ""}{d?.elapsedS != null ? `, ${d.elapsedS} s so far` : ""}{d?.usualS != null ? `, usually under ${d.usualS} s` : ""}. {retry && <a href="#" onClick={(ev) => { ev.preventDefault(); retry(); }}>Try again</a>}</Note>;
   }
+  if (e instanceof ApiError && e.code === "profile_busy") {
+    return <Note kind="warn"><b>The line is busy.</b> {e.message} {retry && <a href="#" onClick={(ev) => { ev.preventDefault(); retry(); }}>Try again</a>}</Note>;
+  }
   return <Note kind="err"><b>Could not load{what ? ` ${what}` : ""}.</b> {e?.message ?? String(error)} {retry && <a href="#" onClick={(ev) => { ev.preventDefault(); retry(); }}>Retry</a>}</Note>;
 }
 

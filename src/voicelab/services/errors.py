@@ -30,6 +30,12 @@ class Conflict(ServiceError):
     status = 409
 
 
+class ProfileBusy(Conflict):
+    """Every call this profile's servers can hold is on the line. `detail` says how long to wait."""
+
+    code = "profile_busy"
+
+
 class ModelNotReady(ServiceError):
     code = "model_not_ready"
     status = 503

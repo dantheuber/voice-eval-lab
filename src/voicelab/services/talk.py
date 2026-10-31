@@ -13,13 +13,13 @@ import shutil
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from voicelab.core.models import CallArtifact, CallMode, CallStatus, LineConditions, new_id, utcnow
 from voicelab.core.profiles import Profile
 from voicelab.engine.contract import TalkFactory, TalkRequest, TalkSession
-from voicelab.services.errors import Conflict, Invalid, NotFound
+from voicelab.services.errors import Conflict, Invalid, NotFound, ProfileBusy
 from voicelab.services.evaluation import EvalService
 from voicelab.services.events import EventHub, LiveGate
 from voicelab.services.profiles import ProfileManager
@@ -106,8 +106,18 @@ class TalkManager:
         factory = self.factory()
         scenario = self._scenario(scenario_id)
         persona = self._persona(persona_id)
-        # Held for the whole call: nothing may swap a server out from under a person talking.
-        stack = await self.profiles.require_ready(profile, TALK_ROLES, hold=True)
+        if not self.profiles.has_call_slot(profile):
+            raise self._busy(profile)
+        session_id = new_id("talk")
+        # Both before the first await, so no bot call or second mic call gets in during the wait.
+        self.gate.hold(session_id)
+        self.profiles.take_call_slot(profile)
+        try:
+            # Held for the whole call: nothing may swap a server out from under a person talking.
+            stack = await self.profiles.require_ready(profile, TALK_ROLES, hold=True)
+        except BaseException:
+            self._free_line(session_id, profile)
+            raise
         artifact = CallArtifact(
             mode=CallMode.HUMAN,
             status=CallStatus.RUNNING,
@@ -118,7 +128,6 @@ class TalkManager:
             profile=profile.id,
             started_at=utcnow(),
         )
-        session_id = new_id("talk")
         self.store.write_artifact(artifact)
         self.calls.add(
             id=artifact.id,
@@ -133,7 +142,6 @@ class TalkManager:
             untested=int(profile.untested),
             started_at=timestamp(artifact.started_at),
         )
-        self.gate.hold(session_id)
         request = TalkRequest(artifact.id, persona=persona, scenario=scenario, line=line)
 
         async def emit(message: dict[str, Any]) -> None:
@@ -142,7 +150,7 @@ class TalkManager:
         try:
             session = await factory(request, stack=stack, store=self.store, emit=emit)
         except BaseException as exc:
-            self.gate.release(session_id)
+            self._free_line(session_id, profile)
             self.profiles.release(profile)
             self._mark_failed(artifact.id, f"{type(exc).__name__}: {exc}")
             raise
@@ -152,6 +160,32 @@ class TalkManager:
         self._sessions[session_id] = talk
         self._forget_old()
         return talk, artifact
+
+    def _free_line(self, session_id: str, profile: Profile) -> None:
+        self.profiles.free_call_slot(profile)
+        self.gate.release(session_id)
+
+    def _busy(self, profile: Profile) -> ProfileBusy:
+        """A call on the line can't be moved, even for a person. Only queued ones wait for them."""
+        limit = profile.max_calls
+        wait_s = self._bot_call_left_s(profile)
+        how_long = f", about {wait_s} s" if wait_s else ""
+        return ProfileBusy(
+            f"{profile.label} takes {limit} call{'' if limit == 1 else 's'} at a time, and a bot "
+            f"call is on it. Wait for that call to end{how_long}, then start again. Pause the "
+            "run if you don't want the next bot call to start first.",
+            {"profile": profile.id, "maxCalls": limit, "waitS": wait_s},
+        )
+
+    def _bot_call_left_s(self, profile: Profile) -> int | None:
+        """Going by the earlier calls of its run, so the first call of a run has no estimate."""
+        left = []
+        for row in self.calls.with_status("running"):
+            usual_s = self.calls.mean_recorded_seconds(row["batch_id"]) if row["batch_id"] else None
+            if row["profile"] == profile.id and usual_s and row["started_at"]:
+                elapsed = datetime.now(UTC) - datetime.fromisoformat(row["started_at"])
+                left.append(usual_s - elapsed.total_seconds())
+        return round(max(left)) if left and max(left) >= 1 else None
 
     def get(self, session_id: str) -> ActiveTalk:
         talk = self._sessions.get(session_id)
@@ -198,7 +232,7 @@ class TalkManager:
             self._mark_failed(talk.call_id, f"{type(exc).__name__}: {exc}")
             return
         finally:
-            self.gate.release(talk.session_id)
+            self._free_line(talk.session_id, talk.profile)
             self.profiles.release(talk.profile)
         stub = self.store.read_artifact(talk.call_id)
         artifact = fill_from_stub(artifact, stub)
