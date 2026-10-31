@@ -312,7 +312,7 @@ async def test_it_waits_for_the_answer_to_its_last_question():
     what = scenario(beats=[Beat(id="only", instruction="Ask how long it takes.")])
     bot, _ = caller(
         caller_says("How long will it take?", "only", hang_up=True, reason="done"),
-        caller_says("Great, thanks."),
+        caller_says("Great, thanks, bye."),
         what=what,
     )
     assert not (await bot.next_line("All set.")).hang_up
@@ -406,6 +406,19 @@ async def test_a_question_after_the_last_beat_gets_its_answer_then_the_call_ends
     assert not (await bot.next_line("D N S changes usually")).hang_up
     assert not (await bot.next_line("About")).hang_up
     assert (await bot.next_line("An hour.")).hang_up
+
+
+async def test_a_yes_after_the_last_beat_waits_to_hear_it_done():
+    what = scenario(beats=[Beat(id="only", instruction="Ask if it costs anything.")])
+    bot, _ = caller(
+        caller_says("Does it cost anything?", "only"),
+        caller_says("Great, go ahead then."),
+        caller_says("Thanks, goodbye."),
+        what=what,
+    )
+    await bot.next_line("I can renew it.")
+    assert not (await bot.next_line("It's free. Shall I?")).hang_up
+    assert (await bot.next_line("All done.")).hang_up
 
 
 async def test_a_long_winded_line_is_cut_at_a_sentence():

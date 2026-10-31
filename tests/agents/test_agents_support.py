@@ -968,3 +968,34 @@ def test_what_a_caller_can_say_counts_as_said(value, heard):
 )
 def test_what_a_caller_never_said_doesnt(value, heard):
     assert not _caller_said(value, heard)
+
+
+# Misheard addresses -----------------------------------------------------------------------------
+
+
+async def test_a_misheard_address_is_put_right_in_every_later_tool(db):
+    bot, _, events = make_bot(
+        db,
+        uses(call("find_customer", email="evelyn@heartfamily.example")),
+        "Thanks. What's your zip and PIN?",
+        uses(call("unlock_mailbox", address="Evelyn@HeartFamily.example")),
+        "It's unlocked.",
+    )
+    await turn(bot, "It's evelyn at heartfamily dot example.")
+    await turn(bot, "Yes, unlock it.")
+
+    unlock = tool_events(events)[-1]
+    assert unlock.arguments["address"] == "evelyn@hartfamily.example"
+    assert unlock.error is None
+
+
+async def test_the_corrected_address_counts_as_said(db):
+    bot, _, events = make_bot(
+        db,
+        uses(call("find_customer", domain="winauto.example")),
+        uses(call("find_customer", domain="nguyenauto.example")),
+        "What's your zip?",
+    )
+    await turn(bot, "It's winauto dot example.")
+    assert [e.kind for e in events if not isinstance(e, ToolCallEvent)] == []
+    assert len(tool_events(events)) == 2

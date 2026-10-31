@@ -302,9 +302,14 @@ class CallerBot:
         return None
 
     def _still_asking(self, text: str) -> bool:
-        """A cut-in can eat the answer to the last question. It gets one more go, then it's over."""
+        """Past the last beat, a line can still be a question or a yes with its answer to come.
+
+        A cut-in can eat the answer, and a caller who says "go ahead" and hangs up never hears the
+        bot do it. Only a goodbye ends the call, or running out of these lines.
+        """
         self._last_questions += 1
-        return "?" in text and self._last_questions <= LAST_QUESTIONS
+        waiting = "?" in text or not _LEAVING.search(text)
+        return waiting and self._last_questions <= LAST_QUESTIONS
 
     def _beat_shows(self, beat: Beat, text: str) -> bool:
         """The model also forgets to call a step done, and then it replays that step for ever.

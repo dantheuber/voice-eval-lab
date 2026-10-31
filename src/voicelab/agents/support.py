@@ -219,6 +219,7 @@ class SupportBot:
         self._failed_checks = 0  # verify_identity calls that came back false
         self._verified = False
         self._verified_on = -1  # the turn it happened
+        self._corrected: dict[str, str] = {}  # misheard addresses and the right ones
         system = support_instructions(dispatcher.db.today, policy)
         self.messages: list[ChatMessage] = [ChatMessage(role="system", content=system)]
 
@@ -407,7 +408,8 @@ class SupportBot:
         request. A crash stops the batch, since later calls may depend on the failed one.
         """
         calls = [
-            call.model_copy(update={"arguments": unicode_safe(call.arguments)}) for call in calls
+            call.model_copy(update={"arguments": self._with_corrections(call.arguments)})
+            for call in calls
         ]
         results: list[ChatMessage] = []
         events: list[ToolCallEvent | SystemEvent] = []
@@ -446,6 +448,7 @@ class SupportBot:
                     self._verified = True
                     self._verified_on = self._turn
                 self._failed_checks += result.get("verified") is False
+            self._note_correction(call, result)
             results.append(self._tool_message(call, result))
             if call.name == "end_call" and result.get("ended"):
                 self.ended = True
@@ -461,13 +464,33 @@ class SupportBot:
             for event in events:
                 self.on_event(event)
 
+    def _note_correction(self, call: ToolCall, result: dict[str, Any]) -> None:
+        """Remember a misheard address. The model goes back to what it heard however it's told."""
+        right = result.get("did_you_mean")
+        if not right:
+            return
+        for name in ("email", "domain"):
+            wrong = str(call.arguments.get(name) or "").strip().lower()
+            if wrong:
+                self._corrected[wrong] = right
+
+    def _with_corrections(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        def fixed(value: Any) -> Any:
+            if isinstance(value, str):
+                for wrong, right in self._corrected.items():
+                    value = re.sub(re.escape(wrong), right, value, flags=re.IGNORECASE)
+            return value
+
+        return {name: fixed(value) for name, value in unicode_safe(arguments).items()}
+
     def _made_up(self, call: ToolCall) -> bool:
         """Arguments only the caller could know, and the caller never said them.
 
         This isn't policy, and the tool never sees the call. Like a reply that won't parse, it's
         bad output from the model, which gets told and tries again.
         """
-        heard = " ".join(m.content for m in self.messages if m.role == "user")
+        said = [m.content for m in self.messages if m.role == "user"]
+        heard = " ".join([*said, *self._corrected.values()])
         values = [str(call.arguments.get(k) or "") for k in _FROM_THE_CALLER.get(call.name, ())]
         return any(value and not _caller_said(value, heard) for value in values)
 

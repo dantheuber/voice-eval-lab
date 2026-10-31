@@ -17,7 +17,7 @@ _ASK_FIRST = "Say what you will do and what it costs, then ask if you should go 
 _ANYTHING_ELSE = "Then ask if they need anything else."
 _DECLINED = (
     "Say the card on file was declined because it expired. You can't take a card number. They "
-    "update it at billing.fernhill.example. Don't try the charge again."
+    f"update it at billing.fernhill.example. Don't try the charge again. {_ANYTHING_ELSE}"
 )
 _MAIL_HOST = "mail.fernhill.example"
 _NO_BALANCE = "$0.00"
