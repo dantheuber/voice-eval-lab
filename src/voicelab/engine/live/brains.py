@@ -423,6 +423,7 @@ class CallerBrain(Brain):
         self.intended = ""
         self.audio_this_turn: list[AudioClip] = []
         self.hearing = False
+        self.holding = False  # the last thing heard was the bot asking to wait
         self.patience: asyncio.Task | None = None
 
     def on_audio_in(self, frame: InputAudioRawFrame) -> None:
@@ -437,9 +438,9 @@ class CallerBrain(Brain):
     async def _start_patience(self) -> None:
         """The silence timer for when the caller owes a reply and hasn't given one.
 
-        Pipecat's idle timer only runs from the end of this side's own speech. So if the bot had
-        spoken last and the caller stayed quiet, such as after a line the model left empty, nothing
-        ever spoke again. A real call sat that way for 15 minutes, holding its run's slot.
+        Pipecat's idle timer only runs from the end of this side's own speech. So if the bot spoke
+        last and the caller stayed quiet, nothing would ever speak again, and the call would hold
+        its run's slot until the time limit.
         """
         await self._stop_patience()
         if not self.call_over:
@@ -450,8 +451,14 @@ class CallerBrain(Brain):
             await self.cancel_task(self.patience)
         self.patience = None
 
+    def on_transcript(self, text: str) -> None:
+        super().on_transcript(text)
+        if self.holding and not self.hearing:  # it wasn't the end of what the bot said after all
+            self.create_task(self.on_far_side_finished())
+
     async def on_far_side_started(self) -> None:
         await self._stop_patience()
+        self.holding = False
         self.bot_turn += 1
         self.cut_in_this_turn = False
         self.hearing = True
@@ -481,10 +488,16 @@ class CallerBrain(Brain):
             await self.cancel_task(self.cut_timer)
         self.cut_timer = None
         await self._start_patience()
+        self.holding = False
         if self.turn_open or self.working:
             return  # one line at a time, and what was heard stays for the next reply
         if _HOLD_ON.search(" ".join(self.heard_parts)):
-            return  # asked to wait, as a person would. Idle handling covers a bot that never does
+            # Asked to wait, as a person would, and patience covers a bot that never comes back.
+            # The words after "one moment" can still be on their way, since the end of a turn
+            # overtakes its transcript, and those have to end the wait. Missing them left a real
+            # call silent for 15 minutes.
+            self.holding = True
+            return
         heard = self.take_heard()
         if self.cut_in_this_turn or self.call_over:
             return  # already answered, over the top of the bot

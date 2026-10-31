@@ -4,10 +4,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from voicelab.agents.caller import CallerLine
 from voicelab.core.audio import AudioClip
 from voicelab.core.models import CallArtifact, CallMode, Speaker, Utterance
 from voicelab.engine.echo import STEP_S, BandContour, EchoDetector
-from voicelab.engine.live.brains import BotBrain, Brain
+from voicelab.engine.live.brains import BotBrain, Brain, CallerBrain
 from voicelab.engine.live.log import LiveLog
 from voicelab.engine.live.parts import LiveSettings, WrappedTTS, _smart_turn
 from voicelab.engine.speech_ledger import PlayoutLedger
@@ -475,3 +476,62 @@ def test_each_stretch_of_a_mic_turn_keeps_its_own_start():
     brain.far_side_ended_s = 8.0
     brain._log_caller_turn("Second part.", 5.0)
     assert logged[0].start_s == 5.0
+
+
+class _QuietCaller(CallerBrain):
+    """Replies are recorded, not spoken, and tasks run without a pipeline around them."""
+
+    def create_task(self, coroutine, name=None):
+        return asyncio.ensure_future(coroutine)
+
+    async def cancel_task(self, task, timeout=None):
+        task.cancel()
+
+
+def _holding_caller(patience_s: float = 30.0) -> tuple[_QuietCaller, list[str]]:
+    replies: list[str] = []
+
+    async def next_line(heard: str) -> CallerLine:
+        replies.append(heard)
+        return CallerLine("")
+
+    brain = _QuietCaller(
+        SimpleNamespace(next_line=next_line),
+        stt=None,
+        on_hang_up=None,
+        log=SimpleNamespace(now=lambda: 0.0, hear=lambda *_: None),
+        ledger=PlayoutLedger(),
+        settings=LiveSettings(caller_patience_s=patience_s),
+        fail=None,
+    )
+    return brain, replies
+
+
+async def test_a_caller_on_hold_waits_for_the_bot():
+    brain, replies = _holding_caller()
+    brain.on_transcript("One moment, let me check that.")
+    await brain.on_far_side_finished()
+    await asyncio.sleep(0.01)
+    assert replies == []
+    await brain._stop_patience()
+
+
+async def test_words_that_arrive_after_the_turn_ended_take_the_caller_off_hold():
+    """A real call: the bot's answer came in just after the end of its turn, the caller was left
+    holding on "one moment", and both sides sat silent for 15 minutes."""
+    brain, replies = _holding_caller()
+    brain.on_transcript("One moment, let me check that.")
+    await brain.on_far_side_finished()
+    brain.on_transcript("The record is fixed.")
+    await asyncio.sleep(0.01)
+    assert replies == ["One moment, let me check that. The record is fixed."]
+    await brain._stop_patience()
+
+
+async def test_a_caller_left_on_hold_speaks_up():
+    brain, replies = _holding_caller(patience_s=0.02)
+    brain.on_transcript("One moment, let me check that.")
+    await brain.on_far_side_finished()
+    await asyncio.sleep(0.06)
+    assert len(replies) >= 1
+    await brain._stop_patience()
