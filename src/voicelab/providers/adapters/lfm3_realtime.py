@@ -113,6 +113,7 @@ class Lfm3RealtimeSession:
         self._instructions = instructions
         self._tools = [_wire_tool(tool) for tool in tools]
         self._history: list[str] = []
+        self._tool_names: dict[str, str] = {}
         self._events: asyncio.Queue[RealtimeEvent | None] = asyncio.Queue()
         self._socket: Any = None
         self._reader: asyncio.Task[None] | None = None
@@ -250,6 +251,7 @@ class Lfm3RealtimeSession:
         except ValueError:
             problem = f"arguments were not valid JSON: {raw[:200]}"
         call = ToolCall(id=item.get("call_id", ""), name=item.get("name", ""), arguments=arguments)
+        self._tool_names[call.id] = call.name
         return self._event("tool_call", tool_call=call, text=problem)
 
     async def _send(self, **event: Any) -> None:
@@ -271,6 +273,8 @@ class Lfm3RealtimeSession:
             self._history.append(f"Caller: {text.strip()}")
 
     async def send_tool_result(self, call_id: str, result: str) -> None:
+        # A finished tool stays finished, so it has to survive a session being replaced.
+        self._history.append(f"Tool {self._tool_names.get(call_id, 'call')} returned: {result}")
         await self._send(
             type="conversation.item.create",
             item={"type": "function_call_output", "call_id": call_id, "output": result},
