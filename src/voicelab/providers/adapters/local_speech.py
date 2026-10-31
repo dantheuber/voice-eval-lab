@@ -155,21 +155,38 @@ class WhisperCppSTT:
 
 
 def _whisper_words(reply: dict[str, Any]) -> list[Word]:
-    """Words with probabilities from verbose JSON, dropping `[_BEG_]`-style special tokens."""
+    """Words with probabilities from verbose JSON, dropping `[_BEG_]`-style special tokens.
+
+    What whisper.cpp calls words are tokens: "I" and "'m", "60", "6" and "14". A leading space is
+    the only mark of a new word, so tokens without one join the word before them. Everything
+    downstream compares and quotes whole words.
+    """
     words: list[Word] = []
     for segment in reply.get("segments") or []:
-        for word in segment.get("words") or []:
-            text = (word.get("word") or "").strip()
-            if text and not text.startswith("[_"):
-                words.append(
-                    Word(
-                        text=text,
-                        start_s=word.get("start", segment.get("start", 0.0)),
-                        end_s=word.get("end", segment.get("end", 0.0)),
-                        confidence=word.get("probability"),
-                    )
-                )
+        for token in segment.get("words") or []:
+            raw = token.get("word") or ""
+            text = raw.strip()
+            if not text or text.startswith("[_"):
+                continue
+            start = token.get("start", segment.get("start", 0.0))
+            end = token.get("end", segment.get("end", 0.0))
+            confidence = token.get("probability")
+            if words and not raw[:1].isspace():
+                words[-1] = _extended(words[-1], text, end, confidence)
+            else:
+                words.append(Word(text=text, start_s=start, end_s=end, confidence=confidence))
     return words
+
+
+def _extended(word: Word, text: str, end_s: float, confidence: float | None) -> Word:
+    """A word with one more token on it. Its weakest letters speak for it, its commas don't."""
+    if any(c.isalnum() for c in text) and confidence is not None:
+        confidence = min(confidence, word.confidence if word.confidence is not None else 1.0)
+    else:
+        confidence = word.confidence
+    return word.model_copy(
+        update={"text": word.text + text, "end_s": end_s, "confidence": confidence}
+    )
 
 
 @register("tts", "llama_tts")

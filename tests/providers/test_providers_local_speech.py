@@ -184,6 +184,52 @@ async def test_whisper_returns_real_word_probabilities():
     assert b"verbose_json" in form_fields(route.calls[0].request)
 
 
+def _token(word: str, start: float, end: float, probability: float = 0.9) -> dict:
+    return {"word": word, "start": start, "end": end, "probability": probability}
+
+
+@respx.mock
+async def test_whisper_tokens_are_joined_into_the_words_they_spell():
+    """Whisper's "words" are tokens. Only a leading space starts a new word."""
+    tokens = [
+        _token(" I", 0.0, 0.1, 0.87),
+        _token("'m", 0.1, 0.3, 0.96),
+        _token(" Mar", 0.4, 0.6, 0.8),
+        _token("ino", 0.6, 0.9, 0.7),
+        _token(",", 0.9, 1.0, 0.2),
+        _token(" zip", 1.1, 1.3),
+        _token(" 60", 1.3, 1.6),
+        _token("6", 1.6, 1.9),
+        _token("14", 1.9, 2.2),
+        _token(".", 2.2, 2.3),
+    ]
+    segment = {"start": 0.0, "end": 2.3, "words": tokens}
+    respx.post(f"{BASE}/inference").mock(
+        return_value=httpx.Response(200, json={"text": "x", "segments": [segment]})
+    )
+
+    words = (await WhisperCppSTT(BASE).transcribe(CLIP)).words
+
+    assert [w.text for w in words] == ["I'm", "Marino,", "zip", "60614."]
+    assert (words[0].start_s, words[0].end_s) == (0.0, 0.3)
+    assert (words[3].start_s, words[3].end_s) == (1.3, 2.3)
+    # The weakest letter is the word's confidence, and a comma says nothing about the word.
+    assert words[1].confidence == pytest.approx(0.7)
+
+
+@respx.mock
+async def test_whisper_word_split_across_segments_stays_one_word():
+    first = {"start": 0.0, "end": 1.0, "words": [_token(" Fern", 0.0, 1.0)]}
+    second = {"start": 1.0, "end": 2.0, "words": [_token("hill", 1.0, 1.5), _token(" mail", 1.5, 2)]}
+    respx.post(f"{BASE}/inference").mock(
+        return_value=httpx.Response(200, json={"text": "x", "segments": [first, second]})
+    )
+
+    words = (await WhisperCppSTT(BASE).transcribe(CLIP)).words
+
+    assert [w.text for w in words] == ["Fernhill", "mail"]
+
+
 @respx.mock
 async def test_whisper_never_gets_a_prompt_even_when_handed_hints():
     route = respx.post(f"{BASE}/inference").mock(return_value=whisper_reply())
