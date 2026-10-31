@@ -399,6 +399,8 @@ async def test_line_noise_that_reads_as_speech_stops_turn_timing(store):
     assert "noise" in out.metrics["skipped"]["latency"]
     assert out.metrics["response_latency"] is None
     assert out.metrics["barge_in"] is None
+    assert out.metrics["overlap"] is None
+    assert "noise" in out.metrics["skipped"]["overlap"]
 
 
 async def test_speech_inside_the_timeline_is_measured_as_usual(store):

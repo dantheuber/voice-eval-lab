@@ -279,9 +279,10 @@ class TimingEvaluator:
         ]
 
         skipped: dict[str, str] = {}
-        if inferred:
-            skipped["overlap"] = _INFERRED_REASON
-            skipped["barge_in"] = _INFERRED_REASON
+        if inferred or noisy:
+            reason = _INFERRED_REASON if inferred else _NOISE_REASON
+            skipped["overlap"] = reason
+            skipped["barge_in"] = reason
             out.metrics["overlap"] = None
         else:
             overlaps = find_overlaps(caller, bot, min_s=cfg.min_overlap_s)
