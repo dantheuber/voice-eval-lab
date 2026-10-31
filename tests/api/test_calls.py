@@ -293,6 +293,17 @@ def test_decisions_drive_open_counts(client, rig, finished_call):
     assert summary["findings"] == 2
 
 
+def test_details_are_in_the_eval_but_not_the_count(client, rig, finished_call):
+    rig.evals.findings = [
+        Finding(evaluator="timing", category="dead_air", title="a"),
+        Finding(evaluator="delivery", category="noisy", severity="info", advisory=True, title="b"),
+    ]
+    call = finished_call()
+    summary = client.get(f"/api/calls/{call['id']}").json()["summary"]
+    assert summary["findings"] == 1
+    assert len(client.get(f"/api/calls/{call['id']}").json()["eval"]["findings"]) == 2
+
+
 def test_advisory_findings_are_listed_but_never_open(client, rig, finished_call):
     with_findings(rig, "Odd tone", advisory=True)
     call = finished_call()

@@ -475,7 +475,8 @@ class CallIndex:
     def _refresh_finding_counts(self, call_id: str) -> None:
         self.db.run(
             "UPDATE calls SET "
-            "findings = (SELECT count(*) FROM call_findings WHERE call_id = calls.id), "
+            "findings = (SELECT count(*) FROM call_findings WHERE call_id = calls.id "
+            "AND severity != 'info'), "
             "open_findings = (SELECT count(*) FROM call_findings WHERE call_id = calls.id "
             "AND advisory = 0 AND human_verdict IS NULL) WHERE id = ?",
             (call_id,),

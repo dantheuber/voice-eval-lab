@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
@@ -45,7 +45,11 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
   const decide = useDecideFinding(id);
   const setVerdictM = useSetVerdict(id);
   const D = payload.call.durationS;
-  const findings = useMemo(() => payload.eval?.findings ?? [], [payload.eval]);
+  const [showDetails, setShowDetails] = useState(false);
+  const allFindings = useMemo(() => payload.eval?.findings ?? [], [payload.eval]);
+  // Info findings are for someone already looking at the call, so they stay out of the way.
+  const findings = useMemo(() => (showDetails ? allFindings : allFindings.filter((f) => f.severity !== "info")), [allFindings, showDetails]);
+  const detailCount = allFindings.filter((f) => f.severity === "info").length;
   const audioSrc = endpoints.mediaUrl(payload.audio.available ? payload.audio.stereoUrl : null);
   const audio = useAudio(audioSrc, D);
   const pending = payload.call.status === "running" || payload.call.status === "evaluating" || !payload.eval;
@@ -209,6 +213,7 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
             {findings.length === 0 && !pending && <div className="empty" style={{ padding: 16 }}><b>No findings</b>Every evaluator passed this call. Set the verdict or press <kbd>]</kbd>.</div>}
             {findings.length === 0 && pending && <div style={{ padding: 12 }}><Skeleton rows={3} /></div>}
             {findings.map((f) => <FindingCard key={f.id} payload={payload} f={f} onPlay={playClip} onDecide={decideFinding} onSaveNote={saveNote} />)}
+            {detailCount > 0 && <div style={{ padding: "6px 12px" }}><Button size="sm" variant="ghost" onClick={() => setShowDetails(!showDetails)}>{showDetails ? "Hide" : "Show"} {detailCount} detail{detailCount === 1 ? "" : "s"}</Button></div>}
           </div>
           <div className={s.sec}><div className={s.sh}>Rubric{sc ? `, ${sc.title}` : ""}</div><Rubric payload={payload} onSeek={seek} /></div>
           <div className={s.sec}><div className={s.sh}>Database changes</div><DbDiff payload={payload} /></div>
