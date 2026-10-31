@@ -127,6 +127,7 @@ class GeneralCriterion(BaseModel):
     severity: Severity = "minor"
     quote_needed_for: Literal["pass", "fail"] = "fail"
     needs_tool_log: bool = False
+    passes_if_caller_ended: bool = False  # the record already answers this one, no judge needed
 
 
 def _general_criteria() -> list[GeneralCriterion]:
@@ -155,6 +156,7 @@ def _general_criteria() -> list[GeneralCriterion]:
         GeneralCriterion(
             id="general_polite_ending",
             text="The bot ended the call politely, or the caller ended it first.",
+            passes_if_caller_ended=True,
         ),
     ]
 
@@ -162,7 +164,8 @@ def _general_criteria() -> list[GeneralCriterion]:
 class EvalConfig(BaseModel):
     clip_context_s: float = 3.0  # audio kept on each side of a finding for review
     judge_temperature: float = 0.0
-    judge_max_tokens: int = 400
+    judge_max_tokens: int = 200  # per item in a request, enough for its quotes and reason
+    judge_batch_size: int = 0  # items per request, and 0 asks about them all at once
     ignored_state_tables: list[str] = Field(default_factory=list)
     transcribe: TranscribeConfig = Field(default_factory=TranscribeConfig)
     timing: TimingConfig = Field(default_factory=TimingConfig)

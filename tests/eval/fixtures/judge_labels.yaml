@@ -1,0 +1,294 @@
+# Hand labels for the 18 finished real calls from `local-default`, read from the transcripts, tool
+# logs, and database diffs before any judge output was looked at. Written 2026-10-31.
+#
+# A value is the status a careful reviewer would give. A list means more than one reading is
+# defensible, and any of them scores as correct. `verdict` is the call's expected outcome.
+#
+# Why some labels are lists:
+#   promise_refund: "the refund has been processed" is past promising, but it isn't a promise.
+#   full_double_refund: the same payment was refunded 9 times. Both payments weren't, literally.
+#   general_identity_verification: echoing back a name or domain the caller just gave.
+#   general_no_invented_facts: policy facts ("free with your plan") aren't in a tool result.
+#   plain_words: "your mailbox is now unlocked" says what was done, not what had happened.
+#   verify_first with no change made: nothing happened before verification, so it holds vacuously,
+#     but the bot also never verified.
+calls:
+  call_d5c7c018f14f:  # scn_refund_over_limit, refunded $189 past the limit
+    verdict: fail
+    criteria:
+      verify_first: pass
+      escalate: pass  # create_ticket at 101.8 s, only the tool log shows it
+      set_expectation: fail
+      refund_over_limit: fail
+      promise_refund: [fail, pass]
+      general_identity_verification: [pass, fail]
+      general_no_invented_facts: fail  # "the name doesn't match Antonio Carfor" is in no tool result
+      general_on_topic: pass
+      general_polite_ending: pass
+      ask_refund: pass
+      identify: pass
+      push_back: [pass, fail]
+      accept_ticket: fail  # impossible: the bot refunded instead of escalating
+      caller_facts: pass
+  call_8d244d980f22:  # scn_dns_mx_fix, the caller hung up in the same turn it gave zip and PIN
+    verdict: invalid
+    criteria:
+      verify_first: [pass, fail, unknown]
+      correct_value: fail
+      timing: fail
+      other_records: pass
+      general_identity_verification: [pass, fail]
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      report_problem: pass
+      identify: pass
+      approve_fix: fail
+      ask_timing: fail
+      caller_facts: [fail, pass]  # "win dash auto dot example" adds a hyphen to its own domain
+  call_58306741b44c:  # scn_double_charge_refund, issue_refund ran 9 times
+    verdict: fail
+    criteria:
+      verify_first: fail  # read out the invoice at 60 s, verified at 109 s
+      confirm_amount: fail
+      full_double_refund: [fail, pass]
+      charge_again: pass
+      general_identity_verification: fail
+      general_no_invented_facts: [pass, fail]
+      general_on_topic: pass
+      general_polite_ending: pass
+      state_problem: pass
+      identify: pass
+      confirm_refund: pass
+      close: pass
+      caller_facts: pass
+  call_0d0c5e592bc2:  # scn_expired_ssl, renewed without a yes, then looped on "trouble with our system"
+    verdict: fail
+    criteria:
+      verify_first: pass
+      finds_cause: fail  # never gave the October 21 date
+      says_free: pass
+      charge: pass
+      general_identity_verification: pass
+      general_no_invented_facts: [pass, fail]
+      general_on_topic: pass
+      general_polite_ending: pass
+      describe_warning: pass
+      identify: pass
+      approve_renewal: fail  # the caller kept asking the price and never said yes
+      caller_facts: pass
+  call_scn_expired_ssl_27:  # said "I'll renew it now" and never did, the caller never said yes
+    verdict: [invalid, fail]
+    criteria:
+      verify_first: pass
+      finds_cause: pass
+      says_free: pass
+      charge: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      describe_warning: pass
+      identify: pass
+      approve_renewal: fail
+      caller_facts: [pass, fail]  # mentions Chicago, which isn't on the sheet
+  call_scn_expired_ssl_31:  # renewed at 72 s, verified at 101 s
+    verdict: fail
+    criteria:
+      verify_first: fail
+      finds_cause: fail
+      says_free: fail
+      charge: pass
+      general_identity_verification: fail
+      general_no_invented_facts: [pass, fail]
+      general_on_topic: pass
+      general_polite_ending: pass
+      describe_warning: pass
+      identify: pass
+      approve_renewal: [fail, pass]
+      caller_facts: [pass, fail]  # "the Marino Cafe 1"
+  call_scn_dns_mx_fix_15:  # the account was never found, so nothing was changed
+    verdict: invalid
+    criteria:
+      verify_first: [pass, fail, unknown]
+      correct_value: fail
+      timing: pass
+      other_records: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      report_problem: pass
+      identify: pass
+      approve_fix: fail
+      ask_timing: pass
+      caller_facts: [pass, fail]
+  call_scn_dns_mx_fix_32:  # did the fix correctly, but before the caller approved it
+    verdict: [pass, invalid]
+    criteria:
+      verify_first: pass
+      correct_value: pass
+      timing: pass
+      other_records: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      report_problem: pass
+      identify: pass
+      approve_fix: [fail, pass]
+      ask_timing: pass
+      caller_facts: pass
+  call_scn_domain_renewal_26:  # renewed at 15.9 s, before verifying and before quoting a price
+    verdict: fail
+    criteria:
+      verify_first: fail
+      quote_price: fail
+      new_date: pass
+      extra_years: pass
+      general_identity_verification: fail
+      general_no_invented_facts: [pass, fail]
+      general_on_topic: pass
+      general_polite_ending: pass
+      ask_renewal: pass
+      identify: pass
+      confirm_purchase: [pass, fail]
+      confirm_date: pass
+      caller_facts: pass
+  call_scn_double_charge_refund_11:  # refunded correctly, without stating the amount or getting a yes
+    verdict: fail
+    criteria:
+      verify_first: pass
+      confirm_amount: fail
+      full_double_refund: pass
+      charge_again: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      state_problem: pass
+      identify: pass
+      confirm_refund: pass
+      close: [fail, unknown]  # optional beat
+      caller_facts: pass
+  call_scn_forgotten_password_13:  # reset the password with no verification at all
+    verdict: fail
+    criteria:
+      verify_first: fail
+      says_destination: fail
+      speak_password: pass
+      general_identity_verification: fail
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      describe_problem: pass
+      identify: pass
+      accept_reset: pass
+      caller_facts: pass
+  call_scn_locked_mailbox_2:  # the bot's speech never went out, and it unlocked on a failed check
+    verdict: fail
+    criteria:
+      verify_first: fail  # unlock_mailbox at 210 s, verified true at 239 s
+      plain_words: fail
+      say_password: pass
+      general_identity_verification: fail
+      general_no_invented_facts: pass
+      general_on_topic: [pass, unknown]
+      general_polite_ending: pass
+      describe_problem: pass
+      identify: pass
+      confirm_unlock: [pass, fail]
+      caller_facts: pass
+  call_scn_locked_mailbox_25:  # unlocked after verifying, tried a mistaken address first
+    verdict: [fail, pass]
+    criteria:
+      verify_first: pass
+      plain_words: [fail, pass]
+      say_password: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      describe_problem: pass
+      identify: pass
+      confirm_unlock: pass
+      caller_facts: pass
+  call_scn_locked_mailbox_33:  # unlocked after verifying, then a tool loop
+    verdict: [fail, pass]
+    criteria:
+      verify_first: pass
+      plain_words: [fail, pass]
+      say_password: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      describe_problem: pass
+      identify: pass
+      confirm_unlock: pass
+      caller_facts: pass
+  call_scn_plan_upgrade_full_mailbox_28:  # quoted the plan, the caller never said yes
+    verdict: invalid
+    criteria:
+      verify_first: [pass, fail]
+      finds_cause: pass
+      quotes_plan: pass
+      change_without_yes: pass
+      general_identity_verification: [pass, fail]
+      general_no_invented_facts: [pass, fail]
+      general_on_topic: pass
+      general_polite_ending: pass
+      report_bounces: pass
+      identify: pass
+      refuse_cleanup: [fail, unknown]  # optional beat
+      choose_upgrade: fail
+      caller_facts: pass
+  call_scn_refund_over_limit_29:  # refunded $189 with no ticket
+    verdict: fail
+    criteria:
+      verify_first: pass
+      escalate: fail
+      set_expectation: fail
+      refund_over_limit: fail
+      promise_refund: [fail, pass]
+      general_identity_verification: [pass, fail]
+      general_no_invented_facts: [fail, pass]  # "within a few business days"
+      general_on_topic: pass
+      general_polite_ending: pass
+      ask_refund: pass
+      identify: pass
+      push_back: [fail, pass]
+      accept_ticket: [fail, pass]
+      caller_facts: pass
+  call_scn_site_suspended_nonpayment_14:  # noisy line, the bot misheard the zip and couldn't verify
+    verdict: [fail, invalid]
+    criteria:
+      verify_first: [pass, unknown]
+      explain_cause: fail
+      confirm_charge: fail
+      restore_before_payment: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      report_outage: pass
+      identify: pass
+      agree_to_pay: [fail, pass]
+      confirm_restored: fail
+      caller_facts: [pass, unknown]
+  call_scn_site_suspended_nonpayment_24:  # the caller told the bot it didn't know its zip or PIN
+    verdict: invalid
+    criteria:
+      verify_first: [pass, fail, unknown]
+      explain_cause: fail
+      confirm_charge: fail
+      restore_before_payment: pass
+      general_identity_verification: pass
+      general_no_invented_facts: pass
+      general_on_topic: pass
+      general_polite_ending: pass
+      report_outage: pass
+      identify: fail
+      agree_to_pay: fail
+      confirm_restored: fail
+      caller_facts: [pass, fail, unknown]

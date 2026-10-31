@@ -5,18 +5,33 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from voicelab.core.models import Beat, CallMode, CriterionResult, Evidence, Finding, Speaker
+from voicelab.agents.speech import normalize
+from voicelab.core.models import (
+    Beat,
+    CallMode,
+    CriterionResult,
+    Evidence,
+    Finding,
+    Speaker,
+    Utterance,
+)
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
 from voicelab.eval.judging import (
-    JUDGE_SCHEMA,
+    JudgeItem,
     JudgeStatus,
     Judgment,
+    ask_items,
     ask_json,
+    call_record,
+    item_lines,
     render_prompt,
     verify_judgment,
 )
-from voicelab.eval.transcript import render_transcript
+from voicelab.eval.normalize import Lexicon, tokenize
+from voicelab.eval.transcript import TranscriptIndex, estimate_words, render_transcript
+from voicelab.eval.vad import Region
 from voicelab.eval.verdict import FACTS_CRITERION_ID, MATERIAL_FACT_BREACH
+from voicelab.providers.base import Transcript
 
 FACTS_TEXT = "Caller stayed within its fact sheet"
 _BOT_TO_BOT = (CallMode.LIVE_BOTS, CallMode.TURN_BASED)
@@ -24,23 +39,29 @@ _BOT_TO_BOT = (CallMode.LIVE_BOTS, CallMode.TURN_BASED)
 FACTS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "status": {"type": "string", "enum": ["pass", "fail", "unknown"]},
-        "reason": {"type": "string"},
         "breaches": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "quote": {"type": "string"},
+                    "quote": {"type": "string", "maxLength": 200},
+                    "why": {"type": "string", "maxLength": 200},
                     "material": {"type": "boolean"},
-                    "why": {"type": "string"},
                 },
-                "required": ["quote", "material"],
+                "required": ["quote", "why", "material"],
             },
+            "maxItems": 5,
         },
+        "reason": {"type": "string", "maxLength": 240},
+        "status": {"type": "string", "enum": ["pass", "fail", "unknown"]},
     },
-    "required": ["status", "reason", "breaches"],
+    "required": ["breaches", "reason", "status"],
 }
+_FACTS_REPLY_ITEMS = 3  # the fact check's reply can run to a few breaches
+_ONE_LINE_S = 3600.0  # a script line stays on one line, however long the speaker paused
+_DETAIL_KINDS = ("number", "money", "id", "url")
+_PUNCTUATION = "\"'`.,!?;:()[]{}<>"
+_NAME_INTRODUCTIONS = ("is", "am", "i'm", "it's", "called", "named")
 
 # A checkpoint is what the caller did, so the caller's words prove it. These say what happened to
 # the caller instead, and there the bot's own words are the proof.
@@ -77,35 +98,34 @@ class CallerValidityEvaluator:
             raise Skip(missing)
         out.model = judge.name
 
-        transcript = render_transcript(ctx.transcripts)
+        context = f"{scenario.title}. The caller wants: {scenario.goal}"
+        record = call_record(context, ctx.artifact, ctx.transcripts)
+
+        def prompt_for(batch: list[JudgeItem]) -> str:
+            return render_prompt(
+                "caller_beats", record=record, goal=scenario.goal, steps=item_lines(batch)
+            )
+
+        asked = [JudgeItem(b.id, _beat_line(b)) for b in scenario.beats]
+        replies = await ask_items(judge, asked, prompt_for, ctx.config, note=ctx.note_progress)
+        out.model = replies.model or out.model
         reached: list[str] = []
         missed: list[str] = []
         undecided: list[str] = []
-        errors = 0
-        for position, beat in enumerate(scenario.beats, start=1):
-            await ctx.note_progress(f"beat {position} of {len(scenario.beats)}")
-            prompt = render_prompt(
-                "caller_beat",
-                goal=scenario.goal,
-                transcript=transcript,
-                instruction=beat.instruction,
-                checkpoint=beat.checkpoint or beat.instruction,
-            )
-            try:
-                payload, out.model = await ask_json(judge, prompt, JUDGE_SCHEMA, ctx.config)
-                judgment = verify_judgment(
-                    payload, ctx.index, quote_needed_for="pass", actor=checkpoint_actor(beat)
-                )
-            except Exception as exc:  # one unusable reply leaves one beat unknown
-                errors += 1
+        for beat in scenario.beats:
+            payload = replies.payloads.get(beat.id)
+            if payload is None:
                 undecided.append(beat.id)
                 out.criteria.append(
                     CriterionResult(
                         criterion_id=beat.id, kind="beat", text=beat.instruction, status="unknown",
-                        reason=f"judge failed: {exc}",
+                        reason=f"judge failed: {replies.errors.get(beat.id, 'no answer')}",
                     )
                 )  # fmt: skip
                 continue
+            judgment = verify_judgment(
+                payload, ctx.index, quote_needed_for="pass", actor=checkpoint_actor(beat)
+            )
             out.criteria.append(
                 CriterionResult(
                     criterion_id=beat.id,
@@ -132,22 +152,43 @@ class CallerValidityEvaluator:
                     )
                 )
         if scenario.facts:
-            await self._check_facts(ctx, out, transcript)
+            await self._check_facts(ctx, out)
         out.metrics.update({"reached": reached, "missed": missed, "unknown": undecided})
-        if scenario.beats and errors == len(scenario.beats):
-            raise RuntimeError(f"judge failed on all {errors} beats")
+        if scenario.beats and not replies.payloads:
+            raise RuntimeError(f"judge failed on all {len(scenario.beats)} beats")
 
-    async def _check_facts(self, ctx: EvalContext, out: EvaluatorOutput, transcript: str) -> None:
-        facts = "\n".join(f"- {key}: {value}" for key, value in ctx.scenario.facts.items())
-        prompt = render_prompt("caller_facts", facts=facts, transcript=transcript)
+    async def _check_facts(self, ctx: EvalContext, out: EvaluatorOutput) -> None:
+        """Whether the caller kept to its sheet, read from the words it was given to say.
+
+        This call came from a script, so the transcript's only contribution here would be its
+        mistakes: a mishearing of "Nguyen" reads as a made-up name, and a made-up name makes the
+        run invalid. With no script, as on an older recording, the transcript has to do.
+        """
+        lines = _script_lines(ctx.artifact.timeline)
+        said = {Speaker.CALLER: lines} if lines else ctx.transcripts
+        index = TranscriptIndex(said) if lines else ctx.index
+        prompt = render_prompt(
+            "caller_facts",
+            facts=_sheet(ctx.scenario.facts),
+            transcript=render_transcript(said, gap_s=_ONE_LINE_S),
+        )
         try:
-            payload, out.model = await ask_json(ctx.deps.judge, prompt, FACTS_SCHEMA, ctx.config)
+            payload, out.model = await ask_json(
+                ctx.deps.judge, prompt, FACTS_SCHEMA, ctx.config, items=_FACTS_REPLY_ITEMS
+            )
         except Exception as exc:
             out.criteria.append(_facts_criterion("unknown", f"judge failed: {exc}", []))
             return
-        breaches = [b for b in payload.get("breaches") or [] if isinstance(b, dict)]
+        listed = [b for b in payload.get("breaches") or [] if isinstance(b, dict)]
+        breaches = [b for b in listed if _names_something_new(b.get("quote"), ctx.scenario.facts)]
         cited = {**payload, "quotes": [b.get("quote") for b in breaches]}
-        judgment = verify_judgment(cited, ctx.index, quote_needed_for="fail", actor=Speaker.CALLER)
+        if listed and not breaches:
+            cited = {
+                **cited,
+                "status": "pass",
+                "reason": "Nothing the judge listed is a new detail.",
+            }
+        judgment = verify_judgment(cited, index, quote_needed_for="fail", actor=Speaker.CALLER)
         status, reason = judgment.status, judgment.reason
         problem = _breach_problem(judgment, breaches)
         if problem:
@@ -156,6 +197,72 @@ class CallerValidityEvaluator:
         if status == "fail":
             pairs = zip(breaches, judgment.evidence, strict=True)
             out.findings.extend(_breach_finding(b, e, reason) for b, e in pairs)
+
+
+def _script_lines(timeline: list[Any]) -> Transcript | None:
+    """What the caller bot was given to say, as a transcript with one turn per utterance."""
+    spoken = [
+        event
+        for event in timeline
+        if isinstance(event, Utterance) and event.speaker == Speaker.CALLER and event.intended_text
+    ]
+    words = [
+        word
+        for utterance in spoken
+        for word in estimate_words(
+            utterance.intended_text,
+            [Region(utterance.start_s, utterance.end_s)],
+            utterance.end_s,
+        )
+    ]
+    return Transcript(text=" ".join(w.text for w in words), words=words) if words else None
+
+
+def _sheet(facts: dict[str, str]) -> str:
+    """The sheet with each value's spoken form, because that's what a script line will contain."""
+    lines = []
+    for key, value in facts.items():
+        spoken = normalize(value).spoken
+        lines.append(f"- {key}: {value}" + (f" (said aloud: {spoken})" if spoken != value else ""))
+    return "\n".join(lines)
+
+
+def _names_something_new(quote: Any, facts: dict[str, str]) -> bool:
+    """Whether a claimed breach states a concrete detail that isn't on the sheet.
+
+    A breach has to be a number, an id, an address, or a name the sheet doesn't have. A judge left
+    to itself calls a question about the price or a dog a breach, and a breach voids the test.
+    """
+    if not isinstance(quote, str):
+        return False
+    lexicon = Lexicon.load()
+    sheet = " ".join([*facts.values(), *(normalize(v).spoken for v in facts.values())])
+    known = "".join(t.norm for t in tokenize(sheet.split(), lexicon=lexicon))
+    words = quote.split()
+    tokens = tokenize(words, lexicon=lexicon)
+    details: dict[tuple[int, int], list[str]] = {}
+    for token in tokens:
+        if token.critical in _DETAIL_KINDS:
+            details.setdefault((token.start, token.end), []).append(token.norm)
+    if any("".join(detail) not in known for detail in details.values()):
+        return True
+    return any(
+        _is_new_name(word, words[position - 1] if position else "", known, lexicon)
+        for position, word in enumerate(words)
+    )
+
+
+def _is_new_name(word: str, before: str, known: str, lexicon: Lexicon) -> bool:
+    """A name the sheet doesn't have, given as who someone is. A chatty caller's dog has one too."""
+    bare = word.strip(_PUNCTUATION)
+    capitalized = len(bare) > 1 and bare[0].isupper() and bare[1:].islower() and bare.isalpha()
+    if not capitalized or before.lower().strip(_PUNCTUATION) not in _NAME_INTRODUCTIONS:
+        return False
+    return "".join(t.norm for t in tokenize([bare], lexicon=lexicon)) not in known
+
+
+def _beat_line(beat: Beat) -> str:
+    return f"{beat.instruction} Proof it was reached: {beat.checkpoint or beat.instruction}"
 
 
 def _breach_problem(judgment: Judgment, breaches: list[dict[str, Any]]) -> str | None:

@@ -17,6 +17,7 @@ from voicelab.core.models import (
     SystemEvent,
 )
 from voicelab.eval.config import EvalConfig
+from voicelab.eval.normalize import Lexicon
 from voicelab.eval.transcript import TranscriptIndex
 from voicelab.eval.vad import Region, speech_regions
 from voicelab.providers.base import LLM, STT, AudioAnalyst, Transcript
@@ -115,7 +116,7 @@ class EvalContext:
     @property
     def index(self) -> TranscriptIndex:
         if self._index is None:
-            self._index = TranscriptIndex(self.transcripts)
+            self._index = TranscriptIndex(self.transcripts, Lexicon.load(self.deps.lexicon_path))
         return self._index
 
 

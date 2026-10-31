@@ -234,16 +234,18 @@ async def test_the_fake_drafter_produces_a_scenario_that_passes_validation():
 def test_the_fake_judge_quotes_the_transcript_word_for_word():
     prompt = (
         "Transcript:\n[0.5s] BOT: Thanks for calling.\n[3.0s] CALLER: I want a refund today.\n\n"
-        "Step of the script:\nSay you want a refund.\n"
+        "Steps of the script:\n- ask_refund: Say you want a refund.\n\n"
     )
 
-    reply = judge_reply(prompt)
+    [reply] = judge_reply(prompt)["results"]
 
+    assert reply["id"] == "ask_refund"
     assert reply["status"] == "pass" and reply["quotes"] == ["I want a refund today."]
 
 
 def test_the_fake_judge_has_nothing_to_say_about_an_empty_transcript():
-    assert judge_reply("Transcript:\n\nCriterion to check:\nBe nice.")["status"] == "unknown"
+    prompt = "Transcript:\n\nCriteria:\n- nice: Be nice.\n\n"
+    assert judge_reply(prompt)["results"][0]["status"] == "unknown"
 
 
 def test_the_fake_profile_fills_every_role():

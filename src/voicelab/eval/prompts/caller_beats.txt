@@ -1,0 +1,24 @@
+$record
+
+Now check the test itself, not the support bot. The caller is a bot following a script, and you are
+checking whether it got each step done.
+
+The caller's goal:
+$goal
+
+Steps of the script:
+$steps
+
+For each step:
+- quotes: where the step happened, copied word for word from the transcript with no time or speaker
+  label. Quote what the CALLER said, unless the proof is something the caller was told or received.
+- tools: leave this empty.
+- If the step never happened, leave quotes empty.
+- reason: one short sentence.
+- status:
+  "pass" means the transcript shows the step was reached.
+  "fail" means it was not reached.
+  "unknown" means this transcript doesn't let you decide.
+
+Reply with JSON only, one result per step in the order given:
+{"results": [{"id": "the_id", "quotes": ["exact words"], "tools": [], "reason": "why", "status": "pass"}]}

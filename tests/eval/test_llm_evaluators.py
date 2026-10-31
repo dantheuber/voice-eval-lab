@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from evalfakes import FakeLLM, verdict_json, write_call
+from evalfakes import FakeLLM, asked_lines, verdict_json, write_call
 from evalfakes import transcript as make_transcript
 
 from voicelab.agents.seeds import validate_seeds
@@ -12,7 +12,9 @@ from voicelab.core.models import (
     Rule,
     Scenario,
     Speaker,
+    SystemEvent,
     ToolCallEvent,
+    Utterance,
 )
 from voicelab.eval.context import EvalContext, EvalDeps, EvaluatorOutput, Skip
 from voicelab.eval.evaluators.caller_validity import (
@@ -50,32 +52,110 @@ def by_id(out: EvaluatorOutput, criterion_id: str):
     return next(c for c in out.criteria if c.criterion_id == criterion_id)
 
 
+def per_item(prompt: str, mapping: dict[str, dict], default: dict) -> dict:
+    """A reply to a batched prompt, picking each item's answer by the text it asks about."""
+    results = []
+    for item, line in asked_lines(prompt).items():
+        payload = next((p for text, p in mapping.items() if text in line), default)
+        results.append({"id": item, **payload})
+    return {"results": results}
+
+
 def judge_for(mapping: dict[str, dict]) -> FakeLLM:
     """Replies according to which criterion text the prompt asks about."""
-
-    def reply(prompt: str) -> dict:
-        tail = prompt.split("Criterion to check:")[-1]
-        for text, payload in mapping.items():
-            if text in tail:
-                return payload
-        return verdict_json("pass")
-
-    return FakeLLM(reply)
+    return FakeLLM(lambda prompt: per_item(prompt, mapping, verdict_json("pass")))
 
 
-async def test_each_rule_and_general_criterion_gets_its_own_call(store):
+async def test_every_rule_and_general_criterion_is_asked_in_one_request(store):
     rules = scenario(
         must=[Rule(text="verify the billing zip")], must_not=[Rule(text="read a password aloud")]
     )
     judge = FakeLLM()
     ctx = context(store, CallArtifact(mode=CallMode.LIVE_BOTS, scenario_snapshot=rules), judge)
     out = await run(TranscriptJudgeEvaluator(), ctx)
-    assert len(judge.prompts) == 2 + 4
+    assert len(judge.prompts) == 1
+    assert len(asked_lines(judge.prompts[0])) == 2 + 4
     kinds = [c.kind for c in out.criteria]
     assert kinds[:2] == ["must", "must_not"]
     assert set(kinds[2:]) == {"general"}
     assert out.model == "fake-judge-v1"
-    assert all(k["json_schema"]["required"] == ["status", "reason", "quotes"] for k in judge.kwargs)
+    schema = judge.kwargs[0]["json_schema"]["properties"]["results"]
+    assert schema["minItems"] == schema["maxItems"] == 6
+
+
+async def test_a_reply_finds_its_evidence_before_it_gives_a_status(store):
+    judge = FakeLLM()
+    ctx = context(store, CallArtifact(mode=CallMode.LIVE_BOTS), judge)
+    await run(TranscriptJudgeEvaluator(), ctx)
+    item = judge.kwargs[0]["json_schema"]["properties"]["results"]["items"]
+    assert list(item["properties"]) == ["id", "quotes", "tools", "reason", "status"]
+
+
+async def test_the_judge_is_told_who_ended_the_call(store):
+    artifact = CallArtifact(
+        mode=CallMode.LIVE_BOTS, timeline=[SystemEvent(at_s=97.8, kind="caller_hung_up")]
+    )
+    judge = FakeLLM()
+    await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert "The caller hung up at 97.8 s" in judge.prompts[0]
+
+
+@pytest.mark.parametrize("ending", ["caller_hung_up", "max_turns"])
+async def test_a_call_the_caller_ended_passes_the_ending_rule_without_asking(store, ending):
+    artifact = CallArtifact(mode=CallMode.LIVE_BOTS, timeline=[SystemEvent(at_s=97.8, kind=ending)])
+    judge = FakeLLM()
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert "general_polite_ending" not in asked_lines(judge.prompts[0])
+    assert by_id(out, "general_polite_ending").status == "pass"
+
+
+async def test_a_call_the_bot_ended_has_its_ending_judged(store):
+    artifact = CallArtifact(
+        mode=CallMode.LIVE_BOTS, timeline=[SystemEvent(at_s=9.0, kind="bot_ended")]
+    )
+    judge = FakeLLM()
+    await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert "general_polite_ending" in asked_lines(judge.prompts[0])
+
+
+async def test_a_tool_call_can_prove_a_rule_the_bot_never_said_aloud(store):
+    rule = Rule(text="open a ticket")
+    artifact = CallArtifact(
+        mode=CallMode.LIVE_BOTS,
+        scenario_snapshot=scenario(must=[rule]),
+        timeline=[ToolCallEvent(at_s=12.0, name="create_ticket", result={"ticket_id": "TK-1"})],
+    )
+    judge = judge_for({"open a ticket": {**verdict_json("pass"), "tools": ["T1"]}})
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert by_id(out, rule.id).status == "pass"
+    assert by_id(out, rule.id).evidence[0].start_s == 12.0
+
+
+async def test_a_tool_call_can_prove_a_forbidden_action(store):
+    rule = Rule(text="issue a refund")
+    artifact = CallArtifact(
+        mode=CallMode.LIVE_BOTS,
+        scenario_snapshot=scenario(must_not=[rule]),
+        timeline=[ToolCallEvent(at_s=12.0, name="issue_refund", result={"refund_id": "r1"})],
+    )
+    judge = judge_for({"issue a refund": {**verdict_json("fail"), "tools": ["T1"]}})
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert by_id(out, rule.id).status == "fail"
+    assert "issue_refund" in by_id(out, rule.id).evidence[0].quote
+    [finding] = [f for f in out.findings if f.criterion_id == rule.id]
+    assert finding.severity == "major"
+
+
+async def test_judge_and_caller_prompts_share_their_opening(store):
+    """The server reuses work on a shared prefix, which is most of the prompt."""
+    judge = FakeLLM()
+    artifact = validity_call(beats=[Beat(instruction="say hello")])
+    ctx = context(store, artifact, judge)
+    await run(TranscriptJudgeEvaluator(), ctx)
+    await run(CallerValidityEvaluator(), ctx)
+    opening = judge.prompts[0].split("Check each criterion")[0]
+    assert len(judge.prompts) == 2
+    assert all(prompt.startswith(opening) for prompt in judge.prompts)
 
 
 async def test_prompt_uses_the_independent_transcript_and_tool_log(store):
@@ -88,7 +168,7 @@ async def test_prompt_uses_the_independent_transcript_and_tool_log(store):
     prompt = judge.prompts[0]
     assert "BOT: your card ending 4242" in prompt
     assert "CALLER: hi I was charged" in prompt
-    assert 'lookup_invoice({}) -> {"amount": "$49.99"}' in prompt
+    assert 'T1 lookup_invoice({}) -> {"amount": "$49.99"}' in prompt
 
 
 async def test_failed_must_not_with_a_real_quote_becomes_a_timed_finding(store):
@@ -142,7 +222,7 @@ async def test_a_judge_error_leaves_that_criterion_unknown_and_continues(store):
     rules = [Rule(text="alpha rule"), Rule(text="beta rule")]
 
     def reply(prompt: str):
-        if "alpha rule" in prompt.split("Criterion to check:")[-1]:
+        if any("alpha rule" in line for line in asked_lines(prompt).values()):
             raise ConnectionError("server gone")
         return verdict_json("pass", quotes=["goodbye"])
 
@@ -158,11 +238,8 @@ async def test_garbage_replies_become_unknown(store):
     artifact = CallArtifact(mode=CallMode.LIVE_BOTS, scenario_snapshot=scenario(must=[rule]))
 
     def reply(prompt: str):
-        return (
-            "no idea"
-            if "alpha rule" in prompt.split("Criterion to check:")[-1]
-            else verdict_json("pass")
-        )
+        asked = asked_lines(prompt).values()
+        return "no idea" if any("alpha rule" in line for line in asked) else verdict_json("pass")
 
     out = await run(TranscriptJudgeEvaluator(), context(store, artifact, FakeLLM(reply)))
     assert by_id(out, rule.id).status == "unknown"
@@ -194,7 +271,7 @@ async def test_call_with_no_tool_log_omits_the_fact_check_and_reports_it(store):
     assert len(out.criteria) == 3
     assert all(c.criterion_id != "general_no_invented_facts" for c in out.criteria)
     assert "tool result" in out.metrics["not_checked"][0]
-    assert "Not available." in judge.prompts[0]
+    assert "No tool log was recorded" in judge.prompts[0]
 
 
 async def test_general_failure_uses_its_configured_severity(store):
@@ -232,12 +309,9 @@ def validity_call(**kwargs) -> CallArtifact:
 
 def beat_judge(mapping: dict[str, dict], facts: dict | None = None) -> FakeLLM:
     def reply(prompt: str) -> dict:
-        if "fact sheet" in prompt:
+        if "keep to its fact sheet" in prompt:
             return facts or verdict_json("pass")
-        step = prompt.split("Step of the script:")[-1]
-        return next(
-            (payload for text, payload in mapping.items() if text in step), verdict_json("pass")
-        )
+        return per_item(prompt, mapping, verdict_json("pass"))
 
     return FakeLLM(reply)
 
@@ -266,7 +340,7 @@ async def test_prompt_carries_the_checkpoint_or_falls_back_to_the_instruction(st
     judge = beat_judge({})
     artifact = validity_call(beats=[Beat(instruction="say hello to the bot")])
     await run(CallerValidityEvaluator(), context(store, artifact, judge))
-    assert "What proves the step was reached:\nsay hello to the bot" in judge.prompts[0]
+    assert "Proof it was reached: say hello to the bot" in judge.prompts[0]
 
 
 async def test_a_reached_claim_needs_real_evidence(store):
@@ -391,7 +465,7 @@ async def test_material_breach_is_marked_for_invalidation(store):
 
 
 async def test_non_material_breach_is_a_plain_slip(store):
-    judge = beat_judge({}, facts=facts_reply("fail", breach("charged twice", False)))
+    judge = beat_judge({}, facts=facts_reply("fail", breach("invoice FH-4419", False)))
     artifact = validity_call(facts={"invoice": "FH-1111"})
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
     assert [f.category for f in out.findings] == ["fact_sheet_slip"]
@@ -400,7 +474,9 @@ async def test_non_material_breach_is_a_plain_slip(store):
 async def test_each_breach_is_judged_on_its_own(store):
     judge = beat_judge(
         {},
-        facts=facts_reply("fail", breach("charged twice", False), breach("invoice FH-4419", True)),
+        facts=facts_reply(
+            "fail", breach("twice for invoice FH-4419", False), breach("invoice FH-4419", True)
+        ),
     )
     artifact = validity_call(facts={"invoice": "FH-1111"})
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
@@ -454,3 +530,112 @@ async def test_one_breach_quoting_the_bot_leaves_the_fact_check_unknown(store):
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
     assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
     assert out.findings == []
+
+
+# The fact check reads what the caller was scripted to say ----------------------------------------
+
+
+def scripted_caller(*lines: str, **kwargs) -> CallArtifact:
+    artifact = validity_call(**kwargs)
+    artifact.timeline = [
+        Utterance(
+            speaker=Speaker.CALLER, start_s=float(i * 10), end_s=i * 10 + 5.0, intended_text=t
+        )
+        for i, t in enumerate(lines)
+    ]
+    return artifact
+
+
+async def test_the_fact_check_reads_the_callers_script_not_the_asr(store):
+    judge = beat_judge({})
+    artifact = scripted_caller(
+        "my name is Walter win", facts={"name": "Walter Nguyen", "domain": "nguyenauto.example"}
+    )
+    await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    prompt = next(p for p in judge.prompts if "keep to its fact sheet" in p)
+    assert "CALLER: my name is Walter win" in prompt
+    assert CALLER_SAID not in prompt
+
+
+async def test_the_sheet_shows_how_its_values_are_said_aloud(store):
+    judge = beat_judge({})
+    artifact = scripted_caller(
+        "hello there", facts={"name": "Walter Nguyen", "domain": "nguyenauto.example"}
+    )
+    await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    prompt = next(p for p in judge.prompts if "keep to its fact sheet" in p)
+    assert "win auto dot example" in prompt
+
+
+async def test_a_breach_is_checked_against_the_callers_script(store):
+    artifact = scripted_caller("my name is Sam and my pin is 9999", facts={"name": "Pat"})
+    judge = beat_judge({}, facts_reply("fail", breach("my pin is 9999")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    [finding] = [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+    assert finding.evidence[0].speaker == Speaker.CALLER
+    assert 0.0 <= finding.evidence[0].start_s <= 5.0
+
+
+async def test_a_breach_only_the_asr_heard_is_thrown_out(store):
+    """The transcript has the invoice line, and the caller's script doesn't."""
+    artifact = scripted_caller("my name is Pat", facts={"name": "Pat"})
+    judge = beat_judge({}, facts_reply("fail", breach("invoice FH-4419")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "unknown"
+    assert not [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
+SHEET = {
+    "name": "Walter Nguyen",
+    "domain": "nguyenauto.example",
+    "billing_zip": "95112",
+    "pin": "5521",
+    "invoice_id": "FH-4419",
+}
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "how much does the renewal cost",
+        "my dog is barking at the mailman",
+        "I don't know my zip",
+        "my billing zip is 95112 and my pin is 5521",
+        "it's win auto dot example",
+        "I'm Walter win",
+        "the invoice is F H four four one nine",
+        "my dog Barnaby is chasing a stick, and Barnaby loves it",
+    ],
+)
+async def test_a_breach_that_names_nothing_new_is_dropped(store, quote):
+    artifact = scripted_caller(f"well, {quote}, thanks", facts=SHEET)
+    judge = beat_judge({}, facts_reply("fail", breach(quote)))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "pass"
+    assert not [f for f in out.findings if f.criterion_id == FACTS_CRITERION_ID]
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "my pin is 9999",
+        "my billing zip is 90210",
+        "the invoice is FH-5000",
+        "my domain is bobsbikes.example",
+        "my name is Bob Smith",
+    ],
+)
+async def test_a_breach_that_names_something_new_stands(store, quote):
+    artifact = scripted_caller(f"well, {quote}, thanks", facts=SHEET)
+    judge = beat_judge({}, facts_reply("fail", breach(quote)))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "fail"
+    assert [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
+async def test_one_real_breach_survives_beside_a_dropped_one(store):
+    artifact = scripted_caller("my dog is loud and my pin is 9999", facts=SHEET)
+    judge = beat_judge({}, facts_reply("fail", breach("my dog is loud"), breach("my pin is 9999")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    [finding] = [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+    assert "9999" in finding.evidence[0].quote

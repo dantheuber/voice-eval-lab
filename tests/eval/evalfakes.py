@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -58,8 +59,22 @@ class FakeSTT:
         return reply
 
 
+def _asked_ids(schema: dict[str, Any] | None) -> list[str]:
+    results = ((schema or {}).get("properties") or {}).get("results") or {}
+    return ((results.get("items") or {}).get("properties") or {}).get("id", {}).get("enum", [])
+
+
+def asked_lines(prompt: str) -> dict[str, str]:
+    """The items a batched prompt lists, by id."""
+    block = re.search(r"^(?:Criteria|Steps of the script):\n((?:- .+\n)+)", prompt, re.MULTILINE)
+    return dict(re.findall(r"^- (\S+): (.*)$", block.group(1), re.MULTILINE)) if block else {}
+
+
 class FakeLLM:
-    """Answers from `reply(prompt)`, which returns a dict, a raw string, or raises."""
+    """Answers from `reply(prompt)`, which returns a dict, a raw string, or raises.
+
+    A plain dict answers every item a batched request asks about.
+    """
 
     name = "fake-judge"
 
@@ -73,6 +88,9 @@ class FakeLLM:
         self.prompts.append(prompt)
         self.kwargs.append(kwargs)
         reply = self._reply(prompt)
+        ids = _asked_ids(kwargs.get("json_schema"))
+        if ids and isinstance(reply, dict) and "results" not in reply:
+            reply = {"results": [{"id": item, **reply} for item in ids]}
         text = reply if isinstance(reply, str) else json.dumps(reply)
         return LLMResponse(text=text, model="fake-judge-v1")
 

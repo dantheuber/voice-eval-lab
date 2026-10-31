@@ -2,7 +2,16 @@ import json
 
 import numpy as np
 import pytest
-from evalfakes import RATE, FakeAnalyst, FakeLLM, FakeSTT, synth_voice, verdict_json, write_call
+from evalfakes import (
+    RATE,
+    FakeAnalyst,
+    FakeLLM,
+    FakeSTT,
+    asked_lines,
+    synth_voice,
+    verdict_json,
+    write_call,
+)
 from evalfakes import transcript as make_transcript
 
 from voicelab.core.audio import AudioClip
@@ -97,11 +106,13 @@ def stt() -> FakeSTT:
 
 def friendly_judge() -> FakeLLM:
     def reply(prompt: str) -> dict:
-        if "Step of the script:" in prompt:
-            return verdict_json("pass", quotes=["charged twice for invoice"])
-        if "say goodbye" in prompt.split("Criterion to check:")[-1]:
-            return verdict_json("pass", quotes=["goodbye"])
-        return verdict_json("pass")
+        results = []
+        for item, line in asked_lines(prompt).items():
+            quotes = ["goodbye"] if "say goodbye" in line else []
+            if "Steps of the script:" in prompt:
+                quotes = ["charged twice for invoice"]
+            results.append({"id": item, **verdict_json("pass", quotes=quotes)})
+        return {"results": results} if results else verdict_json("pass")
 
     return FakeLLM(reply)
 
@@ -270,7 +281,7 @@ async def test_failed_state_fails_the_call(store):
 
 async def test_missed_required_beat_invalidates_the_call(store):
     def judge(prompt: str) -> dict:
-        if "Step of the script:" in prompt:
+        if "Steps of the script:" in prompt:
             return verdict_json("fail")
         return verdict_json("pass", quotes=["goodbye"])
 
@@ -390,7 +401,7 @@ async def test_slow_evaluators_narrate_steps_through_progress(store):
     deps = EvalDeps(stt=stt(), judge=friendly_judge())
     await run_evaluation(artifact, paths, deps, on_progress=events.append)
     details = [e.detail for e in events if e.evaluator == "transcript_judge"]
-    assert "criterion 1 of 6" in details
+    assert "batch 1 of 1" in details
 
 
 def test_clip_bounds_add_context_around_evidence():

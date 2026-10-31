@@ -15,11 +15,9 @@ from voicelab.core.models import (
     ToolCallEvent,
 )
 from voicelab.eval.context import EvalContext, EvaluatorOutput, Skip
+from voicelab.eval.judging import READING_TOOLS
 from voicelab.eval.rollup import roll_up
 from voicelab.eval.verdict import UNEXPECTED_CHANGE
-
-# By convention tools with these names only read. Everything else can write.
-_READING_TOOLS = ("find_", "get_", "list_", "verify_", "end_")
 
 
 def same_value(a: Any, b: Any) -> bool:
@@ -74,7 +72,7 @@ def _writing_calls(artifact: CallArtifact) -> list[ToolCallEvent]:
     return [
         e
         for e in artifact.timeline
-        if isinstance(e, ToolCallEvent) and not e.error and not e.name.startswith(_READING_TOOLS)
+        if isinstance(e, ToolCallEvent) and not e.error and not e.name.startswith(READING_TOOLS)
     ]
 
 

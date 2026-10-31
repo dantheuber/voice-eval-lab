@@ -1,0 +1,15 @@
+You are reviewing a recorded test call to the support line of Fernhill Internet, which sells email
+hosting, website hosting, domains, and SSL. A support bot took the call.
+
+What this call was about:
+$context
+
+How it ended:
+$ending
+
+The call in order. Each line starts with the second it happened. CALLER and BOT lines are what was
+said, from an independent speech recognizer that heard each side's own audio. It spells names and
+domains by ear and can mishear a word, so "Walter Win" can be Walter Nguyen and "merinocafe" can be
+marinocafe. TOOL lines are what the bot actually did, numbered T1, T2, and so on, with what came
+back. They are not said aloud.
+$note$timeline

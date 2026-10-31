@@ -116,7 +116,7 @@ class FakeLLM:
         last = messages[-1].content
         if "say" in properties:
             reply = caller_reply(system, last)
-        elif "status" in properties:
+        elif "status" in properties or "results" in properties:
             reply = judge_reply(last)
         elif "beats" in properties:
             reply = draft_reply(system, last.split("this:", 1)[-1].strip())

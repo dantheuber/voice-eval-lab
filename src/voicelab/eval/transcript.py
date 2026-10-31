@@ -6,15 +6,11 @@ import re
 from dataclasses import dataclass
 
 from voicelab.core.models import Evidence, Speaker, Word
+from voicelab.eval.normalize import Lexicon, Token, tokenize
 from voicelab.eval.vad import Region
 from voicelab.providers.base import Transcript
 
-_NOT_WORD = re.compile(r"[^\w]+")
-
-
-def clean_word(text: str) -> str:
-    """Lowercase with punctuation gone, so "Refund," and "refund" compare equal."""
-    return _NOT_WORD.sub("", text.lower())
+_ELLIPSIS = re.compile(r"\.{2,}|\u2026")
 
 
 def estimate_words(text: str, regions: list[Region], fallback_end_s: float) -> list[Word]:
@@ -82,7 +78,14 @@ def speech_chunks(
 
 
 def render_transcript(transcripts: dict[Speaker, Transcript], *, gap_s: float = 1.0) -> str:
-    """Time-ordered speaker turns as text, for judge prompts.
+    """Time-ordered speaker turns as text, for judge prompts."""
+    return "\n".join(line for _, line in timed_turns(transcripts, gap_s=gap_s))
+
+
+def timed_turns(
+    transcripts: dict[Speaker, Transcript], *, gap_s: float = 1.0
+) -> list[tuple[float, str]]:
+    """Each turn's start and its line.
 
     Turns are found on each channel alone and then put in order. Sorting words across channels
     would cut every overlap into one-word lines, and a judge can't read or quote those.
@@ -102,7 +105,7 @@ def render_transcript(transcripts: dict[Speaker, Transcript], *, gap_s: float = 
         if words:
             turns.append((started, speaker, words))
     turns.sort(key=lambda turn: turn[0])
-    return "\n".join(_turn_line(speaker, start, words) for start, speaker, words in turns)
+    return [(start, _turn_line(speaker, start, words)) for start, speaker, words in turns]
 
 
 def _turn_line(speaker: Speaker, start_s: float, words: list[str]) -> str:
@@ -113,48 +116,58 @@ def _turn_line(speaker: Speaker, start_s: float, words: list[str]) -> str:
 class _Channel:
     speaker: Speaker
     words: list[Word]
-    tokens: list[str]
+    tokens: list[Token]
 
 
 class TranscriptIndex:
     """Looks up quotes in the transcript and returns where they were spoken."""
 
-    def __init__(self, transcripts: dict[Speaker, Transcript]) -> None:
+    def __init__(
+        self, transcripts: dict[Speaker, Transcript], lexicon: Lexicon | None = None
+    ) -> None:
+        self._lexicon = lexicon
         self._channels = [self._build(s, t) for s, t in transcripts.items()]
 
-    @staticmethod
-    def _build(speaker: Speaker, transcript: Transcript) -> _Channel:
-        kept = [w for w in transcript.words if clean_word(w.text)]
-        return _Channel(speaker, kept, [clean_word(w.text) for w in kept])
+    def _build(self, speaker: Speaker, transcript: Transcript) -> _Channel:
+        tokens = tokenize([w.text for w in transcript.words], lexicon=self._lexicon)
+        return _Channel(speaker, transcript.words, tokens)
 
     def locate(self, quote: str, prefer: Speaker | None = None) -> Evidence | None:
-        """Find a quote word for word, or None if it isn't in the transcript.
+        """Find a quote, or None if it isn't in the transcript.
 
-        Only case and punctuation are forgiven. A near match won't do, because the word a judge
-        gets wrong can be the "not" that reverses the meaning. When both sides said it, the
-        `prefer` speaker's copy is returned.
+        Both sides are reduced to the tokens pronunciation compares, so forms that say the same
+        thing are the same: case, punctuation, "I'm" and "I am", "$49" and "forty nine dollars".
+        What's left has to match token for token, so "not" and every digit count. A judge's near
+        miss is still a miss, because the word it gets wrong can be the one that reverses the
+        meaning. An ellipsis joins parts, and each part has to be there. When both sides said it,
+        the `prefer` speaker's copy is returned.
         """
-        needle = [t for t in map(clean_word, quote.split()) if t]
-        if not needle:
+        parts = [self._needle(part) for part in _ELLIPSIS.split(quote)]
+        parts = [part for part in parts if part]
+        if not parts:
             return None
         for channel in sorted(self._channels, key=lambda c: c.speaker != prefer):
-            span = _find_exact(channel.tokens, needle)
-            if span is not None:
-                return _evidence(channel, *span)
+            spans = [_find_exact(channel.tokens, part) for part in parts]
+            if all(span is not None for span in spans):
+                return _evidence(channel, *spans[0])
         return None
 
+    def _needle(self, text: str) -> list[str]:
+        return [token.norm for token in tokenize(text.split(), lexicon=self._lexicon)]
 
-def _find_exact(tokens: list[str], needle: list[str]) -> tuple[int, int] | None:
+
+def _find_exact(tokens: list[Token], needle: list[str]) -> tuple[int, int] | None:
     size = len(needle)
-    for start in range(len(tokens) - size + 1):
-        if tokens[start : start + size] == needle:
+    norms = [token.norm for token in tokens]
+    for start in range(len(norms) - size + 1):
+        if norms[start : start + size] == needle:
             return start, start + size
     return None
 
 
 def _evidence(channel: _Channel, start: int, end: int) -> Evidence:
     # Evidence carries the transcript's own words, never the judge's copy of them.
-    words = channel.words[start:end]
+    words = channel.words[channel.tokens[start].start : channel.tokens[end - 1].end]
     return Evidence(
         quote=" ".join(w.text for w in words),
         speaker=channel.speaker,

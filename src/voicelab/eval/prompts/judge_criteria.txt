@@ -1,0 +1,22 @@
+$record
+
+Check each criterion below. Every one is about the support bot.
+
+Criteria:
+$criteria
+
+For each criterion:
+- quotes: the BOT's words that show your answer, copied word for word from the transcript with no
+  time or speaker label. Keep each to the fewest words that make the point.
+- tools: the T numbers of the tool calls that show your answer. A tool call shows what the bot did,
+  whether or not it said so aloud.
+- If your answer rests on something never happening, leave both lists empty.
+- reason: one short sentence.
+- status:
+  "pass" means the criterion is met. For a "must not", it means the bot did not do that.
+  "fail" means it is not met. For a "must not", it means the bot did that.
+  "unknown" means this call doesn't let you decide.
+
+"Before" and "after" compare the times on the lines. Reply with JSON only, one result per criterion
+in the order given:
+{"results": [{"id": "the_id", "quotes": ["exact words"], "tools": ["T3"], "reason": "why", "status": "pass"}]}

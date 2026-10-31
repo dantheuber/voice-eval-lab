@@ -499,26 +499,56 @@ def support_reply(messages: list[ChatMessage]) -> LLMResponse:
 # Judge -----------------------------------------------------------------------------------------
 
 _TRANSCRIPT_LINE = re.compile(r"^\[[\d.]+s\] (CALLER|BOT): (.+)$", re.MULTILINE)
+_ASKED_ITEMS = re.compile(r"^(Criteria|Steps of the script):\n((?:- .+\n)+)", re.MULTILINE)
+_ITEM_LINE = re.compile(r"^- (\S+): (.*)$", re.MULTILINE)
 _QUOTE_WORDS = 10
 
 
 def judge_reply(prompt: str) -> dict[str, Any]:
     """Pass everything with a transcript behind it, quoting the closest line word for word."""
     lines = _TRANSCRIPT_LINE.findall(prompt)
-    if not lines:
-        return {"status": "unknown", "reason": "The transcript is empty.", "quotes": []}
-    if "The bot must not:" in prompt or "keep to its fact sheet" in prompt:
+    if "keep to its fact sheet" in prompt:
         reason = "Nothing in the transcript breaks this."
         return {"status": "pass", "reason": reason, "quotes": [], "breaches": []}
+    asked = _ASKED_ITEMS.search(prompt)
+    about_caller = asked is not None and asked.group(1) == "Steps of the script"
+    items = _ITEM_LINE.findall(asked.group(2)) if asked else []
+    return {"results": [{"id": i, **_judged(line, lines, about_caller)} for i, line in items]}
+
+
+def _judged(asked: str, lines: list[tuple[str, str]], about_caller: bool) -> dict[str, Any]:
+    if not lines:
+        return {
+            "status": "unknown",
+            "reason": "The transcript is empty.",
+            "quotes": [],
+            "tools": [],
+        }
+    if "The bot must not:" in asked:
+        return {
+            "status": "pass",
+            "reason": "Nothing in the transcript breaks this.",
+            "quotes": [],
+            "tools": [],
+        }
     # A script step is about the caller, so only the caller's own words can prove it.
-    about_caller = "Step of the script:" in prompt
     candidates = [text for who, text in lines if who == "CALLER" or not about_caller]
     if not candidates:
-        return {"status": "unknown", "reason": "The caller said nothing.", "quotes": []}
-    wanted = set(re.findall(r"\w+", prompt.rsplit("Transcript:", 1)[-1].lower()))
+        return {
+            "status": "unknown",
+            "reason": "The caller said nothing.",
+            "quotes": [],
+            "tools": [],
+        }
+    wanted = set(re.findall(r"\w+", asked.lower()))
     best = max(candidates, key=lambda line: len(wanted & set(re.findall(r"\w+", line.lower()))))
     quote = " ".join(best.split()[:_QUOTE_WORDS])
-    return {"status": "pass", "reason": "The transcript supports this.", "quotes": [quote]}
+    return {
+        "status": "pass",
+        "reason": "The transcript supports this.",
+        "quotes": [quote],
+        "tools": [],
+    }
 
 
 # Scenario drafting -----------------------------------------------------------------------------

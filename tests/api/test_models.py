@@ -216,7 +216,7 @@ def test_thresholds_default_to_what_eval_really_uses(client):
     assert client.get("/api/thresholds").json() == {
         "deadAirS": 6.0,
         "bargeStopTargetS": 1.0,
-        "replyLatencyWarnS": 3.0,
+        "replyLatencyWarnS": 5.0,
         "mosBaseline": 3.0,
         "audioListeningMode": "advisory",
     }

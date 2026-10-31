@@ -1,30 +1,29 @@
 You are checking a test call between two bots. A scripted caller bot phoned the Fernhill Internet
-support bot. You are checking the test itself: did the caller keep to its fact sheet?
-
-The transcript comes from an independent speech recognizer that listened to the recording.
+support bot. Check the test itself: did the caller keep to its fact sheet?
 
 The only facts the caller may state:
 $facts
 
-Transcript:
+What the caller was given to say:
 $transcript
 
-Look only at what the CALLER said. Small talk, feelings, and repeating what the bot said are fine.
-A breach is a specific detail about the caller's account, identity, or problem that contradicts
-the fact sheet or isn't on it.
-
-Choose one status:
-- "pass": the caller kept to the fact sheet.
-- "fail": the caller stated something that breaches it.
-- "unknown": this transcript does not let you decide.
+Small talk, feelings, and repeating what the bot told it are fine. Asking a question is fine. Saying
+it doesn't know something is fine. A value that matches the sheet, in writing or as said aloud, is
+not a breach. A breach is a specific detail about the caller's account, identity, or problem that
+contradicts the sheet or isn't on it.
 
 List every breach, each with:
-- quote: what the CALLER said, copied word for word from the transcript. Do not fix, shorten, or
-  paraphrase it. A quote that differs by even one word is thrown out, along with your answer.
-- material: true if the breach is about identity, account details, or amounts, or could change
-  the bot's correct behavior. false for a harmless slip that the bot would handle the same way.
+- quote: the caller's words, copied word for word from above with no time or speaker label.
 - why: one short sentence.
+- material: true if the breach is about identity, account details, or amounts, or could change the
+  bot's correct behavior. false for a harmless slip that the bot would handle the same way.
 
-If there was no breach, give an empty list. Keep the reason to one or two sentences. Reply with
-JSON only:
-{"status": "fail", "reason": "why", "breaches": [{"quote": "exact words", "material": true, "why": "why"}]}
+If there was no breach, give an empty list. Then:
+- reason: one short sentence.
+- status:
+  "pass" means the caller kept to the fact sheet.
+  "fail" means it stated something that breaches it.
+  "unknown" means this doesn't let you decide.
+
+Reply with JSON only:
+{"breaches": [{"quote": "exact words", "why": "why", "material": true}], "reason": "why", "status": "fail"}
