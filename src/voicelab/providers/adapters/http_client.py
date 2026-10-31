@@ -7,10 +7,10 @@ from typing import Any
 
 import httpx
 
-# No idle connections. A connection the server closes leaves that port in TIME_WAIT for 60 s, and
-# nemo-speech can't bind through that, so every swap or restart of a server sat "down" for a minute.
-# With none idle the client closes first, and TIME_WAIT lands on its own throwaway port. Reconnecting
-# on loopback costs far less than a millisecond.
+# No idle connections. A connection the server closes leaves its port in TIME_WAIT for 60 s, and
+# nemo-speech can't bind through that, so a swap or restart of a server sat "down" for a minute.
+# With none idle the client closes first, and TIME_WAIT lands on its own throwaway port.
+# Reconnecting on loopback costs far less than a millisecond.
 NO_IDLE_CONNECTIONS = httpx.Limits(max_keepalive_connections=0)
 
 

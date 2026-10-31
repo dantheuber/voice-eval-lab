@@ -282,9 +282,7 @@ class ServiceSupervisor:
     async def _answers(self, service: LocalService) -> bool:
         if self._http is None:
             # trust_env off: a desktop's proxy settings must not catch loopback health checks.
-            self._http = httpx.AsyncClient(
-                timeout=2.0, trust_env=False, limits=NO_IDLE_CONNECTIONS
-            )
+            self._http = httpx.AsyncClient(timeout=2.0, trust_env=False, limits=NO_IDLE_CONNECTIONS)
         try:
             url = f"http://127.0.0.1:{service.port}{service.health_path}"
             return (await self._http.get(url)).is_success
