@@ -895,6 +895,30 @@ async def test_a_claim_holding_the_sheets_own_value_contradicts_nothing(store):
     assert by_id(out, FACTS_CRITERION_ID).status == "pass"
 
 
+async def test_part_of_a_lines_value_agrees_with_that_line(store):
+    """A real judge called "on the eighteenth" a contradiction of "October 18"."""
+    facts = {"charge_date": "October 18", "amount": "$49.99"}
+    line = "charged twice for forty nine dollars and ninety nine cents each on the eighteenth"
+    artifact = scripted_caller(line, facts=facts)
+    judge = beat_judge({}, facts_reply("fail", contradicts(line, "charge_date")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert by_id(out, FACTS_CRITERION_ID).status == "pass"
+
+
+async def test_another_lines_value_in_the_wrong_place_stands(store):
+    artifact = scripted_caller("my pin is 95112", facts=SHEET)
+    judge = beat_judge({}, facts_reply("fail", contradicts("my pin is 95112", "pin")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
+async def test_a_new_value_for_a_line_stands(store):
+    artifact = scripted_caller("my pin is 9999", facts=SHEET)
+    judge = beat_judge({}, facts_reply("fail", contradicts("my pin is 9999", "pin")))
+    out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
+    assert [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
+
+
 async def test_a_question_states_nothing(store):
     artifact = scripted_caller("is my card valid?", facts=CARD_SHEET)
     judge = beat_judge({}, facts_reply("fail", contradicts("is my card valid?", "card_status")))

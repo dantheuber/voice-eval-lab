@@ -269,17 +269,22 @@ def _is_a_breach(
 ) -> bool:
     """Whether a claimed breach is a statement the caller had no right to make.
 
-    A question states nothing. A statement that contradicts a line of the sheet is a breach whether
-    or not it names a number, as "my card is valid" against an expired card is, unless it holds
-    that line's own value. Otherwise it has to name a concrete detail the caller couldn't have,
-    which means off the sheet and not something the bot had already told it.
+    A question states nothing. A statement that contradicts a line of the sheet is a breach even
+    with no number in it, as "my card is valid" is against an expired card. If it does name
+    details, they have to differ from that line: "on the eighteenth" agrees with "October 18",
+    while a zip given as the PIN doesn't. With no line to contradict, it has to name a concrete
+    detail the caller couldn't have, off the sheet and not already told to it by the bot.
     """
     if quote.rstrip().endswith("?"):
         return False
+    known = _known_details(facts, bot, found.start_s)
     line = breach.get("contradicts")
-    if line in facts:
-        return _spelled(facts[line]) not in _spelled(quote)
-    return _names_something_new(quote, _known_details(facts, bot, found.start_s))
+    if line not in facts:
+        return _names_something_new(quote, known)
+    details = _details(quote)
+    if not details or _names_something_new(quote, known):
+        return True
+    return not any(detail in _spelled(facts[line]) for detail in details)
 
 
 def _spelled(text: str) -> str:
@@ -297,6 +302,15 @@ def _known_details(facts: dict[str, str], bot: Transcript | None, before_s: floa
     return _spelled(" ".join([*sheet, *told]))
 
 
+def _details(quote: str) -> list[str]:
+    """The numbers, ids, and addresses in a quote, each as one string."""
+    groups: dict[tuple[int, int], list[str]] = {}
+    for token in tokenize(quote.split(), lexicon=Lexicon.load()):
+        if token.critical in _DETAIL_KINDS:
+            groups.setdefault((token.start, token.end), []).append(token.norm)
+    return ["".join(group) for group in groups.values()]
+
+
 def _names_something_new(quote: Any, known: str) -> bool:
     """Whether a claimed breach states a concrete detail the caller had no way to have.
 
@@ -305,14 +319,10 @@ def _names_something_new(quote: Any, known: str) -> bool:
     """
     if not isinstance(quote, str):
         return False
+    if any(detail not in known for detail in _details(quote)):
+        return True
     lexicon = Lexicon.load()
     words = quote.split()
-    details: dict[tuple[int, int], list[str]] = {}
-    for token in tokenize(words, lexicon=lexicon):
-        if token.critical in _DETAIL_KINDS:
-            details.setdefault((token.start, token.end), []).append(token.norm)
-    if any("".join(detail) not in known for detail in details.values()):
-        return True
     return any(
         _is_new_name(word, words[position - 1] if position else "", known, lexicon)
         for position, word in enumerate(words)
