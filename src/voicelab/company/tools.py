@@ -49,6 +49,7 @@ _EMAIL_VALUES = (
     " UNION SELECT address, customer_id FROM mailboxes"
 )
 _DOMAIN_VALUES = "SELECT name AS value, customer_id FROM domains"
+_MAILBOX_VALUES = "SELECT address AS value, customer_id FROM mailboxes"
 
 
 def _tool(
@@ -182,21 +183,33 @@ def _invoice(db: CompanyDb, invoice_id: str) -> dict[str, Any]:
 
 
 def _mailbox(db: CompanyDb, address: str) -> dict[str, Any]:
-    found = db.row("SELECT * FROM mailboxes WHERE address = ?", address.lower())
+    exact = _spoken_address(address)
+    found = db.row("SELECT * FROM mailboxes WHERE address = ?", exact)
+    if found is None:
+        close = _closest_row(db, exact, _MAILBOX_VALUES)
+        found = close and db.row("SELECT * FROM mailboxes WHERE address = ?", close["value"])
     if found is None:
         raise ToolRejected(f"no mailbox {address}")
     return found
 
 
 def _website(db: CompanyDb, domain: str) -> dict[str, Any]:
-    found = db.row("SELECT * FROM websites WHERE domain = ?", _clean_domain(domain))
+    exact = _clean_domain(_spoken_address(domain))
+    found = db.row("SELECT * FROM websites WHERE domain = ?", exact)
+    if found is None:
+        close = _closest_row(db, exact, _DOMAIN_VALUES)
+        found = close and db.row("SELECT * FROM websites WHERE domain = ?", close["value"])
     if found is None:
         raise ToolRejected(f"no website for {domain}")
     return found
 
 
 def _domain(db: CompanyDb, domain: str) -> dict[str, Any]:
-    found = db.row("SELECT * FROM domains WHERE name = ?", _clean_domain(domain))
+    exact = _clean_domain(_spoken_address(domain))
+    found = db.row("SELECT * FROM domains WHERE name = ?", exact)
+    if found is None:
+        close = _closest_row(db, exact, _DOMAIN_VALUES)
+        found = close and db.row("SELECT * FROM domains WHERE name = ?", close["value"])
     if found is None:
         raise ToolRejected(f"no domain {domain}")
     return found
@@ -279,8 +292,8 @@ def _said_aloud(address: str) -> str:
     return _spoken_address(normalize(address, load_lexicon()).spoken)
 
 
-def _closest_customer(db: CompanyDb, heard: str, sql: str) -> tuple[dict[str, Any], str] | None:
-    """The one customer whose address nearly matches. Identity is still checked by zip and PIN.
+def _closest_row(db: CompanyDb, heard: str, sql: str) -> dict[str, Any] | None:
+    """The address `heard` nearly matches. Identity is still checked by zip and PIN.
 
     Near matches on two customers mean the guess can't pick between them, so neither wins.
     """
@@ -291,8 +304,7 @@ def _closest_customer(db: CompanyDb, heard: str, sql: str) -> tuple[dict[str, An
     close = difflib.get_close_matches(_letters_digits(heard), keyed, n=3, cutoff=_CLOSE_MATCH)
     if len({keyed[match]["customer_id"] for match in close}) != 1:
         return None
-    row = keyed[close[0]]
-    return _customer(db, row["customer_id"]), row["value"]
+    return keyed[close[0]]
 
 
 @_tool(
@@ -334,19 +346,17 @@ def find_customer(
         )
     if found is not None:
         return {"found": True, "customer_id": found["id"], "name": found["name"]}
-    close = None
-    if address:
-        close = _closest_customer(db, address, _EMAIL_VALUES)
+    close = _closest_row(db, address, _EMAIL_VALUES) if address else None
     if close is None and host:
-        close = _closest_customer(db, host, _DOMAIN_VALUES)
+        close = _closest_row(db, host, _DOMAIN_VALUES)
     if close is None:
         return {"found": False}
-    customer, matched = close
+    customer = _customer(db, close["customer_id"])
     return {
         "found": True,
         "customer_id": customer["id"],
         "name": customer["name"],
-        "close_match": matched,
+        "close_match": close["value"],
     }
 
 

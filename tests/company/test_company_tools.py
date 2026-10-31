@@ -648,3 +648,33 @@ def test_customer_ids_match_in_any_case(db):
     found = ToolDispatcher(db).dispatch("get_account_summary", {"customer_id": "CUS_1001"})
 
     assert found["customer_id"] == "cus_1001"
+
+
+@pytest.mark.parametrize(
+    ("tool", "arguments", "expected"),
+    [
+        ("renew_ssl", {"domain": "merinocafe.example"}, "marinocafe.example"),
+        ("restore_site", {"domain": "bell hardware dot example"}, "bellhardware.example"),
+        ("get_dns_records", {"domain": "winauto.example"}, "nguyenauto.example"),
+        ("renew_domain", {"domain": "thomson photo dot example"}, "thompsonphoto.example"),
+    ],
+)
+def test_tools_act_on_the_address_they_nearly_heard(db, tool, arguments, expected):
+    result = ToolDispatcher(db).dispatch(tool, arguments)
+
+    assert "error" not in result
+    assert expected in {result.get("domain"), result.get("name")}
+
+
+def test_mailbox_tools_act_on_the_address_they_nearly_heard(db):
+    result = ToolDispatcher(db).dispatch(
+        "unlock_mailbox", {"address": "Evelyn@HeartFamily.example"}
+    )
+
+    assert result == {"address": "evelyn@hartfamily.example", "locked": False}
+
+
+def test_a_different_website_is_still_refused(db):
+    result = ToolDispatcher(db).dispatch("renew_ssl", {"domain": "acme-widgets.example"})
+
+    assert "error" in result
