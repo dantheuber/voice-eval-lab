@@ -69,6 +69,9 @@ class Beat(BaseModel):
     required: bool = True
 
 
+VERIFIED_BEFORE_CHANGE = "verified_before_change"
+
+
 class Rule(BaseModel):
     id: str = Field(default_factory=lambda: new_id("rule"))
     text: str
@@ -76,6 +79,9 @@ class Rule(BaseModel):
     # The beat the caller has to reach before the bot can be blamed for not doing this. With none,
     # any missed required beat excuses it.
     needs_beat: str | None = None
+    # What settles this with no judge, when the record is a better witness than a reading of the
+    # transcript: an expected_state id, or "verified_before_change".
+    decided_by: str | None = None
 
 
 class StateExpectation(BaseModel):

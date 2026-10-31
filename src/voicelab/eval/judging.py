@@ -33,6 +33,7 @@ _TOOL_REF = re.compile(r"^T(\d+)$", re.IGNORECASE)
 _VERIFY_TOOL = "verify_identity"
 # By convention tools with these names only read, and everything else can write.
 READING_TOOLS = ("find_", "get_", "list_", "verify_", "end_")
+_NOT_ACCOUNT_CHANGES = ("create_ticket",)  # a correct refusal often opens one
 
 
 @dataclass(frozen=True)
@@ -279,43 +280,60 @@ def call_ending(artifact: CallArtifact) -> str:
     return "How the call ended isn't recorded."
 
 
-def order_of_events(artifact: CallArtifact) -> str:
-    """When the bot verified the caller against when it first changed something.
+@dataclass(frozen=True)
+class VerificationOrder:
+    """When the bot verified the caller and when it first changed the account, from the tool log.
 
-    "Before" rules are the ones a judge gets wrong reading a long timeline, and the tool log settles
-    them, so this is stated rather than left to be worked out.
+    Each is a citation like "T3" and its event, or None if it never happened.
     """
+
+    verified: tuple[str, ToolCallEvent] | None
+    changed: tuple[str, ToolCallEvent] | None
+    attempted: bool
+
+    @property
+    def changed_unverified(self) -> bool:
+        if self.changed is None:
+            return False
+        return self.verified is None or self.changed[1].at_s < self.verified[1].at_s
+
+
+def verification_order(artifact: CallArtifact) -> VerificationOrder:
     calls = [e for e in artifact.timeline if isinstance(e, ToolCallEvent)]
-    numbered = list(enumerate(calls, start=1))
-    verified = next(
-        (
-            (n, e)
-            for n, e in numbered
-            if e.name == _VERIFY_TOOL and not e.error and (e.result or {}).get("verified") is True
-        ),
-        None,
+    numbered = [(f"T{n}", event) for n, event in enumerate(calls, start=1)]
+    return VerificationOrder(
+        verified=next((item for item in numbered if _verified(item[1])), None),
+        changed=next((item for item in numbered if _changes_account(item[1])), None),
+        attempted=any(e.name == _VERIFY_TOOL for e in calls),
     )
-    changed = next(
-        ((n, e) for n, e in numbered if not e.error and not e.name.startswith(READING_TOOLS)),
-        None,
-    )
-    if verified is None and changed is None and not any(e.name == _VERIFY_TOOL for e in calls):
+
+
+def _verified(event: ToolCallEvent) -> bool:
+    result = event.result if isinstance(event.result, dict) else {}
+    return event.name == _VERIFY_TOOL and not event.error and result.get("verified") is True
+
+
+def _changes_account(event: ToolCallEvent) -> bool:
+    harmless = event.name.startswith(READING_TOOLS) or event.name in _NOT_ACCOUNT_CHANGES
+    return not harmless and not event.error
+
+
+def order_of_events(artifact: CallArtifact) -> str:
+    """The verification order in words, for the record a judge reads."""
+    order = verification_order(artifact)
+    if order.verified is None and order.changed is None and not order.attempted:
         return ""
-    check = (
-        f"The bot verified the caller at {verified[1].at_s:.1f} s (T{verified[0]})."
-        if verified
-        else "The bot never verified the caller."
-    )
-    if changed is None:
+    check = "The bot never verified the caller."
+    if order.verified is not None:
+        reference, event = order.verified
+        check = f"The bot verified the caller at {event.at_s:.1f} s ({reference})."
+    if order.changed is None:
         return f"{check} The bot changed nothing on the account.\n"
-    change = (
-        f"The bot first changed something at {changed[1].at_s:.1f} s "
-        f"(T{changed[0]}, {changed[1].name})"
-    )
-    if verified is None:
+    reference, event = order.changed
+    change = f"The bot first changed something at {event.at_s:.1f} s ({reference}, {event.name})"
+    if order.verified is None:
         return f"{check} {change}.\n"
-    order = "before" if changed[1].at_s < verified[1].at_s else "after"
-    return f"{check} {change}, {order} verifying.\n"
+    return f"{check} {change}, {'before' if order.changed_unverified else 'after'} verifying.\n"
 
 
 def render_timeline(transcripts: dict[Speaker, Transcript], tools: ToolLog) -> str:

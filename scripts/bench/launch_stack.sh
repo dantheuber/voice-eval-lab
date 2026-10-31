@@ -48,7 +48,7 @@ whisper_eval() {
 }
 
 judge() {
-  llama 18105 judge -m "$M/unsloth__Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf" --jinja --reasoning auto -c 32768 -np 1 -ngl 999 --temp 0.1
+  llama 18105 judge -m "$M/unsloth__Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf" --jinja --reasoning off --spec-type draft-mtp -c 32768 -np 1 -ngl 999 --temp 0
 }
 
 wait_health() {

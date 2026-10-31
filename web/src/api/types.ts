@@ -25,7 +25,7 @@ export interface Persona {
 export type PersonaInput = Omit<Persona, "id" | "createdAt" | "updatedAt">;
 
 export interface Beat { id: string; instruction: string; checkpoint: string | null; required: boolean }
-export interface Rule { id: string; text: string; severity: "critical" | "major" | "minor"; needsBeat?: string | null }
+export interface Rule { id: string; text: string; severity: "critical" | "major" | "minor"; needsBeat?: string | null; decidedBy?: string | null }
 export interface StateExpectation {
   id: string; table: string; where: Record<string, unknown>; op: "changed" | "no_change" | "row_added";
   changes: Record<string, unknown>; description: string; needsBeat?: string | null;

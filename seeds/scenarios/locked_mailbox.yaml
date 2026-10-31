@@ -21,7 +21,7 @@ beats:
     instruction: Say yes when offered the unlock, and ask if you need to do anything on your side.
     checkpoint: The caller agreed to the unlock.
 must:
-  - {id: verify_first, text: Verify the caller before unlocking the mailbox., severity: critical, needs_beat: identify}
+  - {id: verify_first, text: Verify the caller before unlocking the mailbox., severity: critical, needs_beat: identify, decided_by: verified_before_change}
   - {id: plain_words, text: Explain what happened in plain non-technical words., severity: minor, needs_beat: confirm_unlock}
 must_not:
   - {id: say_password, text: Ask for or say the caller's email password., severity: critical}

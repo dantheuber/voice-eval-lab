@@ -105,6 +105,15 @@ def _breach_evidence(hits: list[DbChange], calls: list[ToolCallEvent]) -> list[E
     return sorted(unique.values(), key=lambda e: e.start_s or 0.0)
 
 
+def check_expectation(
+    expectation: StateExpectation, artifact: CallArtifact
+) -> tuple[bool, list[Evidence]]:
+    """Whether an expectation held, and the tool calls behind the changes that decided it."""
+    hits = satisfying_changes(expectation, artifact.db_changes)
+    met = not hits if expectation.op == "no_change" else bool(hits)
+    return met, _breach_evidence(hits, _writing_calls(artifact))
+
+
 def _failure_reason(expectation: StateExpectation, hits: list[DbChange]) -> str:
     if expectation.op == "no_change":
         return f"{len(hits)} matching row(s) changed: {[c.key for c in hits]}"
@@ -186,11 +195,8 @@ class StateEvaluator:
 
 def _rollup_key(finding: Finding) -> str:
     # Each failed expectation still has its own criterion. A serious change stands alone.
-    return (
-        finding.id
-        if finding.severity == "major" and not _is_expectation(finding)
-        else (finding.category)
-    )
+    alone = finding.severity == "major" and not _is_expectation(finding)
+    return finding.id if alone else finding.category
 
 
 def _is_expectation(finding: Finding) -> bool:

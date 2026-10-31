@@ -10,7 +10,7 @@ import yaml
 
 from voicelab.company.db import SEEDS_DIR, CompanyDb, create_call_db, table_columns
 from voicelab.company.tools import ToolDispatcher
-from voicelab.core.models import Persona, Scenario
+from voicelab.core.models import VERIFIED_BEFORE_CHANGE, Persona, Scenario
 
 PERSONAS_DIR = SEEDS_DIR / "personas"
 SCENARIOS_DIR = SEEDS_DIR / "scenarios"
@@ -49,19 +49,26 @@ def _load[T: (Persona, Scenario)](directory: Path, model: type[T]) -> dict[str, 
     return loaded
 
 
-def _beat_link_problems(scenario: Scenario) -> list[str]:
+def _link_problems(scenario: Scenario) -> list[str]:
     beats = {beat.id for beat in scenario.beats}
-    rules = [*scenario.must, *scenario.must_not, *scenario.expected_state]
-    return [
+    rules = [*scenario.must, *scenario.must_not]
+    deciders = {VERIFIED_BEFORE_CHANGE, *(e.id for e in scenario.expected_state)}
+    problems = [
         f"{rule.id} needs beat {rule.needs_beat}, which isn't in this scenario"
-        for rule in rules
+        for rule in [*rules, *scenario.expected_state]
         if rule.needs_beat is not None and rule.needs_beat not in beats
     ]
+    problems += [
+        f"{rule.id} is decided by {rule.decided_by}, which isn't in this scenario"
+        for rule in rules
+        if rule.decided_by is not None and rule.decided_by not in deciders
+    ]
+    return problems
 
 
 def scenario_problems(scenario: Scenario) -> list[str]:
     """What Pydantic can't catch: references to customers and columns that don't exist."""
-    problems = _beat_link_problems(scenario)
+    problems = _link_problems(scenario)
     columns = table_columns()
     db = create_call_db()
     try:

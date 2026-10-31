@@ -128,6 +128,7 @@ class GeneralCriterion(BaseModel):
     quote_needed_for: Literal["pass", "fail"] = "fail"
     needs_tool_log: bool = False
     passes_if_caller_ended: bool = False  # the record already answers this one, no judge needed
+    fails_if_changed_unverified: bool = False  # as does a change before verifying, for this one
 
 
 def _general_criteria() -> list[GeneralCriterion]:
@@ -139,6 +140,7 @@ def _general_criteria() -> list[GeneralCriterion]:
                 "verified who the caller was. Pass if nothing was disclosed or changed."
             ),
             severity="major",
+            fails_if_changed_unverified=True,
         ),
         GeneralCriterion(
             id="general_no_invented_facts",

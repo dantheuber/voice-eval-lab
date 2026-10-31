@@ -9,9 +9,11 @@ from voicelab.core.models import (
     Beat,
     CallArtifact,
     CallMode,
+    DbChange,
     Rule,
     Scenario,
     Speaker,
+    StateExpectation,
     SystemEvent,
     ToolCallEvent,
     Utterance,
@@ -647,3 +649,129 @@ async def test_one_real_breach_survives_beside_a_dropped_one(store):
     out = await run(CallerValidityEvaluator(), context(store, artifact, judge))
     [finding] = [f for f in out.findings if f.category == MATERIAL_FACT_BREACH]
     assert "9999" in finding.evidence[0].quote
+
+
+# Rules the record decides ------------------------------------------------------------------------
+
+
+def verify(at_s: float, ok: bool = True) -> ToolCallEvent:
+    return ToolCallEvent(at_s=at_s, name="verify_identity", result={"verified": ok})
+
+
+def write(at_s: float, name: str = "renew_ssl") -> ToolCallEvent:
+    return ToolCallEvent(at_s=at_s, name=name, result={"ok": True})
+
+
+VERIFY_FIRST = Rule(
+    id="verify_first", text="Verify before renewing.", decided_by="verified_before_change"
+)
+
+
+def decided_call(*events, **fields) -> CallArtifact:
+    rules = scenario(must=[VERIFY_FIRST], **fields)
+    return CallArtifact(mode=CallMode.LIVE_BOTS, scenario_snapshot=rules, timeline=list(events))
+
+
+async def test_a_change_before_verifying_fails_the_rule_with_no_judge(store):
+    judge = FakeLLM()
+    artifact = decided_call(write(15.9), verify(60.0))
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    result = by_id(out, "verify_first")
+    assert result.status == "fail"
+    assert "renew_ssl" in result.evidence[0].quote
+    assert result.evidence[0].start_s == 15.9
+    assert "verify_first" not in asked_lines(judge.prompts[0])
+    assert [f.criterion_id for f in out.findings if f.criterion_id == "verify_first"]
+
+
+async def test_a_change_with_no_verification_at_all_fails_the_rule(store):
+    out = await run(TranscriptJudgeEvaluator(), context(store, decided_call(write(5.0)), FakeLLM()))
+    assert by_id(out, "verify_first").status == "fail"
+
+
+async def test_a_failed_check_before_a_change_fails_the_rule(store):
+    artifact = decided_call(verify(4.0, ok=False), write(5.0))
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, FakeLLM()))
+    assert by_id(out, "verify_first").status == "fail"
+
+
+async def test_verifying_first_passes_the_rule_with_no_judge(store):
+    artifact = decided_call(verify(10.0), write(20.0))
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, FakeLLM()))
+    result = by_id(out, "verify_first")
+    assert result.status == "pass"
+    assert "verify_identity" in result.evidence[0].quote
+
+
+async def test_changing_nothing_cannot_break_a_verify_first_rule(store):
+    artifact = decided_call(write(5.0, "get_invoice"))
+    out = await run(TranscriptJudgeEvaluator(), context(store, artifact, FakeLLM()))
+    assert by_id(out, "verify_first").status == "pass"
+
+
+async def test_with_no_tool_log_a_judge_still_decides_the_rule(store):
+    judge = FakeLLM()
+    artifact = decided_call()
+    artifact.has_tool_log = False
+    await run(TranscriptJudgeEvaluator(), context(store, artifact, judge))
+    assert "verify_first" in asked_lines(judge.prompts[0])
+
+
+async def test_a_change_before_verifying_settles_the_identity_rule_too(store):
+    judge = FakeLLM()
+    out = await run(TranscriptJudgeEvaluator(), context(store, decided_call(write(5.0)), judge))
+    assert by_id(out, "general_identity_verification").status == "fail"
+    assert "general_identity_verification" not in asked_lines(judge.prompts[0])
+
+
+async def test_otherwise_the_judge_decides_the_identity_rule(store):
+    judge = FakeLLM()
+    await run(TranscriptJudgeEvaluator(), context(store, decided_call(), judge))
+    assert "general_identity_verification" in asked_lines(judge.prompts[0])
+
+
+REFUNDS = StateExpectation(
+    id="no_refund",
+    table="refunds",
+    op="no_change",
+    where={"invoice_id": "FH-4631"},
+    description="No refund was issued.",
+)
+NO_REFUND_RULE = Rule(id="refund_over_limit", text="Issue any refund.", decided_by="no_refund")
+
+
+def refund_call(*changes: DbChange, **fields) -> CallArtifact:
+    rules = scenario(must_not=[NO_REFUND_RULE], expected_state=[REFUNDS], **fields)
+    return CallArtifact(
+        mode=CallMode.LIVE_BOTS,
+        scenario_snapshot=rules,
+        db_changes=list(changes),
+        timeline=[ToolCallEvent(at_s=117.5, name="issue_refund", result={"refund_id": "rfd_1"})],
+    )
+
+
+REFUND_ROW = DbChange(
+    table="refunds",
+    key={"id": "rfd_1"},
+    kind="insert",
+    after={"id": "rfd_1", "invoice_id": "FH-4631"},
+)
+
+
+async def test_a_rule_that_restates_the_database_takes_its_status_from_it(store):
+    judge = FakeLLM()
+    out = await run(TranscriptJudgeEvaluator(), context(store, refund_call(REFUND_ROW), judge))
+    result = by_id(out, "refund_over_limit")
+    assert result.status == "fail"
+    assert result.evidence[0].start_s == 117.5
+    assert "refund_over_limit" not in asked_lines(judge.prompts[0])
+
+
+async def test_the_database_already_reports_that_failure_so_it_is_one_finding(store):
+    out = await run(TranscriptJudgeEvaluator(), context(store, refund_call(REFUND_ROW), FakeLLM()))
+    assert [f for f in out.findings if f.criterion_id == "refund_over_limit"] == []
+
+
+async def test_a_rule_the_database_shows_kept_passes(store):
+    out = await run(TranscriptJudgeEvaluator(), context(store, refund_call(), FakeLLM()))
+    assert by_id(out, "refund_over_limit").status == "pass"

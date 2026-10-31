@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 
 from voicelab.core.models import Evidence, Speaker, Word
-from voicelab.eval.normalize import Lexicon, Token, tokenize
+from voicelab.eval.normalize import Lexicon, Token, phrase_spans, tokenize
 from voicelab.eval.vad import Region
 from voicelab.providers.base import Transcript
 
@@ -137,10 +137,11 @@ class TranscriptIndex:
 
         Both sides are reduced to the tokens pronunciation compares, so forms that say the same
         thing are the same: case, punctuation, "I'm" and "I am", "$49" and "forty nine dollars".
-        What's left has to match token for token, so "not" and every digit count. A judge's near
-        miss is still a miss, because the word it gets wrong can be the one that reverses the
-        meaning. An ellipsis joins parts, and each part has to be there. When both sides said it,
-        the `prefer` speaker's copy is returned.
+        What's left has to match token for token, so "not" and every digit count, though word
+        breaks can differ, as in "O'Car for" and "O'Carfor". A judge's near miss is still a miss,
+        because the word it gets wrong can be the one that reverses the meaning. An ellipsis joins
+        parts, and each part has to be there. When both sides said it, the `prefer` speaker's copy
+        is returned.
         """
         parts = [self._needle(part) for part in _ELLIPSIS.split(quote)]
         parts = [part for part in parts if part]
@@ -162,7 +163,8 @@ def _find_exact(tokens: list[Token], needle: list[str]) -> tuple[int, int] | Non
     for start in range(len(norms) - size + 1):
         if norms[start : start + size] == needle:
             return start, start + size
-    return None
+    # An ASR and a judge can split a name differently. Every letter still has to be there.
+    return next(phrase_spans(tokens, "".join(needle)), None)
 
 
 def _evidence(channel: _Channel, start: int, end: int) -> Evidence:

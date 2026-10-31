@@ -422,7 +422,7 @@ def _mark_spoken_urls(tokens: list[Token], tlds: Iterable[str]) -> None:
             _merge_span(tokens, start, i + 2, "url")
 
 
-def _phrase_spans(tokens: Sequence[Token], phrase: str) -> Iterator[tuple[int, int]]:
+def phrase_spans(tokens: Sequence[Token], phrase: str) -> Iterator[tuple[int, int]]:
     """Where tokens join to spell `phrase`, so "fh4288" finds both "FH-4288" and "F H 4 2 8 8"."""
     for start in range(len(tokens)):
         joined = ""
@@ -453,7 +453,7 @@ def tokenize(
     _mark_spoken_urls(tokens, tlds)
     for phrase in watch:
         spelled = "".join(t.norm for t in tokenize(phrase.split()))
-        for start, end in list(_phrase_spans(tokens, spelled)):
+        for start, end in list(phrase_spans(tokens, spelled)):
             _merge_span(tokens, start, end, "watch")
     return tokens
 

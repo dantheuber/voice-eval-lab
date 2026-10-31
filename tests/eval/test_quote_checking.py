@@ -430,6 +430,17 @@ def test_negations_and_numbers_have_to_match(spoken, quote):
     assert spoken.locate(quote) is None, quote
 
 
+def test_a_quote_may_split_or_join_words_differently():
+    index = TranscriptIndex({Speaker.CALLER: transcript(("my name is Tom OCarfor today", 0.0))})
+    assert index.locate("Tom O'Car for").quote == "Tom OCarfor"
+    assert index.locate("Tom O'Car for today").quote == "Tom OCarfor today"
+
+
+def test_joining_words_cannot_hide_a_changed_letter():
+    index = TranscriptIndex({Speaker.BOT: transcript(("I will cannot refund", 0.0))})
+    assert index.locate("will can refund") is None
+
+
 def test_an_ellipsis_joins_real_parts(spoken):
     assert spoken.locate("I'm sorry... the amount is $189.00").quote == "I'm sorry,"
     assert spoken.locate("I'm sorry\u2026 your PIN didn't match") is not None
@@ -513,6 +524,11 @@ def test_a_call_with_no_tools_has_no_order_to_state():
 def test_the_order_is_in_the_record():
     artifact = tooled(call_of(72.0, "renew_ssl"), verified(101.6))
     assert "before verifying" in call_record("c", artifact, {})
+
+
+def test_opening_a_ticket_is_not_changing_the_account():
+    line = order_of_events(tooled(call_of(5.0, "create_ticket"), verified(9.0)))
+    assert "changed nothing" in line
 
 
 def test_a_call_with_no_tool_log_says_so():

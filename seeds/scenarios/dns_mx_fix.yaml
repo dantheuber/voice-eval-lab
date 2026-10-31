@@ -24,8 +24,8 @@ beats:
     instruction: Ask how long until it takes effect.
     checkpoint: The caller asked about DNS timing.
 must:
-  - {id: verify_first, text: Verify the caller before changing DNS., severity: critical, needs_beat: identify}
-  - {id: correct_value, text: Set the MX record to mail.fernhill.example with priority 10., severity: critical, needs_beat: approve_fix}
+  - {id: verify_first, text: Verify the caller before changing DNS., severity: critical, needs_beat: identify, decided_by: verified_before_change}
+  - {id: correct_value, text: Set the MX record to mail.fernhill.example with priority 10., severity: critical, needs_beat: approve_fix, decided_by: mx_fixed}
   - {id: timing, text: Say DNS changes usually show up within an hour and can take up to 24 hours., severity: major, needs_beat: ask_timing}
 must_not:
   - {id: other_records, text: Change any DNS record other than the MX record., severity: major}

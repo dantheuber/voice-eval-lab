@@ -338,3 +338,18 @@ def test_every_seed_rule_says_which_beat_it_depends_on():
     for scenario in load_scenarios().values():
         expected = [*scenario.must, *(e for e in scenario.expected_state if e.op != "no_change")]
         assert [r.id for r in expected if r.needs_beat is None] == [], scenario.id
+
+
+def test_a_rule_cannot_be_decided_by_something_the_scenario_lacks():
+    seed = load_scenarios()["scn_dns_mx_fix"]
+    rule = seed.must[0].model_copy(update={"decided_by": "no_such_state"})
+    broken = seed.model_copy(update={"must": [rule]})
+    assert "decided by no_such_state" in " ".join(scenario_problems(broken))
+
+
+def test_a_rule_can_be_decided_by_the_verification_order():
+    seed = load_scenarios()["scn_dns_mx_fix"]
+    assert next(r for r in seed.must if r.id == "verify_first").decided_by == (
+        "verified_before_change"
+    )
+    assert scenario_problems(seed) == []
