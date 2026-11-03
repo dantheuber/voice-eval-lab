@@ -35,7 +35,7 @@ Then open <http://127.0.0.1:18080>.
 
 ## The stack
 
-`./run.sh` starts `local-default`. All numbers come from [the benchmark doc](docs/research/benchmarks-2026-10.md), measured on a Framework Desktop with a Ryzen AI MAX+ 395, 122 GB of unified memory, and a Radeon 8060S on Vulkan.
+`./run.sh` starts `local-default`. All numbers come from [the benchmark doc](docs/research/benchmarks-2026-10.md), measured on a Framework Desktop type machine: a Ryzen AI MAX+ 395 with 128 GB of unified memory, using its Radeon 8060S on Vulkan.
 
 | Role | Model | Runs on | Measured |
 | --- | --- | --- | --- |

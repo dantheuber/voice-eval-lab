@@ -224,7 +224,7 @@ export const roles: T.RoleItem[] = [
 export const system: T.SystemInfo = {
   gpu: { device: "Radeon 8060S, gfx1151", memoryUsedGb: 41.2, memoryTotalGb: 122 },
   servers: [{ role: "llm_support", kind: "llama.cpp", port: 8101, pid: 41211 }, { role: "llm_caller", kind: "llama.cpp", port: 8102, pid: 41240 }, { role: "llm_judge", kind: "llama.cpp", port: 8103, pid: 41377 }, { role: "stt_live", kind: "faster-whisper", port: 8110, pid: 41402 }, { role: "tts_bot", kind: "qwen3-tts", port: 8120, pid: 41455 }, { role: "audio_analyst", kind: "lfm3", port: 8130, pid: 41490 }],
-  urls: { local: "https://localhost:8443", lan: "https://192.168.0.75:8443" }, cert: "self-signed",
+  urls: { local: "https://localhost:8443", lan: "https://192.168.1.50:8443" }, cert: "self-signed",
 };
 
 export const thresholds: T.Thresholds = { deadAirS: 2.0, bargeStopTargetS: 0.5, replyLatencyWarnS: 2.5, mosBaseline: 4.0, audioListeningMode: "advisory" };

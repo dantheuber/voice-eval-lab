@@ -12,7 +12,7 @@ A local, self-hosted experiment: a platform for testing a voice AI customer supp
 4. **Human calls.** The user talks to the support bot through a browser microphone. The call is recorded and evaluated post-call the same way. Talk-over and interruption must work live and be measurable afterward.
 5. **A dashboard** for reviewing calls and evals, creating personas and test scenarios, launching runs, and making mic calls.
 
-All models must run locally on the user's PC. Every model and service sits behind a replaceable interface so that any piece can be swapped for AWS Bedrock or another provider with a config change and at most one small adapter.
+All models must run locally on one machine. Every model and service sits behind a replaceable interface so that any piece can be swapped for AWS Bedrock or another provider with a config change and at most one small adapter.
 
 Treat this as a prototype someone will actually use, not a demo. It must start with one command and work end to end with real models.
 
@@ -23,25 +23,22 @@ Treat this as a prototype someone will actually use, not a demo. It must start w
 | Bot-to-bot timing | Live mode if benchmarks show the hardware keeps up. Otherwise turn-based, slower than real time, with real audio still crossing the line. Every call is labeled with its mode. |
 | Mic calls | Always live and full-duplex, with barge-in. Bot audio stops when the human talks over it, and queued audio is discarded. The bot's context reflects only what was actually heard. Overlaps are measured post-call. |
 | Echo | Headphones give the cleanest result, but speakers must not cause constant false interruptions. Use browser echo cancellation and handle the rest server-side. |
-| Access | Serve on localhost and on the LAN (host IP 192.168.0.75) with a self-signed cert, since browsers only allow the mic on localhost or HTTPS. |
-| Machine sharing | Do not touch the user's Ollama service or whisper-sandbox containers. They hold no GPU devices. Run our own model servers on our own ports. Up to about 40 GB of model downloads is fine. |
+| Access | Serve on localhost and on the LAN with a self-signed cert, since browsers only allow the mic on localhost or HTTPS. |
+| Machine sharing | Leave any other model servers on the machine alone. Run our own model servers on our own ports. Up to about 40 GB of model downloads is fine. |
 | Licenses | No non-commercial weights, so the design can move to a company later. Record every model's code and weights license. LFM3 is allowed even if its terms are conditional; flag the terms. |
 | AWS | No Bedrock access exists on this machine. Build Bedrock adapters anyway, unit test them against mocks, and label them clearly as untested against live AWS. |
 | Mock company | **Fernhill Internet**, a fictional company selling email hosting, website hosting, domains, and SSL. Backed by a SQLite database with real tool calls, so evals can assert on what the bot actually did. |
-| Repo | `dantheuber/voice-eval-lab`, private, at `~/projects/voice-eval-lab`. Work on branch `prototype`. |
+| Repo | `voice-eval-lab` on GitHub. Work on branch `prototype`. |
 | Argument guard | Keep the bot-side check on tool arguments, on by default, with `support_bot.argument_guard` to turn it off. It uses only what the bot heard. It must hide nothing: every stopped call is a failed `ToolCallEvent`, and evals report it. |
 | Scope | English only, single user, no login. No real phone calls: a simulated phone line (8 kHz mu-law, band-limit, noise, packet loss) sits behind a transport interface so real SIP can be added later. Outside recordings can be uploaded for post-call eval. |
 
-## This machine
+## Target hardware
 
-- Framework Desktop, Ryzen AI MAX+ 395, 16 cores / 32 threads
-- 122 GB unified memory, about 89 GB free. GTT is sized for up to 124 GB, so the iGPU can address nearly all of it.
-- Radeon 8060S iGPU (`gfx1151`). Vulkan works. ROCm 7.2 PyTorch wheels work; ROCm 7.1 segfaults on this GPU. **No CUDA.** NPU present at `/dev/accel0`, unused.
-- User is in the `render` and `video` groups. No passwordless sudo, so nothing may require `sudo` or apt. `ffmpeg` and `sox` are not installed; use a static binary or a Python package inside the project.
-- Python 3.12 available through uv. Node 26, pnpm 11. Docker available without GPU runtimes.
-- `~/projects/cc-tts` is a working example of Qwen3-TTS on ROCm 7.2 with uv. Read its README and `pyproject.toml` for the Strix Halo gotchas. `~/projects/whisper-bot/services` has working local STT/TTS servers worth reading.
-- Already cached in `~/.cache/huggingface/hub`: LFM3-Audio-2B-GGUF (Q8), Qwen3-TTS 0.6B and 1.7B (Base and CustomVoice), kyutai pocket-tts, Qwen3.5-4B, Qwen3.5-9B, Qwen3.6-35B-A3B, gpt-oss-20b, Qwen3-32B-AWQ. The `hf` CLI is at `~/.local/bin/hf`.
-- Ollama (do not modify) serves `qwen3.8:27b-mtp-q8_0`, `gemma4:12b`, and others at `172.17.0.1:11434`, Vulkan, one model at a time.
+It was built for a Framework Desktop type machine: an AMD Ryzen AI MAX+ 395 (Strix Halo) with 128 GB of unified memory that the integrated GPU can address almost entirely.
+
+- Radeon 8060S iGPU (`gfx1151`). Vulkan works. ROCm 7.2 PyTorch wheels work; ROCm 7.1 segfaults on this GPU. **No CUDA.**
+- Nothing may require `sudo` or apt. Don't assume `ffmpeg` or `sox` are installed; use a static binary or a Python package inside the project.
+- Python 3.12 through uv. Node and pnpm for the dashboard.
 
 ## Architecture direction
 

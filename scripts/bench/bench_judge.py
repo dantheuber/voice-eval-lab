@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 
@@ -14,7 +15,7 @@ import httpx
 
 from common import LlamaServer, gpu_mem_gb, save_result
 
-OLLAMA = "http://172.17.0.1:11434"
+OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 TRANSCRIPT = """[00:00] AGENT: Thanks for calling Fernhill Internet, this is Robin. How can I help you today?
 [00:05] CALLER: Hi, I have a question about my bill. I think I was charged twice.
 [00:11] AGENT: I'm sorry about that. Can I get your account number please?

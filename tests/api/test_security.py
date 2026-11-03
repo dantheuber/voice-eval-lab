@@ -134,23 +134,23 @@ def test_a_configured_extra_host_is_trusted(client):
 
 def test_the_allowlist_is_built_from_the_servers_own_names():
     settings = Settings(extra_hosts=("Proxy.Lan",))
-    sites = trusted_sites(settings, "192.168.0.75", "Framework")
+    sites = trusted_sites(settings, "192.168.1.50", "Framework")
     assert {
         "localhost:18080",
         "127.0.0.1:18443",
-        "192.168.0.75:18443",
+        "192.168.1.50:18443",
         "framework:18443",
         "proxy.lan",
     } <= sites.hosts
     assert {
         "http://127.0.0.1:18080",
         "https://localhost:18443",
-        "https://192.168.0.75:18443",
+        "https://192.168.1.50:18443",
         "https://framework:18443",
         "http://localhost:5173",
         "https://proxy.lan",
     } <= sites.origins
-    assert "https://192.168.0.75:5173" not in sites.origins
+    assert "https://192.168.1.50:5173" not in sites.origins
 
 
 def test_a_default_port_is_left_out_as_browsers_leave_it_out():

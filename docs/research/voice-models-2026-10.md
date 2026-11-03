@@ -1,6 +1,6 @@
 # Voice and speech models for voice-eval-lab, October 2026
 
-Survey date: 2026-10-30. Target machine: Radeon 8060S (`gfx1151`), Vulkan, ROCm 7.2, 122 GB unified memory, no CUDA, no sudo.
+Survey date: 2026-10-30. Target machine: Framework Desktop type, Radeon 8060S (`gfx1151`), Vulkan, ROCm 7.2, 128 GB unified memory, no CUDA, no sudo.
 
 Nothing here was installed or run. Every number is reported by its source unless marked otherwise. Benchmarking on the real machine is a separate task.
 
@@ -195,7 +195,7 @@ ONNX Runtime v1.31.1 has no Vulkan provider. Its tree has `migraphx`, `webgpu`, 
 | Qwen3-ASR 0.6B, `ggml-org/Qwen3-ASR-0.6B-GGUF` | 2026-01-28 | Q8_0 0.80 GB plus 0.21 GB, cached | llama.cpp, transcribe.cpp | Unpublished on CPU | 1.7B is 4.94 on 9 sets (via NVIDIA card) | Separate aligner | Apache-2.0 | Streaming is vLLM only, and no timestamps when streaming |
 | Kyutai STT, `kyutai/stt-1b-en_fr`, `kyutai/stt-2.6b-en` | 2025-06 | repo 2.4, 5.6 GB | `moshi-server` | L40S 64 streams at 3x (vendor). CPU unpublished | Not read | Yes | Apache / CC-BY-4.0 | GPU oriented. Skip |
 | Whisper large-v3-turbo | 2024-10-01 | 1.62 GB, q5_0 0.57 GB | whisper.cpp Vulkan | Not measured | 6.58, third-party table | `-ml 1`, experimental | MIT | 30 s window, poor partials |
-| distil-large-v3 with faster-whisper | Local | Local | CPU | Working in `~/projects/whisper-bot/services` (local) | | | MIT | Known fallback |
+| distil-large-v3 with faster-whisper | Local | Local | CPU | Known to work on CPU | | | MIT | Known fallback |
 | VibeVoice-ASR-BitNet, `microsoft/VibeVoice-ASR-BitNet` | 2026-07-24 | 1.58 GB | `microsoft/VibeASR.cpp` | RTF 1.98 at low threads to 0.42 at high on EPYC 7V13 (vendor) | Not read | Who-what-when | MIT | Post-call fit, not live |
 | Audio8-ASR-Infinite, `Edge0/Audio8-ASR-Infinite` | 2026-09-21 | repo 8.2 GB | Adapted vLLM | 240 to 560 ms delay | Not read | Not read | Apache-2.0 | Needs vLLM. Skip |
 | Whistle, `Cactus-Compute/whistle` | 2026-09-30 | 16.9 MB | Needle C++ engine | Not measured | Not comparable | Yes, with probability | Apache-2.0 | Tiny model, WER not compared |
@@ -317,7 +317,7 @@ Needs reasoning and structured output. No voice latency constraint.
 
 | Model and repo | Date | Size | Code / weights | Notes |
 | --- | --- | --- | --- | --- |
-| Qwen3.8-27B, `unsloth/Qwen3.8-27B-GGUF` | 2026-08-05 | UD-Q4_K_M 16.5 GB, UD-Q6_K 22.0 GB | Apache-2.0 | Newest of the set. Also on the user's Ollama, which must not be modified. Run a separate llama-server for isolation |
+| Qwen3.8-27B, `unsloth/Qwen3.8-27B-GGUF` | 2026-08-05 | UD-Q4_K_M 16.5 GB, UD-Q6_K 22.0 GB | Apache-2.0 | Newest of the set. Run a dedicated llama-server for isolation |
 | Qwen3.6-35B-A3B, `unsloth/Qwen3.6-35B-A3B-GGUF` | 2026-04-15 | Safetensors cached, GGUF not sized | Apache-2.0 | Cached copy helps only via ROCm/vLLM unless a GGUF is also pulled |
 | Gemma 4 26B-A4B, `ggml-org/gemma-4-26B-A4B-it-GGUF` | 2026-03-11 | Not sized | Apache-2.0 | Vulkan prefill worth checking |
 | gpt-oss-20b, `ggml-org/gpt-oss-20b-GGUF` | 2025-08-02 | repo 14.75 GB | Apache-2.0 | Harmony format. Check `response_format` behavior |
@@ -531,7 +531,6 @@ TTS:
 - <https://huggingface.co/ResembleAI/chatterbox-turbo>
 - <https://huggingface.co/OpenMOSS-Team/MOSS-TTS-Nano-100M>
 - <https://huggingface.co/k2-fsa/OmniVoice>
-- `~/projects/cc-tts/README.md` for local Qwen3-TTS numbers
 
 LLM and audio understanding:
 
@@ -636,7 +635,7 @@ VAD, turn, quality, alignment:
 
 ## Test these on the machine
 
-None of these commands have been run. Paths assume the repo root. Do not touch Ollama. Use project ports.
+None of these commands have been run. Paths assume the repo root. Use project ports.
 
 Download budget: running everything below pulls about 50 GB, over the 40 GB limit. Skip or delete Voxtral (3.6 GB), Bolt (6.2 GB) and Gemma E4B (5.2 GB) until the rest is measured, which leaves about 35 GB, of which the judge is 22 GB.
 

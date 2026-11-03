@@ -1,6 +1,6 @@
 """Qwen3-TTS CustomVoice on ROCm 7.2, run with .runtime/venvs/qwen-rocm/bin/python.
 
-Bf16 on the Radeon, codec decoder on CPU in float32, as in ~/projects/cc-tts. The package has no streaming generation, so
+Bf16 on the Radeon, codec decoder on CPU in float32. The package has no streaming generation, so
 time to first audio is the time for a whole chunk. Usage: bench_qwen_tts_rocm.py 0.6B 1.7B
 """
 from __future__ import annotations

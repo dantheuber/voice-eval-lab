@@ -1,4 +1,4 @@
-# Voice stack benchmarks on the Framework Desktop, October 2026
+# Voice stack benchmarks on a Framework Desktop type machine, October 2026
 
 Measured 2026-10-30 and 2026-10-31 on the real machine. Every number below came from a run on this box unless the line says otherwise. Raw results are in `.runtime/bench/results/*.json` (gitignored). `scripts/bench/` reruns everything.
 
@@ -33,8 +33,8 @@ The design risks are correctness, not speed:
 
 | Item | Value |
 | --- | --- |
-| Machine | Framework Desktop, Ryzen AI MAX+ 395, 16 cores, 32 threads |
-| Memory | 122 GB unified. 512 MB carveout VRAM, 133 GB GTT, so the iGPU addresses almost everything |
+| Machine | Framework Desktop type, Ryzen AI MAX+ 395, 16 cores, 32 threads |
+| Memory | 128 GB unified, and the iGPU can address almost all of it |
 | GPU | Radeon 8060S (`gfx1151`), RADV through Mesa 25.2.8 |
 | OS | Ubuntu 25.10, kernel 6.17.0-41, glibc 2.42 |
 | llama.cpp | b12017, `0.8.0-dev (build 12017, commit 5047748f1)`, official `llama-b12017-bin-ubuntu-vulkan-x64.tar.gz`, sha256 `e940a901...` |
@@ -63,7 +63,7 @@ Each clip has a telephone copy: ffmpeg to 8 kHz mu-law, then back to 16 kHz. Kno
 
 **Live two-bot calls.** `scripts/bench/bench_two_bots.py` runs a real call. Audio crosses an 8 kHz mu-law line at wall-clock pace in both directions, each side runs its own VAD on what it hears, and a clock thread checks that 32 ms windows go out on time. "Late windows" counts clock misses. "Underruns" counts a reply that ran dry mid-turn.
 
-**Contamination control.** Benchmarks ran one at a time, and results from the one accidental overlap were discarded and rerun. Ollama had no model loaded except for its own reference run. Model downloads ran in the background during some runs, using network and disk but under 3% of one core. Another agent's Chrome used about one core at times.
+**Contamination control.** Benchmarks ran one at a time, and results from the one accidental overlap were discarded and rerun. No other model server had a model loaded, except during the Ollama reference run. Model downloads ran in the background during some runs, using network and disk but under 3% of one core. A browser used about one core at times.
 
 ## Results by role
 

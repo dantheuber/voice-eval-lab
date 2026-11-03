@@ -78,7 +78,7 @@
       h += `<div class="spacer"></div><div class="foot">
         <div class="row"><span>profile</span><span class="mono">local-default</span></div>
         <div class="row"><span class="health loading" title="judge LLM loading">6 of 7 models</span><button class="btn ghost sm" id="themeBtn" aria-label="Toggle theme">${themeIcon()}</button></div>
-        <div class="row"><span>192.168.0.75:8443</span><span><kbd>?</kbd> keys</span></div>
+        <div class="row"><span>192.168.1.50:8443</span><span><kbd>?</kbd> keys</span></div>
       </div>`;
       rail.innerHTML = h;
       document.getElementById("themeBtn").addEventListener("click", themeToggle);

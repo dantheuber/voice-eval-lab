@@ -16,10 +16,10 @@ def names(path):
 
 
 def test_cert_names_localhost_and_the_lan_address(tmp_path):
-    cert, _ = ensure_certificate(tmp_path, "192.168.0.75")
+    cert, _ = ensure_certificate(tmp_path, "192.168.1.50")
     dns, ips = names(cert)
     assert "localhost" in dns
-    assert ipaddress.ip_address("192.168.0.75") in ips
+    assert ipaddress.ip_address("192.168.1.50") in ips
     assert ipaddress.ip_address("127.0.0.1") in ips
 
 
@@ -35,16 +35,16 @@ def test_python_ssl_loads_the_pair(tmp_path):
 
 
 def test_existing_cert_is_reused(tmp_path):
-    cert, _ = ensure_certificate(tmp_path, "192.168.0.75")
+    cert, _ = ensure_certificate(tmp_path, "192.168.1.50")
     before = cert.read_bytes()
-    ensure_certificate(tmp_path, "192.168.0.75")
+    ensure_certificate(tmp_path, "192.168.1.50")
     assert cert.read_bytes() == before
 
 
 def test_a_new_lan_address_regenerates_the_cert(tmp_path):
-    cert, _ = ensure_certificate(tmp_path, "192.168.0.75")
-    ensure_certificate(tmp_path, "192.168.0.80")
-    assert ipaddress.ip_address("192.168.0.80") in names(cert)[1]
+    cert, _ = ensure_certificate(tmp_path, "192.168.1.50")
+    ensure_certificate(tmp_path, "192.168.1.51")
+    assert ipaddress.ip_address("192.168.1.51") in names(cert)[1]
 
 
 def test_expiring_cert_is_replaced(tmp_path, monkeypatch):
