@@ -89,12 +89,12 @@ export function RunProgressScreen() {
                   <Panel flush title="Calls" meta={`${calls.length} in this run`} actions={<Link className="faint" to={`/calls?run=${run.id}`}>open in the calls list</Link>}>
                     <div style={{ maxHeight: active ? 480 : "none", overflow: "auto" }}>
                       {calls.length === 0 && <Empty title="No calls yet">{active ? "Calls appear here as they start." : "This run has no calls."}</Empty>}
-                      {calls.length > 0 && <table className="t">
+                      {calls.length > 0 && <table className={`t ${s.callsTable}`}>
                         <thead><tr><th>Verdict</th><th>Scenario</th><th>Persona</th><th className="num">Rep</th><th>Call</th><th className="num">Findings</th><th></th></tr></thead>
                         <tbody>{calls.map((c) => (
                           <tr key={c.id} tabIndex={c.status === "done" ? 0 : undefined} onClick={() => c.status === "done" && nav(`/calls/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && c.status === "done" && nav(`/calls/${c.id}`)}>
                             <td>{c.status === "done" && c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v={c.status === "failed" ? "failed" : c.status === "queued" ? "queued" : "running"} />}{c.invalidReason ? <div className="faint clamp2" title={c.invalidReason} style={{ fontSize: 10, maxWidth: 240, whiteSpace: "normal", marginTop: 2 }}>{c.invalidReason}</div> : null}</td>
-                            <td>{c.scenarioTitle}</td><td className="muted">{c.personaName}</td><td className="num mono">{c.rep}</td><td className="id">{c.id}</td>
+                            <td className={s.wide} title={c.scenarioTitle ?? undefined}>{c.scenarioTitle}</td><td className={`muted ${s.wide}`} title={c.personaName ?? undefined}>{c.personaName}</td><td className="num mono">{c.rep}</td><td className="id">{c.id}</td>
                             <td className="num mono">{c.status === "done" ? <>{c.findings}{c.openFindings ? <> <span className="tag mono" style={{ color: "var(--review)", borderColor: "var(--review)" }}>{c.openFindings} open</span></> : null}</> : ""}</td>
                             <td className="right">{c.status === "done" ? <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); nav(`/calls/${c.id}`); }}>open</Button> : c.status === "running" ? <Button size="sm" variant="ghost" onClick={() => watchCall(c)} aria-pressed={watched?.id === c.id}>{watched?.id === c.id ? "watching" : "watch"}</Button> : <span className="faint" style={{ fontSize: 11 }}>{c.status}</span>}</td>
                           </tr>
