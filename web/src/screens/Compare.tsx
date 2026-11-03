@@ -59,7 +59,7 @@ function CompareBody({ d }: { d: Compare }) {
   const fa: Frac = { pass: d.a.counts.pass, n: valid(d.a.counts) }, fb: Frac = { pass: d.b.counts.pass, n: valid(d.b.counts) };
   const note = headlineNote(fa, fb);
   const anyTurn = d.a.mode === "turn_based" || d.b.mode === "turn_based";
-  const pName = (id: string) => personas.data?.items.find((p) => p.id === id)?.name.split(" ").slice(0, 2).join(" ") ?? id;
+  const pName = (id: string) => personas.data?.items.find((p) => p.id === id)?.name ?? id;
   const sTitle = (id: string) => scenarios.data?.items.find((x) => x.id === id)?.title ?? id;
   const cellPersonas = [...new Set(d.cells.map((c) => c.personaId))];
   const cellScenarios = [...new Set(d.cells.map((c) => c.scenarioId))];
@@ -82,7 +82,7 @@ function CompareBody({ d }: { d: Compare }) {
           </Panel>
           <Panel flush title="By scenario × persona" meta="pass of valid reps, A → B, direction by rate">
             <div style={{ overflow: "auto" }}><table className={s.matrix}><thead><tr><th></th>{cellPersonas.map((p) => <th key={p} className={s.p}>{pName(p)}</th>)}</tr></thead>
-              <tbody>{cellScenarios.map((sc) => <tr key={sc}><td className={s.s}>{sTitle(sc)}</td>{cellPersonas.map((p) => { const c = d.cells.find((x) => x.scenarioId === sc && x.personaId === p); if (!c) return <td key={p} className="faint">–</td>; const dir = rateDirection(c.a, c.b); return <td key={p} title={`${pct(c.a.pass, c.a.n) ?? "n/a"}% → ${pct(c.b.pass, c.b.n) ?? "n/a"}%`}><span className="mono">{c.a.pass}/{c.a.n}→{c.b.pass}/{c.b.n}</span> {dir === "better" ? <span className="delta better">▲</span> : dir === "worse" ? <span className="delta worse">▼</span> : dir === null ? <span className="faint">n/a</span> : ""}</td>; })}</tr>)}</tbody></table></div>
+              <tbody>{cellScenarios.map((sc) => <tr key={sc}><td className={s.s}>{sTitle(sc)}</td>{cellPersonas.map((p) => { const c = d.cells.find((x) => x.scenarioId === sc && x.personaId === p); if (!c) return <td key={p} className="faint">–</td>; const dir = rateDirection(c.a, c.b); const pa2 = pct(c.a.pass, c.a.n), pb2 = pct(c.b.pass, c.b.n); return <td key={p} className={s.cmpCell} title={`${sTitle(sc)} with ${pName(p)}: ${c.a.pass} of ${c.a.n} valid reps passed in ${d.a.id}, ${c.b.pass} of ${c.b.n} in ${d.b.id}${dir === null ? ". One side has no valid reps, so there is no direction." : ""}`}><span className="mono">{c.a.pass}/{c.a.n} → {c.b.pass}/{c.b.n}</span>{dir === "better" ? <span className="delta better"> ▲</span> : dir === "worse" ? <span className="delta worse"> ▼</span> : null}{pa2 != null && pb2 != null && <small>{pa2}% → {pb2}%</small>}</td>; })}</tr>)}</tbody></table></div>
           </Panel>
           <Panel flush title="Headline">
             <table className="t"><tbody><tr><td>{d.a.id}</td><td className="num"><PassRate counts={d.a.counts} /></td></tr><tr><td>{d.b.id}</td><td className="num"><PassRate counts={d.b.counts} /></td></tr></tbody></table>

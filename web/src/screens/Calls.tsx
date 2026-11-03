@@ -42,16 +42,16 @@ export function CallsScreen() {
   const columns = useMemo(() => [
     col.display({ id: "sel", cell: (c) => <span style={{ color: "var(--ink-4)" }}>{c.row.index === sel ? "▸" : ""}</span>, size: 18 }),
     col.accessor("id", { header: "Call", cell: (c) => <span className="id">{c.getValue()}</span> }),
-    col.accessor("verdict", { header: "Verdict", cell: (c) => { const r = c.row.original; return <>{r.status !== "done" ? <VerdictBadge v={r.status as "running" | "queued" | "evaluating" | "failed"} /> : r.verdict ? <VerdictBadge v={r.verdict} /> : null}{r.humanVerdict && r.humanVerdict !== r.verdict ? <div className="faint" style={{ fontSize: 10 }}>human: {verdictLabel[r.humanVerdict]}</div> : null}{r.invalidReason ? <div className="faint" style={{ fontSize: 10, maxWidth: 220, whiteSpace: "normal" }}>{r.invalidReason}</div> : null}</>; } }),
-    col.accessor("scenarioTitle", { header: "Scenario", cell: (c) => c.getValue() ? <span>{c.getValue()}</span> : <span className="faint">unknown{c.row.original.mode === "upload" ? " (upload)" : ""}</span> }),
-    col.accessor("personaName", { header: "Persona", cell: (c) => c.getValue() ?? <span className="faint">unknown</span> }),
+    col.accessor("verdict", { header: "Verdict", cell: (c) => { const r = c.row.original; return <>{r.status !== "done" ? <VerdictBadge v={r.status as "running" | "queued" | "evaluating" | "failed"} /> : r.verdict ? <VerdictBadge v={r.verdict} /> : null}{r.humanVerdict && r.humanVerdict !== r.verdict ? <div className="faint" style={{ fontSize: 10 }}>human: {verdictLabel[r.humanVerdict]}</div> : null}{r.invalidReason ? <div className="faint clamp2" title={r.invalidReason} style={{ fontSize: 10, maxWidth: 240, whiteSpace: "normal", marginTop: 2 }}>{r.invalidReason}</div> : null}</>; } }),
+    col.accessor("scenarioTitle", { header: "Scenario", cell: (c) => c.getValue() ? <span title={c.getValue()!}>{c.getValue()}</span> : <span className="faint">unknown{c.row.original.mode === "upload" ? " (upload)" : ""}</span>, meta: { wide: true } }),
+    col.accessor("personaName", { header: "Persona", cell: (c) => c.getValue() ? <span title={c.getValue()!}>{c.getValue()}</span> : <span className="faint">unknown</span>, meta: { wide: true } }),
     col.accessor("mode", { header: "Mode", cell: (c) => <ModeBadge mode={c.getValue()} /> }),
-    col.accessor("profile", { header: "Profile", cell: (c) => <span className="mono">{c.getValue()} {isUntested(c.row.original, profiles.data?.items) && <Untested />}</span> }),
-    col.accessor("batchId", { header: "Run", cell: (c) => <span className="id">{c.getValue()} {c.row.original.rep ? <span className="faint">r{c.row.original.rep}</span> : null}</span> }),
-    col.accessor("durationS", { header: () => <span className="num">Dur</span>, cell: (c) => <span className="mono">{fmtClock(c.getValue())}</span>, meta: { num: true } }),
+    col.accessor("profile", { header: "Profile", cell: (c) => <span className="mono">{c.getValue()} {isUntested(c.row.original, profiles.data?.items) && <Untested />}</span>, meta: { narrowHide: true } }),
+    col.accessor("batchId", { header: "Run", cell: (c) => <span className="id">{c.getValue()} {c.row.original.rep ? <span className="faint">r{c.row.original.rep}</span> : null}</span>, meta: { narrowHide: true } }),
+    col.accessor("durationS", { header: () => <span className="num">Length</span>, cell: (c) => <span className="mono">{fmtClock(c.getValue())}</span>, meta: { num: true } }),
     col.accessor("replyP50S", { header: () => <span title="median bot reply latency">Reply p50</span>, cell: (c) => c.getValue() == null ? <span className="faint" title={c.row.original.timingIsReal ? "not measured" : "Turn-based call, timing not measured"}>n/a</span> : <span className="mono">{c.getValue()!.toFixed(2)} s</span>, meta: { num: true } }),
-    col.accessor("overlaps", { header: "Overlaps", cell: (c) => c.getValue() == null ? <span className="faint">n/a</span> : <span className="mono">{c.getValue()}</span>, meta: { num: true } }),
-    col.accessor("findings", { header: "Findings", cell: (c) => <span className="mono">{c.getValue()}{c.row.original.openFindings ? <> <span className="tag mono" style={{ color: "var(--review)" }}>{c.row.original.openFindings} open</span></> : null}</span>, meta: { num: true } }),
+    col.accessor("overlaps", { header: "Overlaps", cell: (c) => c.getValue() == null ? <span className="faint">n/a</span> : <span className="mono">{c.getValue()}</span>, meta: { num: true, narrowHide: true } }),
+    col.accessor("findings", { header: "Findings", cell: (c) => <span className="mono">{c.getValue()}{c.row.original.openFindings ? <> <span className="tag mono" style={{ color: "var(--review)", borderColor: "var(--review)" }} title={`${c.row.original.openFindings} findings still need a decision`}>{c.row.original.openFindings} open</span></> : null}</span>, meta: { num: true } }),
   ], [sel, profiles.data]);
   const table = useReactTable({ data: items, columns, state: { sorting }, onSortingChange: setSorting, getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel() });
   const rows = table.getRowModel().rows;
@@ -90,9 +90,9 @@ export function CallsScreen() {
               {() => rows.length === 0 ? (
                 <Empty title="No calls match these filters">{activeFilters ? <>Clear a filter (<kbd>Esc</kbd>), or </> : "Nothing has run yet. "}<a href="/runs/new" onClick={(e) => { e.preventDefault(); nav("/runs/new"); }}>launch a run</a>{q.scenario ? " for this scenario" : ""}.</Empty>
               ) : (
-                <table className="t">
-                  <thead>{table.getHeaderGroups().map((hg) => <tr key={hg.id}>{hg.headers.map((h) => <th key={h.id} className={(h.column.columnDef.meta as { num?: boolean } | undefined)?.num ? "num" : ""} onClick={h.column.getToggleSortingHandler()} style={{ cursor: h.column.getCanSort() ? "pointer" : undefined }}>{flexRender(h.column.columnDef.header, h.getContext())}{{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}</th>)}</tr>)}</thead>
-                  <tbody>{rows.map((r) => <tr key={r.id} data-row={r.index} tabIndex={0} className={r.index === sel ? "sel" : ""} onClick={() => open(r.original)} onFocus={() => setSel(r.index)} onKeyDown={(e) => e.key === "Enter" && open(r.original)}>{r.getVisibleCells().map((c) => <td key={c.id} className={(c.column.columnDef.meta as { num?: boolean } | undefined)?.num ? "num" : ""}>{flexRender(c.column.columnDef.cell, c.getContext())}</td>)}</tr>)}</tbody>
+                <table className={`t ${s.callsTable}`}>
+                  <thead>{table.getHeaderGroups().map((hg) => <tr key={hg.id}>{hg.headers.map((h) => <th key={h.id} className={cellClass(h.column.columnDef.meta)} onClick={h.column.getToggleSortingHandler()} style={{ cursor: h.column.getCanSort() ? "pointer" : undefined }}>{flexRender(h.column.columnDef.header, h.getContext())}{{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}</th>)}</tr>)}</thead>
+                  <tbody>{rows.map((r) => <tr key={r.id} data-row={r.index} tabIndex={0} className={r.index === sel ? "sel" : ""} onClick={() => open(r.original)} onFocus={() => setSel(r.index)} onKeyDown={(e) => e.key === "Enter" && open(r.original)}>{r.getVisibleCells().map((c) => <td key={c.id} className={cellClass(c.column.columnDef.meta)}>{flexRender(c.column.columnDef.cell, c.getContext())}</td>)}</tr>)}</tbody>
                 </table>
               )}
             </QueryState>
@@ -109,6 +109,9 @@ export function CallsScreen() {
     </Shell>
   );
 }
+
+type ColMeta = { num?: boolean; wide?: boolean; narrowHide?: boolean } | undefined;
+const cellClass = (m: unknown) => { const meta = m as ColMeta; return [meta?.num ? "num" : "", meta?.wide ? s.wide : "", meta?.narrowHide ? s.narrowHide : ""].filter(Boolean).join(" "); };
 
 function exportCsv(items: CallSummary[]) {
   const head = ["id", "verdict", "humanVerdict", "scenario", "persona", "mode", "profile", "run", "rep", "durationS", "replyP50S", "overlaps", "findings", "openFindings", "startedAt"];

@@ -145,7 +145,7 @@ function PersonaEditor({ id }: { id: string | undefined }) {
                 <Panel title="How this reads to the caller model"><div className={s.personaPrev}>{prompt.data?.prompt ?? (prompt.isError ? (prompt.error as Error).message : "…")}</div></Panel>
                 {!isNew && q.data && (
                   <Panel flush title="Recent calls as this persona" actions={<Link className="faint" to={`/calls?persona=${id}`}>all</Link>}>
-                    {q.data.recentCalls.length === 0 ? <Empty title="No calls yet" /> : <table className="t"><tbody>{q.data.recentCalls.map((c) => <tr key={c.id} tabIndex={0} onClick={() => nav(`/calls/${c.id}`)}><td className="id">{c.id}</td><td>{c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v="evaluating" />}</td><td><ModeBadge mode={c.mode} /></td></tr>)}</tbody></table>}
+                    {q.data.recentCalls.length === 0 ? <Empty title="No calls yet">Calls made as this persona land here.</Empty> : <table className={`t ${s.sideCalls}`}><tbody>{q.data.recentCalls.map((c) => <tr key={c.id} tabIndex={0} onClick={() => nav(`/calls/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/calls/${c.id}`)}><td className="id">{c.id}</td><td>{c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v="evaluating" />}</td><td className={s.ell} title={c.scenarioTitle ?? undefined}>{c.scenarioTitle}</td><td><ModeBadge mode={c.mode} /></td></tr>)}</tbody></table>}
                   </Panel>
                 )}
               </div>

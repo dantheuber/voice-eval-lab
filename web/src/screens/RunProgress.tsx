@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
-import { Button, ErrorBox, ModeBadge, Panel, RateLegend, Skeleton, Untested, VerdictBadge } from "@/components/ui";
+import { Button, Empty, ErrorBox, ModeBadge, Panel, RateLegend, Skeleton, Untested, VerdictBadge } from "@/components/ui";
 import { keys, useProfiles, useRun } from "@/api/queries";
 import { isUntested } from "@/lib/untested";
 import { endpoints } from "@/api/client";
@@ -78,27 +78,32 @@ export function RunProgressScreen() {
                   {!active && <Link className="btn" to={`/compare?a=${run.id}`}>Compare</Link>}
                 </div>
               </div>
-              <div className={s.progress}>
+              <div className={`${s.progress} ${active ? "" : s.progressDone}`}>
                 <div className="stack">
                   <Panel>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}><span><b>{run.done}</b> of {run.calls} done{run.running ? `, ${run.running} running` : ""}</span><span className="faint">{run.etaS != null && active ? `about ${fmtDuration(run.etaS)} left` : run.endedAt ? `finished ${fmtWhen(run.endedAt)}` : ""}</span></div>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6, gap: 12, flexWrap: "wrap" }}><span><b>{run.done}</b> of {run.calls} done{run.running ? `, ${run.running} running` : ""}</span><span className="faint">{run.etaS != null && active ? `about ${fmtDuration(run.etaS)} left` : run.endedAt ? `finished ${fmtWhen(run.endedAt)}` : ""}</span></div>
                     <div className={s.progBar} role="img" aria-label={`${run.done} of ${run.calls} calls done`}>{calls.map((c) => <i key={c.id} className={c.status === "running" || c.status === "evaluating" ? s.run : c.verdict === "pass" ? s.p : c.verdict === "fail" ? s.f : c.verdict === "needs_review" ? s.r : c.verdict === "invalid" ? s.i : ""} title={`${c.id} ${c.verdict ?? c.status}`} />)}</div>
                     <div style={{ marginTop: 8 }}><RateLegend counts={run.counts} /></div>
                     <div className="faint" style={{ marginTop: 8, fontSize: 11 }}>Pass rate so far <b>{v ? `${Math.round((100 * run.counts.pass) / v)}% (${ciText(run.counts.pass, v)}) of ${v} valid` : "n/a"}</b>.{active && v < 10 ? " With this few calls the interval is wide; wait for the run to finish before reading it." : ""}</div>
                   </Panel>
-                  <Panel flush title="Calls" actions={<Link className="faint" to={`/calls?run=${run.id}`}>open list</Link>}>
-                    <div style={{ maxHeight: 480, overflow: "auto" }}>
-                      {calls.map((c) => (
-                        <div key={c.id} className={s.callRow}>
-                          <span>{c.status === "done" && c.verdict ? <VerdictBadge v={c.verdict} label=" " title={c.verdict} /> : <VerdictBadge v={c.status === "failed" ? "failed" : c.status === "queued" ? "queued" : "running"} label=" " title={c.status} />}</span>
-                          <span>{c.scenarioTitle} <span className="muted">{c.personaName}</span> <span className="faint">rep {c.rep}</span><div className={s.id}>{c.id}{c.invalidReason ? ` · ${c.invalidReason}` : ""}</div></span>
-                          <span>{c.status === "done" ? <Button size="sm" variant="ghost" onClick={() => nav(`/calls/${c.id}`)}>open</Button> : c.status === "running" ? <Button size="sm" variant="ghost" onClick={() => watchCall(c)} aria-pressed={watched?.id === c.id}>{watched?.id === c.id ? "watching" : "watch"}</Button> : <span className="faint" style={{ fontSize: 11 }}>{c.status}</span>}</span>
-                        </div>
-                      ))}
+                  <Panel flush title="Calls" meta={`${calls.length} in this run`} actions={<Link className="faint" to={`/calls?run=${run.id}`}>open in the calls list</Link>}>
+                    <div style={{ maxHeight: active ? 480 : "none", overflow: "auto" }}>
+                      {calls.length === 0 && <Empty title="No calls yet">{active ? "Calls appear here as they start." : "This run has no calls."}</Empty>}
+                      {calls.length > 0 && <table className="t">
+                        <thead><tr><th>Verdict</th><th>Scenario</th><th>Persona</th><th className="num">Rep</th><th>Call</th><th className="num">Findings</th><th></th></tr></thead>
+                        <tbody>{calls.map((c) => (
+                          <tr key={c.id} tabIndex={c.status === "done" ? 0 : undefined} onClick={() => c.status === "done" && nav(`/calls/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && c.status === "done" && nav(`/calls/${c.id}`)}>
+                            <td>{c.status === "done" && c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v={c.status === "failed" ? "failed" : c.status === "queued" ? "queued" : "running"} />}{c.invalidReason ? <div className="faint clamp2" title={c.invalidReason} style={{ fontSize: 10, maxWidth: 240, whiteSpace: "normal", marginTop: 2 }}>{c.invalidReason}</div> : null}</td>
+                            <td>{c.scenarioTitle}</td><td className="muted">{c.personaName}</td><td className="num mono">{c.rep}</td><td className="id">{c.id}</td>
+                            <td className="num mono">{c.status === "done" ? <>{c.findings}{c.openFindings ? <> <span className="tag mono" style={{ color: "var(--review)", borderColor: "var(--review)" }}>{c.openFindings} open</span></> : null}</> : ""}</td>
+                            <td className="right">{c.status === "done" ? <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); nav(`/calls/${c.id}`); }}>open</Button> : c.status === "running" ? <Button size="sm" variant="ghost" onClick={() => watchCall(c)} aria-pressed={watched?.id === c.id}>{watched?.id === c.id ? "watching" : "watch"}</Button> : <span className="faint" style={{ fontSize: 11 }}>{c.status}</span>}</td>
+                          </tr>
+                        ))}</tbody>
+                      </table>}
                     </div>
                   </Panel>
                 </div>
-                <div className="panel flush" style={{ display: "flex", flexDirection: "column", minHeight: 520 }}>
+                {active && <div className="panel flush" style={{ display: "flex", flexDirection: "column", minHeight: 520 }}>
                   <div className="ph"><h2>Live call</h2>{watched ? <><span className="mono faint">{watched.id}</span><span className="tag">{watched.scenarioTitle}</span><span className="tag">{watched.personaName}</span></> : null}<span className="grow" /><span className="mono faint">{watched ? fmtClock(liveT) : ""}</span></div>
                   <div className={s.liveTurns} ref={liveRef} style={{ flex: 1, overflow: "auto" }}>
                     {!watched && <div className="empty"><b>{active ? "Waiting for the next call to start" : "Run finished"}</b>{active ? "The transcript streams here as the caller and bot speak." : "Open a call to review it."}</div>}
@@ -106,7 +111,7 @@ export function RunProgressScreen() {
                     {lines.map((l) => l.kind === "event" ? <div key={l.id} className={`${s.lt} ${s.sys}`}><b>event</b><span>{l.text}</span></div> : <div key={l.id} className={`${s.lt} ${s[l.speaker!]}`}><b>{l.speaker}</b><span className={l.kind === "partial" ? "cursor" : ""}>{l.text}</span></div>)}
                   </div>
                   {running.filter((c) => c.id !== watched?.id).map((c) => <div key={c.id} className="ph" style={{ borderTop: "1px solid var(--line-1)", borderBottom: 0 }}><span className="faint">Also running: <span className="mono">{c.id}</span> {c.scenarioTitle}, {c.personaName}</span><span className="grow" /><Button size="sm" variant="ghost" onClick={() => watchCall(c)}>Watch instead</Button></div>)}
-                </div>
+                </div>}
               </div>
             </>
           );

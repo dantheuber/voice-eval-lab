@@ -23,7 +23,7 @@
 .launch { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: var(--s-3); align-items: start; }
 .matrix { border-collapse: separate; border-spacing: 0; font-size: var(--fs-1); width: 100%; }
 .matrix th { font-weight: 500; color: var(--ink-2); padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line-1); }
-.matrix th.p { text-align: center; vertical-align: bottom; width: 62px; max-width: 62px; padding: 6px 1px; }
+.matrix th.p { text-align: center; vertical-align: bottom; width: 72px; max-width: 92px; padding: 6px 2px; overflow-wrap: anywhere; }
 .matrix th.p label { font-size: 10px; line-height: 1.2; }
 .matrix th.p small { display: block; color: var(--ink-3); font-weight: 400; }
 .matrix td { padding: 4px 2px; border-bottom: 1px solid var(--line-1); text-align: center; }
@@ -32,9 +32,19 @@
 .matrix input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .matrix .hist { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); display: block; }
 .matrix .hist.low { color: var(--review); }
+.matrix .hist.none { color: var(--ink-4); }
+.cmpCell small { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); }
+.cmpCell { white-space: nowrap; padding: 6px 4px; vertical-align: top; }
+.callsTable td { white-space: nowrap; }
+.sideCalls td { white-space: nowrap; }
+.sideCalls td.ell, td.ell { max-width: 150px; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.callsTable td.wide { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1180px) { .callsTable .narrowHide { display: none; } .callsTable td.wide { max-width: 180px; } }
 .summaryL { display: grid; grid-template-columns: auto 1fr; gap: 6px var(--s-3); font-size: var(--fs-1); }
 .summaryL dt { color: var(--ink-3); } .summaryL dd { margin: 0; font-variant-numeric: tabular-nums; }
-.progress { display: grid; grid-template-columns: 300px minmax(0,1fr); gap: var(--s-3); align-items: start; }
+.progress { display: grid; grid-template-columns: minmax(360px, 2fr) minmax(0, 3fr); gap: var(--s-3); align-items: start; }
+.progress.progressDone { grid-template-columns: minmax(0, 1fr); }
+.progressDone > :global(.stack) { max-width: 1280px; }
 .progBar { height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; display: flex; gap: 1px; }
 .progBar i { height: 100%; display: block; flex: 1; }
 .progBar .p { background: var(--pass); } .progBar .f { background: var(--fail); } .progBar .r { background: var(--review); } .progBar .i { background: var(--invalid); } .progBar .run { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
@@ -116,6 +126,7 @@
   .ovGrid .runs { grid-column: span 2; }
   .ovBottom { grid-template-columns: 1fr 1fr; }
   .launch, .builder, .progress, .cmpBody { grid-template-columns: 1fr; }
+  .progress { grid-template-columns: 1fr; }
 }
 @media (max-width: 1180px) {
   .list { grid-template-columns: minmax(0,1fr) minmax(170px, max-content) minmax(150px, max-content); }

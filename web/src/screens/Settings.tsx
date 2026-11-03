@@ -77,7 +77,7 @@ export function SettingsScreen() {
               <div className="form-row" style={{ marginTop: 12 }}>
                 <Field label="AWS region" help="set AWS_PROFILE or AWS keys in the environment before starting"><input className="in" value={aws.data?.region ?? ""} disabled /></Field>
                 <Field label="Credentials" help={aws.data?.problem ?? undefined}><HealthDot state={aws.data?.credentials === "found" ? "ok" : "down"}>{aws.data?.credentials === "found" ? "found" : "not found"}</HealthDot></Field>
-                <Field label={<>&nbsp;</>}><Button disabled={aws.data?.credentials !== "found" || awsTest.isPending} onClick={() => awsTest.mutate()}>Test connection</Button>{awsTest.data && <span className="help" style={{ color: awsTest.data.ok ? "var(--pass)" : "var(--fail)" }}>{awsTest.data.message}</span>}</Field>
+                <Field label="Connection" help={aws.data?.credentials !== "found" ? "Needs credentials first." : "Makes one request to Bedrock."}><div><Button disabled={aws.data?.credentials !== "found" || awsTest.isPending} onClick={() => awsTest.mutate()}>Test connection</Button></div>{awsTest.data && <span className="help" style={{ color: awsTest.data.ok ? "var(--pass)" : "var(--fail)" }}>{awsTest.data.message}</span>}</Field>
               </div>
             </Panel>
             <Panel title="Evaluation thresholds" actions={<Button size="sm" variant="primary" disabled={!th || saveTh.isPending} onClick={() => saveTh.mutate()}>Save</Button>}>
@@ -102,10 +102,10 @@ export function SettingsScreen() {
               </QueryState>
             </Panel>
             <Panel flush title="GPU">
-              {system.data ? <dl className="kvs" style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", padding: "8px 12px", fontSize: 12 }}><dt className="faint">device</dt><dd className="mono" style={{ margin: 0 }}>{system.data.gpu.device}</dd><dt className="faint">memory in use</dt><dd className="mono" style={{ margin: 0 }}>{system.data.gpu.memoryUsedGb} of {system.data.gpu.memoryTotalGb} GB</dd><dt className="faint">servers</dt><dd className="mono" style={{ margin: 0 }}>{system.data.servers.map((x) => `${x.kind}:${x.port}`).join(", ")}</dd><dt className="faint">Ollama</dt><dd style={{ margin: 0 }} className="faint">not managed here</dd></dl> : <div style={{ padding: 12 }}><Skeleton rows={3} /></div>}
+              {system.data ? <dl className="kv"><dt>device</dt><dd>{system.data.gpu.device}</dd><dt>memory in use</dt><dd>{system.data.gpu.memoryUsedGb} of {system.data.gpu.memoryTotalGb} GB</dd><dt>servers</dt><dd>{system.data.servers.map((x) => `${x.kind}:${x.port}`).join(", ")}</dd><dt>Ollama</dt><dd className="plain">not managed here</dd></dl> : <div style={{ padding: 12 }}><Skeleton rows={3} /></div>}
             </Panel>
             <Panel flush title="Access">
-              {system.data && <dl style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", padding: "8px 12px", fontSize: 12, margin: 0 }}><dt className="faint">local</dt><dd className="mono" style={{ margin: 0 }}>{system.data.urls.local}</dd><dt className="faint">LAN</dt><dd className="mono" style={{ margin: 0 }}>{system.data.urls.lan}</dd><dt className="faint">cert</dt><dd className="mono" style={{ margin: 0 }}>{system.data.cert}, accept once per browser</dd></dl>}
+              {system.data && <dl className="kv"><dt>local</dt><dd>{system.data.urls.local}</dd><dt>LAN</dt><dd>{system.data.urls.lan}</dd><dt>cert</dt><dd>{system.data.cert}<span className="plain faint">, accept once per browser</span></dd></dl>}
             </Panel>
           </div>
         </div>

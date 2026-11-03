@@ -77,7 +77,8 @@ function OverviewBody({ d }: { d: Overview }) {
             ))}
           </Panel>
           <Panel flush className={s.runs} title="Recent runs" actions={<Link to="/runs/new" className="btn sm">New run</Link>}>
-            <div style={{ overflow: "auto" }}>
+            {d.recentRuns.length === 0 && <Empty title="No runs yet"><Link to="/runs/new">Launch a run</Link> to fill this in.</Empty>}
+            {d.recentRuns.length > 0 && <div style={{ overflow: "auto" }}>
               <table className="t">
                 <thead><tr><th>Run</th><th>When</th><th>Profile</th><th>Mode</th><th>What</th><th className="num">Calls</th><th style={{ width: 170 }}>Outcome</th><th className="num">Pass</th></tr></thead>
                 <tbody>{d.recentRuns.map((r) => (
@@ -86,13 +87,13 @@ function OverviewBody({ d }: { d: Overview }) {
                     <td className="num">{r.calls}</td><td><RateBar counts={r.counts} /></td><td className="num"><PassRate counts={r.counts} /></td>
                   </tr>))}</tbody>
               </table>
-            </div>
+            </div>}
           </Panel>
         </div>
       )}
       <div className={s.ovBottom}>
         <Panel flush title="Pass rate by scenario" meta={`7 days, ${d.profile}`}>
-          {d.scenarioRates.length === 0 && <Empty title="No data yet" />}
+          {d.scenarioRates.length === 0 && <Empty title="No calls in this window">Pass rates by scenario appear once calls finish on this profile.</Empty>}
           {d.scenarioRates.map((r) => { const vv = valid(r.counts); return (
             <Link key={r.scenarioId} className={s.rateRow} to={`/calls?scenario=${r.scenarioId}`} title={r.scenarioTitle}>
               <span><span className="muted">{r.scenarioTitle}</span></span><RateBar counts={r.counts} />
@@ -104,7 +105,7 @@ function OverviewBody({ d }: { d: Overview }) {
           <table className="t"><tbody>{d.health.map((h) => <tr key={h.role}><td style={{ width: 130 }}>{h.name}</td><td className="mono faint">{h.model}</td><td className="right"><HealthDot state={h.state}>{h.detail}{h.state === "loading" && h.elapsedS != null ? `, ${h.elapsedS} s` : ""}</HealthDot></td></tr>)}</tbody></table>
         </Panel>
         <Panel flush title="Most common open findings" meta="last 7 days">
-          <table className="t"><tbody>{d.topOpenFindings.map((f) => <tr key={f.title}><td>{f.title}</td><td className="faint">{evalName(f.evaluator)}{isAdvisoryEvaluator(f.evaluator) ? ", advisory" : ""}</td><td className="num">{f.count}</td></tr>)}</tbody></table>
+          {d.topOpenFindings.length === 0 ? <Empty title="No open findings">Findings waiting on a decision are counted here by title.</Empty> : <table className="t"><tbody>{d.topOpenFindings.map((f) => <tr key={f.title}><td>{f.title}</td><td className="faint">{evalName(f.evaluator)}{isAdvisoryEvaluator(f.evaluator) ? ", advisory" : ""}</td><td className="num">{f.count}</td></tr>)}</tbody></table>}
         </Panel>
       </div>
     </>
