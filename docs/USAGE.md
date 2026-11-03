@@ -1,6 +1,6 @@
 # Using voice-eval-lab
 
-A walkthrough for someone testing the bot. You need a browser and, for mic calls, headphones. The bot under test is Ada, the support agent for Fernhill Internet, a made-up company that sells email hosting, website hosting, domains, and SSL.
+A walkthrough for someone testing the bot. You need a browser and, for mic calls, headphones. The bot under test is Fern, the support agent for Fernhill Internet, a made-up company that sells email hosting, website hosting, domains, and SSL.
 
 Press `?` on any screen to see its keyboard shortcuts. `Ctrl K` jumps to anything.
 
@@ -54,6 +54,8 @@ If `run.sh` says a port is taken, it tells you which process holds it. It won't 
 
 A run is a batch of bot-to-bot calls. Each pairs a scenario (what the caller wants) with a persona (who is calling).
 
+![Run launcher: tick scenario and persona pairs, pick repetitions, profile, and line conditions, then launch](images/launcher.webp)
+
 1. Open **Run launcher** (`g l`).
 2. Tick cells in the grid. Each row is a scenario and each column a persona. Cells show the last 7 days' pass rate on the selected profile.
 3. Set the options:
@@ -71,6 +73,8 @@ Evaluation starts by itself when each call ends. On 18 real calls it took 34 to 
 A call ends as `pass`, `fail`, `needs_review`, or `invalid`. See [How evals work](../README.md#how-evals-work). An `invalid` call is a test problem: the caller never reached the scenario, so it says nothing about the bot and stays out of pass rates.
 
 ## Review a call with the keyboard
+
+![Call review: verdict and reason, waveform with numbered findings, transcript, and findings list](images/review.webp)
 
 Press `g r` from anywhere to open the next call needing review. The review screen has the waveform, the transcript, and the findings list. You can do all of it without the mouse:
 
@@ -102,6 +106,8 @@ Two things to keep in mind:
 
 ## Talk to the bot with headphones
 
+![Talk to the bot: mic check, a scenario to play, and an optional persona](images/talk.webp)
+
 1. Open **Talk to the bot** (`g t`), on this machine or through the HTTPS address. Allow the mic when the browser asks.
 2. Put on headphones. On speakers the bot may hear itself. Echo handling exists, but it has only been tested on synthetic audio, not in a real room.
 3. Under **Before you call**, pick the mic and speak. The level bars should reach the middle at a normal voice.
@@ -121,6 +127,8 @@ When the bot hangs up the screen moves on by itself, and closing the tab ends th
 
 A persona is who the caller bot pretends to be. Open **Personas**, then choose to create one, or open `/personas/new`.
 
+![Persona editor: who they are, voice, line conditions, and how it reads to the caller model](images/persona-editor.webp)
+
 1. **Who they are.** Name, age, temperament, and a one-line summary for lists.
 2. **Speaking style.** This goes into the caller LLM's instructions word for word, so write instructions: "Short sentences. Trails off when confused." Not a biography.
 3. **Scales.** Patience, verbosity, interruption tendency, and tech savviness, each 1 to 5.
@@ -133,6 +141,8 @@ Press **Save**. Seeded personas come from `seeds/personas/*.yaml` if you'd rathe
 ## Write a scenario
 
 A scenario is the issue a persona calls about. Open **Scenarios**, then choose to create one, or open `/scenarios/new`. The seeded `seeds/scenarios/double_charge_refund.yaml` is a good model to copy.
+
+![Scenario editor: the issue, the caller's fact sheet, beats, and rules](images/scenario-editor.webp)
 
 **Draft with AI** turns a plain description into a full draft for you to edit. It uses the judge LLM, and it marks what it guessed.
 
@@ -153,6 +163,8 @@ Then press **Dry run (text only)**. It plays the scenario as text with no audio 
 
 You can evaluate a call recorded somewhere else. Open **Upload**.
 
+![Upload: drop a recording and add what you know, and the panel shows which checks it unlocks](images/upload.webp)
+
 1. Choose a `.wav`, `.flac`, `.mp3`, or `.ogg` file, then press **Upload and probe**. Files can be up to 2 GiB and 2 hours.
 2. If the file is stereo, say which channel is the caller. You can listen to the first 10 seconds to check. A mono file gets split by energy, which is a guess and can put words on the wrong side. Reply latency, overlap, and barge-in checks are skipped, since they need to know who spoke.
 3. Add what you know. Each field unlocks more checks:
@@ -166,6 +178,8 @@ Read the summary's "Not checked" line on the review screen. An uploaded call is 
 ## Compare two runs
 
 Use this to see what a change did, such as one batch on two model profiles or two bot versions.
+
+![Compare runs: headline pass rates, per-rule differences, other measures, and the scenario by persona grid](images/compare.webp)
 
 1. Run the same scenarios and personas twice, and give each run a label.
 2. Open **Compare**, then pick **Run A** and **Run B**. You can also press **Compare** on a finished run's page.

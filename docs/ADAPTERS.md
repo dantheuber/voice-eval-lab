@@ -51,6 +51,8 @@ Under `roles`, `type` picks the adapter and every other key goes to its construc
 
 ## Swap one role without writing code
 
+![Models and settings: each role's adapter and status, model servers, and the Bedrock section](images/settings.webp)
+
 Either edit the YAML, or use the settings screen, which lists every adapter any profile configures for that role. The screen rewrites the active profile's YAML, so commit or discard that change on purpose. It refuses while a run is in progress.
 
 To use any OpenAI-compatible server for the support LLM, change one line. This is an example shape, not a tested setup:

@@ -2,6 +2,8 @@
 
 voice-eval-lab phones a voice support bot for a mock internet company, using either a scripted caller bot or your own microphone. After each call it evaluates the recording and reports what the bot got right and wrong, with every model running on your own machine.
 
+![Call review: the verdict and its reason up front, a stereo waveform with numbered findings, the transcript with intended versus heard text, and the findings list](docs/images/review.webp)
+
 ## Quick start
 
 ```bash
@@ -32,6 +34,13 @@ Then open <http://127.0.0.1:18080>.
 | Build scenarios | Scenarios, `/scenarios` | Fact sheet, ordered beats, rules, and expected database changes. Has an LLM draft and a text-only dry run |
 | Compare two runs | Compare, `/compare` | Per-criterion and per-measure differences |
 | Swap a model or provider | Models and settings, `/settings`, or a YAML profile | See [docs/ADAPTERS.md](docs/ADAPTERS.md) |
+
+| | |
+| --- | --- |
+| ![Calls list with verdicts, latency, and open findings](docs/images/calls.webp) | ![Run launcher with a scenario by persona grid and recent pass rates](docs/images/launcher.webp) |
+| Every call with its verdict, length, reply latency, and open findings | Pick scenario and persona pairs and launch a batch |
+| ![Scenarios list with tags, rules, and pass rates](docs/images/scenarios.webp) | ![Compare two runs by rubric rule and by measure](docs/images/compare.webp) |
+| Scenarios with their rules and pass rates, with 95% intervals | Two runs side by side, rule by rule, with a warning when the gap is within noise |
 
 ## The stack
 
