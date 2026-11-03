@@ -37,11 +37,10 @@
 .cmpCell { white-space: nowrap; padding: 6px 4px; vertical-align: top; }
 .callsTable td { white-space: nowrap; }
 .sideCalls { table-layout: fixed; }
-.sideCalls td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sideCalls td:nth-child(1) { width: 118px; }
-.sideCalls td:nth-child(2) { width: 112px; }
-.sideCalls td:nth-child(4) { width: 64px; padding-left: 4px; }
-.sideCalls td.ell, .callsTable td.ell { color: var(--ink-2); }
+.sideCalls td { white-space: nowrap; overflow: hidden; vertical-align: top; }
+.sideCalls td:last-child { width: 124px; }
+.sideCalls .id { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--ink-1); }
+.sideCalls .ell { overflow: hidden; text-overflow: ellipsis; color: var(--ink-3); font-size: var(--fs-0); margin-top: 2px; }
 .callsTable td.wide { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1180px) { .callsTable .narrowHide { display: none; } .callsTable td.wide { max-width: 180px; } }
 .summaryL { display: grid; grid-template-columns: auto 1fr; gap: 6px var(--s-3); font-size: var(--fs-1); }

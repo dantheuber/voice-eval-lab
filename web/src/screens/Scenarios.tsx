@@ -233,7 +233,7 @@ function ScenarioEditor({ id }: { id: string | undefined }) {
                 </Panel>
                 {!isNew && q.data && (
                   <Panel flush title="Recent calls" actions={<Link className="faint" to={`/calls?scenario=${id}`}>all</Link>}>
-                    {q.data.recentCalls.length === 0 ? <Empty title="No calls yet">Calls that use this scenario land here.</Empty> : <table className={`t ${s.sideCalls}`}><tbody>{q.data.recentCalls.map((c) => <tr key={c.id} tabIndex={0} onClick={() => nav(`/calls/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/calls/${c.id}`)}><td className="id">{c.id}</td><td>{c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v="evaluating" />}</td><td className={s.ell} title={c.personaName ?? undefined}>{c.personaName}</td><td><ModeBadge mode={c.mode} /></td></tr>)}</tbody></table>}
+                    {q.data.recentCalls.length === 0 ? <Empty title="No calls yet">Calls that use this scenario land here.</Empty> : <table className={`t ${s.sideCalls}`}><tbody>{q.data.recentCalls.map((c) => <tr key={c.id} tabIndex={0} onClick={() => nav(`/calls/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && nav(`/calls/${c.id}`)}><td><div className="id">{c.id}</div><div className={s.ell} title={c.personaName ?? undefined}>{c.personaName ?? "unknown persona"}</div></td><td className="right">{c.verdict ? <VerdictBadge v={c.verdict} /> : <VerdictBadge v="evaluating" />}<div style={{ marginTop: 3 }}><ModeBadge mode={c.mode} /></div></td></tr>)}</tbody></table>}
                   </Panel>
                 )}
               </div>
