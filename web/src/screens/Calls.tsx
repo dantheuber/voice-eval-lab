@@ -47,7 +47,7 @@ export function CallsScreen() {
     col.accessor("personaName", { header: "Persona", cell: (c) => c.getValue() ? <span title={c.getValue()!}>{c.getValue()}</span> : <span className="faint">unknown</span>, meta: { wide: true } }),
     col.accessor("mode", { header: "Mode", cell: (c) => <ModeBadge mode={c.getValue()} /> }),
     col.accessor("profile", { header: "Profile", cell: (c) => <span className="mono">{c.getValue()} {isUntested(c.row.original, profiles.data?.items) && <Untested />}</span>, meta: { narrowHide: true } }),
-    col.accessor("batchId", { header: "Run", cell: (c) => <span className="id">{c.getValue()} {c.row.original.rep ? <span className="faint">r{c.row.original.rep}</span> : null}</span>, meta: { narrowHide: true } }),
+    col.accessor("batchId", { header: "Run", cell: (c) => <span className="id">{c.getValue()} {c.row.original.rep ? <span className="faint">r{c.row.original.rep}</span> : null}</span>, meta: { narrowHide: true, midHide: true } }),
     col.accessor("durationS", { header: () => <span className="num">Length</span>, cell: (c) => <span className="mono">{fmtClock(c.getValue())}</span>, meta: { num: true } }),
     col.accessor("replyP50S", { header: () => <span title="median bot reply latency">Reply p50</span>, cell: (c) => c.getValue() == null ? <span className="faint" title={c.row.original.timingIsReal ? "not measured" : "Turn-based call, timing not measured"}>n/a</span> : <span className="mono">{c.getValue()!.toFixed(2)} s</span>, meta: { num: true } }),
     col.accessor("overlaps", { header: "Overlaps", cell: (c) => c.getValue() == null ? <span className="faint">n/a</span> : <span className="mono">{c.getValue()}</span>, meta: { num: true, narrowHide: true } }),
@@ -110,8 +110,8 @@ export function CallsScreen() {
   );
 }
 
-type ColMeta = { num?: boolean; wide?: boolean; narrowHide?: boolean } | undefined;
-const cellClass = (m: unknown) => { const meta = m as ColMeta; return [meta?.num ? "num" : "", meta?.wide ? s.wide : "", meta?.narrowHide ? s.narrowHide : ""].filter(Boolean).join(" "); };
+type ColMeta = { num?: boolean; wide?: boolean; narrowHide?: boolean; midHide?: boolean } | undefined;
+const cellClass = (m: unknown) => { const meta = m as ColMeta; return [meta?.num ? "num" : "", meta?.wide ? s.wide : "", meta?.narrowHide ? s.narrowHide : "", meta?.midHide ? s.midHide : ""].filter(Boolean).join(" "); };
 
 function exportCsv(items: CallSummary[]) {
   const head = ["id", "verdict", "humanVerdict", "scenario", "persona", "mode", "profile", "run", "rep", "durationS", "replyP50S", "overlaps", "findings", "openFindings", "startedAt"];
