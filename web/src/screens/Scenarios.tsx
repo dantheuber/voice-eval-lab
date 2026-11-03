@@ -7,6 +7,7 @@ import { keys, useCustomers, useInvalidate, usePersonas, useScenario, useScenari
 import { endpoints } from "@/api/client";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import { toast } from "@/store/toast";
+import { usageLine } from "@/lib/format";
 import { ApiError } from "@/api/transport";
 import type { Beat, Rule, Scenario, ScenarioDraft, ScenarioInput, StateExpectation } from "@/api/types";
 import s from "./screens.module.css";
@@ -19,14 +20,19 @@ export function ScenariosScreen() {
         <div className="page-head"><div><h1>Scenarios</h1><div className="page-sub">What the caller is calling about, the facts it may use, the beats it must hit, and how the bot is judged.</div></div></div>
         <Panel flush>
           <QueryState q={q} what="scenarios" skeleton={<div style={{ padding: 12 }}><Skeleton rows={6} /></div>}>
-            {(d) => d.items.length === 0 ? <Empty title="No scenarios yet"><Link to="/scenarios/new">Draft one with AI</Link> or seed from <span className="mono">seeds/scenarios</span>.</Empty> : d.items.map((sc) => (
-              <Link key={sc.id} to={`/scenarios/${sc.id}`} className={s.listCard}>
-                <span><b>{sc.title}</b><small>{sc.description || sc.goal}</small></span>
-                <span className="faint" style={{ fontSize: 11 }}>{sc.tags.join(", ")}<small>{sc.must.length} must, {sc.mustNot.length} must not, {sc.beats.length} beats</small></span>
-                <span style={{ fontSize: 12 }}>{sc.usage.calls ? <PassRate counts={sc.usage.counts} /> : <span className="faint">no calls</span>}<small>{sc.usage.calls} calls, v{sc.version}</small></span>
-                <span className="faint mono" style={{ fontSize: 10 }}>{sc.id}</span>
-              </Link>
-            ))}
+            {(d) => d.items.length === 0 ? <Empty title="No scenarios yet"><Link to="/scenarios/new">Draft one with AI</Link> or seed from <span className="mono">seeds/scenarios</span>.</Empty> : (
+              <div className={s.list} role="table" aria-label="Scenarios">
+                <div className={s.listHead} role="row" aria-hidden="true"><span>Scenario</span><span className={s.mid}>Tags and rules</span><span className={s.num} title="Pass rate of valid calls with the 95% interval">Pass rate</span><span className={s.id}>Id</span></div>
+                {d.items.map((sc) => (
+                  <Link key={sc.id} to={`/scenarios/${sc.id}`} className={s.listRow} role="row" title={sc.id}>
+                    <span><b>{sc.title}</b><small className={s.desc} title={sc.description || sc.goal}>{sc.description || sc.goal}</small></span>
+                    <span className={s.mid}><span className={s.tags}>{sc.tags.map((t) => <span key={t}>{t}</span>)}</span><small>{sc.must.length} must, {sc.mustNot.length} must not, {sc.beats.length} beats</small></span>
+                    <span className={s.num}>{sc.usage.calls ? <PassRate counts={sc.usage.counts} /> : <span className="faint">no calls yet</span>}<small>{usageLine(sc.usage)}, v{sc.version}</small></span>
+                    <span className={s.id}>{sc.id}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
           </QueryState>
         </Panel>
       </div>

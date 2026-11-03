@@ -86,9 +86,29 @@
 .serverRow { display: flex; gap: 8px; align-items: center; padding: 7px 12px; border-top: 1px solid var(--line-1); font-size: 12px; }
 .serverRow .m { font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.listCard { display: grid; grid-template-columns: minmax(0,1fr) 150px 110px auto; gap: var(--s-3); align-items: center; padding: 8px var(--s-3); border-top: 1px solid var(--line-1); color: inherit; text-decoration: none; }
-.listCard:hover { background: var(--bg-2); text-decoration: none; }
-.listCard small { display: block; color: var(--ink-3); font-size: var(--fs-0); }
+/* Scenario and persona lists. One grid for the whole list, so every row shares the same column tracks;
+   rows are subgrids and the content-sized columns line up from the first row to the last. */
+.list { display: grid; grid-template-columns: minmax(0,1fr) minmax(170px, max-content) minmax(150px, max-content) max-content; }
+.listHead, .listRow { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; column-gap: var(--s-5); align-items: center; padding: 10px var(--s-3); }
+.listHead { font-size: var(--fs-0); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; padding: 6px var(--s-3); border-bottom: 1px solid var(--line-1); }
+.listHead > span:first-child { padding-left: 0; }
+.listRow { border-top: 1px solid var(--line-1); color: inherit; text-decoration: none; }
+.listRow:first-of-type { border-top: 0; }
+.listRow:hover { background: var(--bg-2); text-decoration: none; }
+.listRow:focus-visible { outline-offset: -2px; }
+.listRow b { font-size: var(--fs-2); font-weight: 600; }
+.listRow small { display: block; color: var(--ink-3); font-size: var(--fs-0); margin-top: 2px; }
+.listRow .desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.listRow .mid { font-size: var(--fs-1); color: var(--ink-2); }
+.listRow .tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.listRow .tags span { font-size: var(--fs-0); color: var(--ink-2); background: var(--bg-3); border-radius: var(--r-1); padding: 0 5px; line-height: 16px; white-space: nowrap; }
+.listRow .num, .listHead .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.listRow .num :global(.ci) { font-variant-numeric: tabular-nums; }
+.listRow .id { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--ink-3); text-align: right; white-space: nowrap; }
+.listHead .id { text-align: right; }
+@supports not (grid-template-columns: subgrid) {
+  .listHead, .listRow { grid-template-columns: minmax(0,1fr) 190px 160px 230px; }
+}
 
 @media (max-width: 1180px) {
   .ovGrid { grid-template-columns: 1fr 1fr; }
@@ -97,9 +117,15 @@
   .ovBottom { grid-template-columns: 1fr 1fr; }
   .launch, .builder, .progress, .cmpBody { grid-template-columns: 1fr; }
 }
+@media (max-width: 1180px) {
+  .list { grid-template-columns: minmax(0,1fr) minmax(170px, max-content) minmax(150px, max-content); }
+  .listHead > .id, .listRow > .id { display: none; }
+  @supports not (grid-template-columns: subgrid) { .listHead, .listRow { grid-template-columns: minmax(0,1fr) 190px 160px; } }
+}
 @media (max-width: 900px) {
   .ovGrid, .ovBottom, .cmp { grid-template-columns: 1fr; }
   .ovGrid .queue, .ovGrid .runs { grid-column: auto; }
-  .listCard { grid-template-columns: 1fr auto; }
-  .listCard > :nth-child(2), .listCard > :nth-child(3) { display: none; }
+  .list { grid-template-columns: minmax(0,1fr) max-content; }
+  .listHead > .mid, .listRow > .mid { display: none; }
+  @supports not (grid-template-columns: subgrid) { .listHead, .listRow { grid-template-columns: minmax(0,1fr) 150px; } }
 }

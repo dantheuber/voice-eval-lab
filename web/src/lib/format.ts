@@ -63,6 +63,12 @@ export function interruptionRate(scale: number): number {
   return (Math.min(5, Math.max(1, scale)) - 1) / 4;
 }
 
+/** "16 calls, 1 invalid": how many calls a scenario or persona has been used in, and how many of those do not count. */
+export function usageLine(u: { calls: number; counts: { invalid: number } }): string {
+  const calls = `${u.calls} call${u.calls === 1 ? "" : "s"}`;
+  return u.counts.invalid ? `${calls}, ${u.counts.invalid} invalid` : calls;
+}
+
 export function shortId(id: string): string {
   return id.length > 14 ? `${id.slice(0, 8)}…${id.slice(-4)}` : id;
 }

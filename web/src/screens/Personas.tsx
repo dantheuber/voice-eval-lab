@@ -7,7 +7,7 @@ import { keys, useInvalidate, usePersona, usePersonas, useVoices } from "@/api/q
 import { endpoints } from "@/api/client";
 import { useHotkeys } from "@/hooks/useHotkeys";
 import { toast } from "@/store/toast";
-import { interruptionRate, interruptionScale } from "@/lib/format";
+import { interruptionRate, interruptionScale, usageLine } from "@/lib/format";
 import { ApiError } from "@/api/transport";
 import type { LineConditions, Persona, PersonaInput } from "@/api/types";
 import s from "./screens.module.css";
@@ -20,14 +20,19 @@ export function PersonasScreen() {
         <div className="page-head"><div><h1>Personas</h1><div className="page-sub">Who the caller bot pretends to be. Each persona also sets the line conditions its audio goes through.</div></div></div>
         <Panel flush>
           <QueryState q={q} what="personas" skeleton={<div style={{ padding: 12 }}><Skeleton rows={6} /></div>}>
-            {(d) => d.items.length === 0 ? <Empty title="No personas yet"><Link to="/personas/new">Create one</Link> or seed from <span className="mono">seeds/personas</span>.</Empty> : d.items.map((p) => (
-              <Link key={p.id} to={`/personas/${p.id}`} className={s.listCard}>
-                <span><b>{p.name}</b><small>{p.summary || p.speakingStyle}</small></span>
-                <span className="faint" style={{ fontSize: 11 }}>{p.temperament}{p.age ? `, ${p.age}` : ""}<small>interrupts {interruptionScale(p.interruptionRate)}/5, patience {p.patience}/5</small></span>
-                <span style={{ fontSize: 12 }}>{p.usage.calls ? <PassRate counts={p.usage.counts} /> : <span className="faint">no calls</span>}<small>{p.usage.calls} calls</small></span>
-                <span className="faint mono" style={{ fontSize: 10 }}>{p.id}</span>
-              </Link>
-            ))}
+            {(d) => d.items.length === 0 ? <Empty title="No personas yet"><Link to="/personas/new">Create one</Link> or seed from <span className="mono">seeds/personas</span>.</Empty> : (
+              <div className={s.list} role="table" aria-label="Personas">
+                <div className={s.listHead} role="row" aria-hidden="true"><span>Persona</span><span className={s.mid}>Temperament</span><span className={s.num} title="Pass rate of valid calls with the 95% interval">Pass rate</span><span className={s.id}>Id</span></div>
+                {d.items.map((p) => (
+                  <Link key={p.id} to={`/personas/${p.id}`} className={s.listRow} role="row" title={p.id}>
+                    <span><b>{p.name}</b><small className={s.desc} title={p.summary || p.speakingStyle}>{p.summary || p.speakingStyle}</small></span>
+                    <span className={s.mid}>{p.temperament}{p.age ? `, ${p.age}` : ""}<small>interrupts {interruptionScale(p.interruptionRate)}/5, patience {p.patience}/5</small></span>
+                    <span className={s.num}>{p.usage.calls ? <PassRate counts={p.usage.counts} /> : <span className="faint">no calls yet</span>}<small>{usageLine(p.usage)}</small></span>
+                    <span className={s.id}>{p.id}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
           </QueryState>
         </Panel>
       </div>

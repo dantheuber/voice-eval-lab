@@ -26,3 +26,11 @@ describe("format", () => {
     expect(interruptionRate(interruptionScale(0.75))).toBe(0.75);
   });
 });
+
+describe("usageLine", () => {
+  it("counts calls and names the invalid ones", async () => {
+    const { usageLine } = await import("./format");
+    expect(usageLine({ calls: 16, counts: { invalid: 1 } })).toBe("16 calls, 1 invalid");
+    expect(usageLine({ calls: 1, counts: { invalid: 0 } })).toBe("1 call");
+  });
+});
