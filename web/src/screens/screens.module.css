@@ -117,8 +117,8 @@
 .listRow .tags span { font-size: var(--fs-0); color: var(--ink-2); background: var(--bg-3); border-radius: var(--r-1); padding: 0 5px; line-height: 16px; white-space: nowrap; }
 .listRow .num, .listHead .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .listRow .num :global(.ci) { font-variant-numeric: tabular-nums; }
-.listRow .id { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--ink-3); text-align: right; white-space: nowrap; }
-.listHead .id { text-align: right; }
+.listRow .id { font-family: var(--font-mono); font-size: var(--fs-0); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.listRow .id, .listHead .id { text-align: left; }
 @supports not (grid-template-columns: subgrid) {
   .listHead, .listRow { grid-template-columns: minmax(0,1fr) 190px 160px 230px; }
 }
