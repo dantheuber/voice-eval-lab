@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Finding, ReviewPayload, TimelineEvent, ToolCallEvent, Utterance } from "@/api/types";
 import { useReview } from "@/store/review";
 import { evalName, fmtClock, sevClass } from "@/lib/format";
@@ -32,10 +32,12 @@ const atOf = (e: TimelineEvent) => (isUtt(e) ? e.startS : e.atS);
 
 const GAP_REACH_S = 3; // how far evidence in a silence reaches for the nearest turn
 
-export function findingsByUtterance(payload: ReviewPayload): Map<string, Finding[]> {
+const LONG_EVENT_CHARS = 180; // a tool result longer than this folds to two lines until asked for
+
+export function findingsByUtterance(payload: ReviewPayload, findings: Finding[] = payload.eval?.findings ?? []): Map<string, Finding[]> {
   const m = new Map<string, Finding[]>();
   const utts = payload.call.timeline.filter(isUtt);
-  for (const f of payload.eval?.findings ?? []) {
+  for (const f of findings) {
     // the bot's turn first, unless this is about the gap around it
     const home = (startS: number, endS: number) => {
       const cands = utts.filter((u) => u.startS <= endS && u.endS >= startS);
@@ -57,12 +59,16 @@ export function findingsByUtterance(payload: ReviewPayload): Map<string, Finding
   return m;
 }
 
-export function Transcript({ payload, onSeek, onSelectFinding }: { payload: ReviewPayload; onSeek: (t: number) => void; onSelectFinding: (id: string) => void }) {
+/* `findings` is the list the side panel shows, so the numbers here match the pins and the cards. */
+export function Transcript({ payload, findings, onSeek, onSelectFinding }: { payload: ReviewPayload; findings?: Finding[]; onSeek: (t: number) => void; onSelectFinding: (id: string) => void }) {
   const t = useReview((st) => st.t);
   const filter = useReview((st) => st.filter);
   const playing = useReview((st) => st.playing);
   const setFilter = useReview((st) => st.setFilter);
-  const byUtt = findingsByUtterance(payload);
+  const shown = findings ?? payload.eval?.findings ?? [];
+  const byUtt = findingsByUtterance(payload, shown);
+  const [openEvents, setOpenEvents] = useState<Set<string>>(() => new Set());
+  const toggleEvent = (id: string) => setOpenEvents((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const events = payload.call.timeline;
   const overlapSet = new Set<string>();
   const utts = events.filter(isUtt);
@@ -95,10 +101,15 @@ export function Transcript({ payload, onSeek, onSelectFinding }: { payload: Revi
           const isDb = e.type === "system";
           const blocked = e.type === "tool_call" && !!e.guard?.stopped;
           const text = e.type === "tool_call" ? toolLine(e) : e.type === "barge_in" ? `caller interrupted${e.botStoppedAtS != null ? `, bot stopped in ${(e.botStoppedAtS - e.atS).toFixed(1)} s` : ""}` : e.detail;
+          const long = text.length > LONG_EVENT_CHARS;
+          const open = openEvents.has(e.id);
           return (
             <div key={e.id} ref={active ? activeRef : undefined} className={`${s.turn} ${s.event} ${active ? s.active : ""}`} onClick={() => onSeek(Math.max(0, e.atS - 0.5))}>
               <div className={s.who}>{blocked ? "blocked" : e.type === "tool_call" ? "tool" : e.type === "barge_in" ? "barge" : "db"}<small>{fmtClock(e.atS)}</small></div>
-              <div className={`${s.txt} ${isDb ? s.dbc : ""} ${blocked ? s.blockedCall : ""}`} style={e.type === "barge_in" ? { color: "var(--fail)" } : undefined}><Icon name={e.type === "tool_call" ? "tool" : isDb ? "db" : "warn"} size={12} /> {text}</div>
+              <div className={`${s.txt} ${isDb ? s.dbc : ""} ${blocked ? s.blockedCall : ""}`} style={e.type === "barge_in" ? { color: "var(--fail)" } : undefined}>
+                <div className={long && !open ? s.eventFold : undefined}><Icon name={e.type === "tool_call" ? "tool" : isDb ? "db" : "warn"} size={12} /> {text}</div>
+                {long && <button type="button" className={s.more} aria-expanded={open} onClick={(ev) => { ev.stopPropagation(); toggleEvent(e.id); }}>{open ? "Show less" : "Show all"}</button>}
+              </div>
             </div>
           );
         }
@@ -114,7 +125,7 @@ export function Transcript({ payload, onSeek, onSelectFinding }: { payload: Revi
               <div>
                 {d ? <>{d.pre} <span className={s.del} title="intended">{d.del}</span> <span className={s.ins} title="heard by ASR">{d.ins}</span> {d.post}</> : heard || <span className="faint">(no speech recognised)</span>}
                 {e.interrupted && <span className={s.barge}>interrupted</span>}
-                {fs.map((f) => { const sc = sevClass(f.severity, f.advisory); return <span key={f.id} className={`${s.mark} ${s[sc]}`} onClick={(ev) => { ev.stopPropagation(); onSelectFinding(f.id); }}>{pinLabel(payload, f)} {evalName(f.evaluator)}</span>; })}
+                {fs.map((f) => { const sc = sevClass(f.severity, f.advisory); return <span key={f.id} className={`${s.mark} ${s[sc]}`} title={f.title} onClick={(ev) => { ev.stopPropagation(); onSelectFinding(f.id); }}>{pinLabel(shown, f)} {evalName(f.evaluator)}</span>; })}
               </div>
               {(d || (e.interrupted && intended && intended !== heard)) && <div className={s.intended}><span className={s.lab}>intended</span>{intended}</div>}
               {overlapSet.has(e.id) && <div className={s.overlapNote}>overlaps bot speech</div>}
@@ -126,7 +137,6 @@ export function Transcript({ payload, onSeek, onSelectFinding }: { payload: Revi
   );
 }
 
-export function pinLabel(payload: ReviewPayload, f: Finding): string {
-  const i = (payload.eval?.findings ?? []).findIndex((x) => x.id === f.id);
-  return String(i + 1);
+export function pinLabel(findings: Finding[], f: Finding): string {
+  return String(findings.findIndex((x) => x.id === f.id) + 1);
 }

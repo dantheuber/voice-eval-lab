@@ -63,6 +63,21 @@ export function interruptionRate(scale: number): number {
   return (Math.min(5, Math.max(1, scale)) - 1) / 4;
 }
 
+/** The verdict engine's summary reads "Verdict: fail. Why: <reason> Criteria: ... Findings: ... Not checked: ...".
+    The reason is what a reviewer needs first; the rest is detail for a disclosure. Plain summaries come back whole. */
+export function splitSummary(summary: string | null | undefined): { why: string; rest: string } {
+  const text = (summary ?? "").trim();
+  if (!text) return { why: "", rest: "" };
+  const body = text.replace(/^Verdict:\s*[a-z_ ]+\.\s*/i, "");
+  if (/^(Criteria|Findings|Not checked|Rules|Beats):\s/.test(body)) return { why: "", rest: body };
+  const m = /^Why:\s*/i.exec(body);
+  const afterWhy = m ? body.slice(m[0].length) : body;
+  const cut = afterWhy.search(/\s(Criteria|Findings|Not checked|Rules|Beats):\s/);
+  if (!m && cut < 0) return { why: afterWhy, rest: "" };
+  if (cut < 0) return { why: afterWhy.trim(), rest: "" };
+  return { why: afterWhy.slice(0, cut).trim(), rest: afterWhy.slice(cut + 1).trim() };
+}
+
 /** "16 calls, 1 invalid": how many calls a scenario or persona has been used in, and how many of those do not count. */
 export function usageLine(u: { calls: number; counts: { invalid: number } }): string {
   const calls = `${u.calls} call${u.calls === 1 ? "" : "s"}`;

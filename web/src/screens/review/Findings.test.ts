@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clipRange, dbActualRow, momentClip, moments, verdictAllowed } from "./Findings";
+import { clipRange, dbActualRow, dbGlance, evaluatorsGlance, momentClip, moments, rubricGlance, verdictAllowed } from "./Findings";
 import { headlineNote } from "../Compare";
 
 describe("dbActualRow", () => {
@@ -59,5 +59,24 @@ describe("moments", () => {
     const f = finding([{ quote: "", speaker: "bot", startS: 10, endS: 12 }, { quote: "", speaker: "bot", startS: 100, endS: 102 }]);
     expect(clipRange(momentClip(f, moments(f)[1]), 300)).toEqual([99, 103]);
     expect(clipRange(f, 300)).toEqual([6, 14]);
+  });
+});
+
+describe("section glances", () => {
+  it("summarise the rubric and flag anything that is not a pass", () => {
+    const c = (status: "pass" | "fail" | "unknown") => ({ criterionId: "x", kind: "must", text: "", status, evidence: [], reason: "" }) as never;
+    expect(rubricGlance([c("pass"), c("pass"), c("fail"), c("unknown")])).toEqual({ text: "2 of 4 pass, 1 fail, 1 undecided", attention: true });
+    expect(rubricGlance([c("pass")])).toEqual({ text: "1 of 1 pass", attention: false });
+    expect(rubricGlance([])).toEqual({ text: "", attention: false });
+  });
+  it("summarise database changes, missing first", () => {
+    expect(dbGlance([{ k: "exp", s: "" }, { k: "miss", s: "" }, { k: "unexp", s: "" }, { k: "unexp", s: "" }], true)).toEqual({ text: "1 missing, 2 unexpected", attention: true });
+    expect(dbGlance([{ k: "exp", s: "" }, { k: "ok", s: "" }], true)).toEqual({ text: "as expected", attention: false });
+    expect(dbGlance([], false)).toEqual({ text: "not available", attention: false });
+  });
+  it("count evaluator runs and only flag errors", () => {
+    const e = (status: "ok" | "skipped" | "error") => ({ name: "x", status, reason: "", durationS: 0, model: null, metrics: {} });
+    expect(evaluatorsGlance([e("ok"), e("ok"), e("skipped")], false)).toEqual({ text: "2 ran, 1 skipped", attention: false });
+    expect(evaluatorsGlance([e("ok"), e("error")], true)).toEqual({ text: "1 ran, 1 failed, still running", attention: true });
   });
 });

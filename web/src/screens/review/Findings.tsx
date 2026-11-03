@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import type { Finding, ReviewPayload, Verdict } from "@/api/types";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type { CriterionResult, EvaluatorRun, Finding, ReviewPayload, Verdict } from "@/api/types";
 import { Button, HealthDot, Icon, Kbd, VerdictBadge } from "@/components/ui";
 import { evalName, fmtClock, sevClass, sevLabel, verdictLabel } from "@/lib/format";
 import { categoryLabel, categoryNote, deliveryAt, deliveryFor, deliveryLine, isAdvisoryEvaluator, orderedEvaluators, summarizeEvaluator, type DeliveryMetrics } from "@/lib/evaluators";
 import { useReview } from "@/store/review";
 import s from "./review.module.css";
-import { pinLabel } from "./Transcript";
 
 export const clipRange = (f: Finding, durationS: number): [number, number] => [Math.max(0, (f.clipStartS ?? 0) - 1), Math.min(durationS, (f.clipEndS ?? (f.clipStartS ?? 0) + 5) + 1)];
 
@@ -19,8 +18,30 @@ export function moments(f: Finding): Moment[] {
 
 export const momentClip = (f: Finding, m: Moment): Finding => ({ ...f, clipStartS: m.startS, clipEndS: m.endS });
 
-export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
-  payload: ReviewPayload; f: Finding; onPlay: (f: Finding) => void; onDecide: (f: Finding, v: "confirmed" | "dismissed") => void; onSaveNote: (f: Finding, note: string) => void;
+/* Long evidence (a rolled-up finding can carry a page of JSON) is clamped to a few lines until asked for.
+   The measurement happens after layout, so the toggle only appears when something is actually hidden. */
+function Clamp({ children, lines = 4 }: { children: ReactNode; lines?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el || open) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 2);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure); ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, lines]);
+  return (
+    <div>
+      <div ref={ref} className={open ? "" : s.clamp} style={open ? undefined : ({ "--lines": lines } as React.CSSProperties)}>{children}</div>
+      {(overflows || open) && <button type="button" className={s.more} onClick={(e) => { e.stopPropagation(); setOpen(!open); }} aria-expanded={open}>{open ? "Show less" : "Show all"}</button>}
+    </div>
+  );
+}
+
+export function FindingCard({ payload, f, index, onPlay, onDecide, onSaveNote }: {
+  payload: ReviewPayload; f: Finding; index: number; onPlay: (f: Finding) => void; onDecide: (f: Finding, v: "confirmed" | "dismissed") => void; onSaveNote: (f: Finding, note: string) => void;
 }) {
   const selected = useReview((st) => st.selected) === f.id;
   const noteOpen = useReview((st) => st.noteOpen) === f.id;
@@ -36,22 +57,30 @@ export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
   const catLabel = categoryLabel(f), catNote = categoryNote(f);
   // An audio listener's claim is checked against the measured delivery of the same utterance; the measurement wins.
   const measured = f.evaluator === "audio_listening" ? deliveryAt(deliveryFor(payload.eval?.evaluators), f.clipStartS, f.clipEndS) : null;
+  // A decided finding folds to one line so the open ones stand out; selecting it (click, j, k) opens it again.
+  const folded = !!f.humanVerdict && !selected && !noteOpen;
+  const quotes = intendedHeard ? [] : f.evidence.filter((e) => e.quote);
   return (
-    <div className={`${s.finding} ${selected ? s.sel : ""} ${f.advisory ? s.advisory : ""}`} data-finding={f.id} role="button" tabIndex={0} aria-pressed={selected}
+    <div className={`${s.finding} ${selected ? s.sel : ""} ${f.advisory ? s.advisory : ""} ${folded ? s.folded : ""}`} data-finding={f.id} role="button" tabIndex={0} aria-pressed={selected}
       onClick={() => select(f.id)} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) onPlay(f); }}>
       <div className={s.fh}>
+        <span className={s.pinNo} aria-hidden="true">{index}</span>
         <span className={`sev ${sc}`}>{sevLabel[sc]}</span>
         <span className={s.t}>{fmtClock(f.clipStartS ?? 0)}</span>
         {f.humanVerdict && <span className={`${s.state} ${s[f.humanVerdict]}`}>{f.humanVerdict}</span>}
+        {folded && <span className={s.foldedTitle}>{f.title}</span>}
         <span className={s.src}>{evalName(f.evaluator)}{catLabel && catLabel !== evalName(f.evaluator) ? <> · <span title={catNote}>{catLabel}</span></> : null}</span>
       </div>
+      {!folded && <>
       <div className={s.ft}>{f.title}</div>
       <div className={s.fe}>
-        {f.evidence.filter((e) => e.quote).length > 0 && !intendedHeard ? f.evidence.filter((e) => e.quote).map((e, i) => <div key={i}><span className={s.q}>"{e.quote}"</span>{e.speaker ? <span className="faint"> {e.speaker}{e.startS != null ? `, ${fmtClock(e.startS)}` : ""}</span> : null}</div>) : null}
-        <div className={f.evidence.some((e) => e.quote) && !intendedHeard ? "faint" : ""} style={{ marginTop: f.evidence.some((e) => e.quote) && !intendedHeard ? 3 : 0 }}>{f.detail}</div>
-        {catNote && <div className="faint" style={{ marginTop: 3 }}>{catNote}</div>}
-        {moments(f).length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>{moments(f).map((m) => <Button key={m.startS} size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onPlay(momentClip(f, m)); }} aria-label={`Play the occurrence at ${fmtClock(m.startS)}`}><Icon name="play" /> {fmtClock(m.startS)}</Button>)}</div>}
-        {measured && <div style={{ marginTop: 3 }}><span className="faint">Measured on this utterance:</span> <code>{deliveryLine(measured)}</code>{measured.flags.length ? <span className="faint">, flagged {measured.flags.map((x) => categoryLabel({ category: x })).join(", ")}</span> : <span className="faint">, no delivery flags. The measurement wins over the listener's impression.</span>}</div>}
+        <Clamp lines={f.advisory ? 3 : 5}>
+          {quotes.map((e, i) => <div key={i}><span className={s.q}>"{e.quote}"</span>{e.speaker ? <span className="faint"> {e.speaker}{e.startS != null ? `, ${fmtClock(e.startS)}` : ""}</span> : null}</div>)}
+          <div className={quotes.length ? "faint" : ""} style={{ marginTop: quotes.length ? 3 : 0 }}>{f.detail}</div>
+          {catNote && <div className="faint" style={{ marginTop: 3 }}>{catNote}</div>}
+          {measured && <div style={{ marginTop: 3 }}><span className="faint">Measured on this utterance:</span> <code>{deliveryLine(measured)}</code>{measured.flags.length ? <span className="faint">, flagged {measured.flags.map((x) => categoryLabel({ category: x })).join(", ")}</span> : <span className="faint">, no delivery flags. The measurement wins over the listener's impression.</span>}</div>}
+        </Clamp>
+        {moments(f).length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}><span className="faint" style={{ alignSelf: "center" }}>{moments(f).length} moments</span>{moments(f).map((m) => <Button key={m.startS} size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onPlay(momentClip(f, m)); }} aria-label={`Play the occurrence at ${fmtClock(m.startS)}`}><Icon name="play" /> {fmtClock(m.startS)}</Button>)}</div>}
       </div>
       <div className={s.fx}>
         <Button size="sm" onClick={(e) => { e.stopPropagation(); onPlay(f); }} aria-label={`Play clip ${fmtClock(a)} to ${fmtClock(b)}`}><Icon name="play" /> clip {fmtClock(a)}-{fmtClock(b)} <Kbd>↵</Kbd></Button>
@@ -60,6 +89,7 @@ export function FindingCard({ payload, f, onPlay, onDecide, onSaveNote }: {
         <Button size="sm" aria-pressed={f.humanVerdict === "dismissed"} aria-label="Dismiss finding" onClick={(e) => { e.stopPropagation(); onDecide(f, "dismissed"); }}><Icon name="x" /> <Kbd>n</Kbd></Button>
         <Button size="sm" variant="ghost" title="Add note" onClick={(e) => { e.stopPropagation(); select(f.id); setNoteOpen(f.id); }}>note <Kbd>c</Kbd></Button>
       </div>
+      </>}
       {(noteOpen || f.humanNote) && (
         <div className={s.fnote} onClick={(e) => e.stopPropagation()}>
           {noteOpen ? (
@@ -90,11 +120,13 @@ export function Rubric({ payload, onSeek, pending }: { payload: ReviewPayload; o
   );
 }
 
-export function DbDiff({ payload }: { payload: ReviewPayload }) {
+export type DbRow = { k: "ok" | "miss" | "unexp" | "exp"; s: string };
+
+/* Expected changes against what the state evaluator found, plus anything that changed without being expected. */
+export function dbRows(payload: ReviewPayload): DbRow[] {
   const sc = payload.call.scenarioSnapshot;
   const crit = payload.eval?.criteria.filter((c) => c.kind === "state") ?? [];
-  if (!payload.evidence.dbSnapshots) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>Not available. This call has no database snapshots.</div>;
-  const rows: { k: string; s: string }[] = [];
+  const rows: DbRow[] = [];
   for (const e of sc?.expectedState ?? []) {
     const r = crit.find((c) => c.criterionId === e.id);
     const where = Object.entries(e.where).map(([k, v]) => `${k}=${v}`).join(", ");
@@ -106,8 +138,48 @@ export function DbDiff({ payload }: { payload: ReviewPayload }) {
     const expected = (sc?.expectedState ?? []).some((e) => e.table === c.table);
     if (!expected) rows.push({ k: "unexp", s: `actual    ${c.table.padEnd(10)} ${c.kind} ${JSON.stringify(c.after ?? c.key)}  (not in expectations)` });
   }
+  return rows;
+}
+
+export function DbDiff({ payload }: { payload: ReviewPayload }) {
+  if (!payload.evidence.dbSnapshots) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>Not available. This call has no database snapshots.</div>;
+  const rows = dbRows(payload);
   if (!rows.length) return <div className="faint" style={{ padding: "8px 12px", fontSize: 12 }}>No expected changes and none observed.</div>;
   return <div className={s.dbdiff}>{rows.map((r, i) => <div key={i} className={s[r.k]}>{r.s}</div>)}</div>;
+}
+
+/* One-line summaries for the folded sections of the side panel, so a reviewer can see whether a section needs opening. */
+export function rubricGlance(crit: CriterionResult[]): { text: string; attention: boolean } {
+  if (!crit.length) return { text: "", attention: false };
+  const fail = crit.filter((c) => c.status === "fail").length, unknown = crit.filter((c) => c.status === "unknown").length, pass = crit.filter((c) => c.status === "pass").length;
+  const parts = [`${pass} of ${crit.length} pass`];
+  if (fail) parts.push(`${fail} fail`);
+  if (unknown) parts.push(`${unknown} undecided`);
+  return { text: parts.join(", "), attention: fail + unknown > 0 };
+}
+export function dbGlance(rows: DbRow[], available: boolean): { text: string; attention: boolean } {
+  if (!available) return { text: "not available", attention: false };
+  const miss = rows.filter((r) => r.k === "miss").length, unexp = rows.filter((r) => r.k === "unexp").length;
+  if (!rows.length) return { text: "none expected, none seen", attention: false };
+  const parts: string[] = [];
+  if (miss) parts.push(`${miss} missing`);
+  if (unexp) parts.push(`${unexp} unexpected`);
+  return { text: parts.length ? parts.join(", ") : "as expected", attention: parts.length > 0 };
+}
+export function evaluatorsGlance(evs: EvaluatorRun[], pending: boolean): { text: string; attention: boolean } {
+  const err = evs.filter((e) => e.status === "error").length, skipped = evs.filter((e) => e.status === "skipped").length, ok = evs.filter((e) => e.status === "ok").length;
+  const parts = [`${ok} ran`];
+  if (skipped) parts.push(`${skipped} skipped`);
+  if (err) parts.push(`${err} failed`);
+  if (pending) parts.push("still running");
+  return { text: parts.join(", "), attention: err > 0 };
+}
+export function deliveryGlance(d: DeliveryMetrics | null, run: EvaluatorRun | undefined): { text: string; attention: boolean } {
+  if (!run) return { text: "not run", attention: false };
+  if (run.status !== "ok") return { text: run.status, attention: false };
+  if (!d) return { text: "no per-utterance metrics", attention: false };
+  const flagged = d.bot.filter((u) => u.flags.length || u.chops).length;
+  return { text: flagged ? `${flagged} of ${d.bot.length} utterances flagged` : `${d.bot.length} utterances, none flagged`, attention: false };
 }
 
 /* Only a pass may claim success. Unknown means the evaluator could not decide; absent means it has not run. */
@@ -192,5 +264,3 @@ export function selectFirstOpen(payload: ReviewPayload): string | null {
   const fs = payload.eval?.findings ?? [];
   return (fs.find((f) => !f.humanVerdict) ?? fs[0])?.id ?? null;
 }
-
-export function labelFor(payload: ReviewPayload, f: Finding) { return pinLabel(payload, f); }

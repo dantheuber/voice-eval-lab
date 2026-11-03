@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { Shell } from "@/components/Shell";
@@ -10,12 +10,13 @@ import { useSocket } from "@/hooks/useSocket";
 import { useHotkeys, useScope } from "@/hooks/useHotkeys";
 import { useReview } from "@/store/review";
 import { toast } from "@/store/toast";
-import { fmtClock, fmtDuration, sevClass, verdictLabel } from "@/lib/format";
+import { fmtClock, fmtDuration, sevClass, splitSummary, verdictLabel } from "@/lib/format";
+import { deliveryFor } from "@/lib/evaluators";
 import type { CallWsMessage, Finding, ReviewPayload, Verdict } from "@/api/types";
 import { EventsLane } from "./EventsLane";
 import { Waveform } from "./Waveform";
 import { Transcript } from "./Transcript";
-import { DbDiff, DeliveryPanel, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, selectFirstOpen, verdictAllowed } from "./Findings";
+import { DbDiff, DeliveryPanel, Evaluators, FindingCard, Rubric, VerdictBar, clipRange, dbGlance, dbRows, deliveryGlance, evaluatorsGlance, rubricGlance, selectFirstOpen, verdictAllowed } from "./Findings";
 import { useAudio } from "./useAudio";
 import s from "./review.module.css";
 
@@ -144,9 +145,19 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
   }, { scope: "review" });
 
   const openCount = findings.filter((f) => !f.humanVerdict && !f.advisory).length;
+  const openAdvisory = findings.filter((f) => !f.humanVerdict && f.advisory).length;
   const selIndex = sel ? findings.indexOf(sel) + 1 : 0;
   const invalidReason = payload.summary.invalidReason;
   const human = payload.summary.humanVerdict;
+  const why = splitSummary(payload.eval?.summary);
+  const [whyOpen, setWhyOpen] = useState(false);
+  const crit = payload.eval?.criteria ?? [];
+  const rubricG = rubricGlance(crit);
+  const dbG = dbGlance(payload.evidence.dbSnapshots ? dbRows(payload) : [], payload.evidence.dbSnapshots);
+  const evsG = evaluatorsGlance(payload.eval?.evaluators ?? [], pending);
+  const deliveryRun = payload.eval?.evaluators.find((r) => r.name === "delivery");
+  const delG = deliveryGlance(deliveryRun ? deliveryFor([deliveryRun]) : null, deliveryRun);
+  const timingG = payload.timing ? { text: `reply p50 ${payload.timing.replyP50S} s, ${payload.timing.overlaps} overlap${payload.timing.overlaps === 1 ? "" : "s"}`, attention: false } : { text: isTurn ? "not measured (turn-based)" : pending ? "waiting" : "not measured", attention: false };
   const ticks = useMemo(() => { const step = D > 240 ? 30 : 15; const out: number[] = []; for (let t = 0; t <= D; t += step) out.push(t); return out; }, [D]);
   const lanesRef = useRef<HTMLDivElement>(null);
 
@@ -168,10 +179,21 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
           <Button size="sm" onClick={goPrev} disabled={!payload.prevReviewId} title="Previous call needing review"><Kbd>[</Kbd> prev</Button>
           <Button size="sm" variant="primary" onClick={goNext} title="Next call needing review">next needing review <Kbd>]</Kbd></Button>
         </div>
+        <div className={s.why} data-verdict={payload.eval?.verdict ?? "pending"}>
+          {payload.eval ? <>
+            <span className={s.whyLead}>{verdictLabel[payload.eval.verdict]}{human && human !== payload.eval.verdict ? <span className={s.whyHuman}>, you said {verdictLabel[human]}</span> : null}</span>
+            <span className={s.whyText}>{why.why || (failed ? "The call failed before it could be evaluated." : payload.eval.verdict === "pass" ? "Nothing forbidden happened, nothing the caller reached was missed, and at least one rule was confirmed." : "The evaluators gave no summary.")}</span>
+            {why.rest && <button type="button" className={s.more} aria-expanded={whyOpen} onClick={() => setWhyOpen(!whyOpen)}>{whyOpen ? "Less" : "How it was decided"}</button>}
+            {whyOpen && why.rest && <span className={s.whyRest}>{why.rest}</span>}
+            {payload.eval.verdict === "invalid" && <span className={s.whyNote}>{invalidReason && !why.why ? `${invalidReason} ` : ""}A test problem, not a bot failure. The call stays out of pass rates. Findings about the bot are still listed below.</span>}
+          </> : <>
+            <span className={s.whyLead}>{failed ? "Call failed" : "Evaluating"}</span>
+            <span className={s.whyText}>{failed ? payload.call.error ?? "The call ended before it finished." : "Findings appear below as each evaluator finishes. The recording and transcript are ready now."}</span>
+          </>}
+        </div>
         {isTurn && <Note kind="warn" style={{ flexBasis: "100%" }}><b>Turn-based call.</b> Each side waited for the other to finish, so the gaps you see are synthetic and timing was not measured. Transcript, tools, database changes, pronunciation, and rubric results are real.</Note>}
-        {payload.eval?.verdict === "invalid" && <Note kind="plain" style={{ flexBasis: "100%" }}><b>Invalid run.</b> {invalidReason ?? "The caller never reached the scenario."} This is a test problem, not a bot failure, and the call is excluded from pass rates.</Note>}
         {payload.call.mode === "upload" && !payload.evidence.toolLog && <Note kind="plain" style={{ flexBasis: "100%" }}><b>Reduced evidence.</b> No tool log{!payload.evidence.intendedText ? ", no intended text" : ""}{!payload.evidence.scenario ? ", no scenario" : ""}. Checks that need them were skipped and the call cannot pass or fail automatically.</Note>}
-        {payload.call.error && <Note kind="err" style={{ flexBasis: "100%" }}><b>Call failed.</b> {payload.call.error}</Note>}
+        {payload.call.error && payload.eval && <Note kind="err" style={{ flexBasis: "100%" }}><b>Call failed.</b> {payload.call.error}</Note>}
       </div>
       <div className={s.body}>
         <section className={s.timeline} aria-label="Timeline">
@@ -204,26 +226,42 @@ function ReviewBody({ payload }: { payload: ReviewPayload }) {
             )}
           </div>
         </section>
-        <Transcript payload={payload} onSeek={seek} onSelectFinding={(fid) => selectFinding(fid)} />
+        <Transcript payload={payload} findings={findings} onSeek={seek} onSelectFinding={(fid) => selectFinding(fid)} />
         <aside className={s.side} aria-label="Findings and evaluators">
           <div className={s.sec} id="secFindings">
-            <div className={s.sh}>Findings <span className="tag mono">{openCount} open</span>{pending && <HealthDot state="loading">evaluating</HealthDot>}<span className="grow" /><span className={s.hint}><kbd>j</kbd><kbd>k</kbd> move, <kbd>y</kbd> confirm, <kbd>n</kbd> dismiss</span></div>
+            <div className={s.sh}>Findings <span className={`tag mono ${openCount ? s.hot : ""}`}>{openCount} open</span>{openAdvisory > 0 && <span className="faint" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 500 }}>{openAdvisory} advisory</span>}{pending && <HealthDot state="loading">evaluating</HealthDot>}<span className="grow" /><span className={s.hint}><kbd>j</kbd><kbd>k</kbd> move, <kbd>y</kbd> confirm, <kbd>n</kbd> dismiss</span></div>
             {findings.length === 0 && !pending && <div className="empty" style={{ padding: 16 }}>{failed ? <><b>Not evaluated</b>The call failed before it finished, so nothing was checked. What was recorded is above.</> : <><b>No findings</b>Every evaluator passed this call. Set the verdict or press <kbd>]</kbd>.</>}</div>}
             {findings.length === 0 && pending && <div style={{ padding: 12 }}><Skeleton rows={3} /></div>}
-            {findings.map((f) => <FindingCard key={f.id} payload={payload} f={f} onPlay={playClip} onDecide={decideFinding} onSaveNote={saveNote} />)}
-            {detailCount > 0 && <div style={{ padding: "6px 12px" }}><Button size="sm" variant="ghost" onClick={() => setShowDetails(!showDetails)}>{showDetails ? "Hide" : "Show"} {detailCount} detail{detailCount === 1 ? "" : "s"}</Button></div>}
+            {findings.map((f, i) => <FindingCard key={f.id} payload={payload} f={f} index={i + 1} onPlay={playClip} onDecide={decideFinding} onSaveNote={saveNote} />)}
+            {detailCount > 0 && <div style={{ padding: "6px 12px" }}><Button size="sm" variant="ghost" onClick={() => setShowDetails(!showDetails)} aria-expanded={showDetails}>{showDetails ? "Hide" : "Show"} {detailCount} detail finding{detailCount === 1 ? "" : "s"}</Button> <span className="faint" style={{ fontSize: 11 }}>info only, never counted</span></div>}
           </div>
-          <div className={s.sec}><div className={s.sh}>Rubric{sc ? `, ${sc.title}` : ""}</div><Rubric payload={payload} onSeek={seek} pending={pending} /></div>
-          <div className={s.sec}><div className={s.sh}>Database changes</div><DbDiff payload={payload} /></div>
-          <div className={s.sec}><div className={s.sh}>Timing</div>
+          <Section title={`Rubric${sc ? `, ${sc.title}` : ""}`} glance={rubricG} defaultOpen={rubricG.attention}><Rubric payload={payload} onSeek={seek} pending={pending} /></Section>
+          <Section title="Database changes" glance={dbG} defaultOpen={dbG.attention}><DbDiff payload={payload} /></Section>
+          <Section title="Timing" glance={timingG}>
             {payload.timing ? <dl className={s.kvs}><dt>reply p50 / p95</dt><dd>{payload.timing.replyP50S} s / {payload.timing.replyP95S} s</dd><dt>overlaps</dt><dd>{payload.timing.overlaps}</dd><dt>dead air events</dt><dd>{payload.timing.deadAirEvents}</dd><dt>barge-in stop time</dt><dd>{payload.timing.bargeStopS != null ? `${payload.timing.bargeStopS} s` : "no barge-ins"}</dd></dl>
               : <dl className={s.kvs}><dt>reply latency</dt><dd className={s.na}>{isTurn ? "not measured (turn-based)" : pending ? "waiting" : "not measured"}</dd><dt>overlaps</dt><dd className={s.na}>not measured</dd><dt>dead air</dt><dd className={s.na}>not measured</dd></dl>}
-          </div>
-          <div className={s.sec}><div className={s.sh}>Delivery, measured <span className="tag" title="Advisory. Limits come from a small corpus, no listener ratings.">advisory</span></div><DeliveryPanel payload={payload} onSeek={seek} /></div>
-          <div className={s.sec}><div className={s.sh}>Evaluators</div><Evaluators payload={payload} pending={pending} /></div>
+          </Section>
+          <Section title={<>Delivery, measured <span className="tag" title="Advisory. Limits come from a small corpus, no listener ratings.">advisory</span></>} glance={delG}><DeliveryPanel payload={payload} onSeek={seek} /></Section>
+          <Section title="Evaluators" glance={evsG} defaultOpen={evsG.attention}><Evaluators payload={payload} pending={pending} /></Section>
           <VerdictBar payload={payload} human={human} onSet={setVerdict} pending={pending} />
         </aside>
       </div>
+    </div>
+  );
+}
+
+/* A side-panel section that folds to its heading and a one-line glance. Sections that need attention start open. */
+function Section({ title, glance, defaultOpen = false, children }: { title: ReactNode; glance: { text: string; attention: boolean }; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className={s.sec}>
+      <button type="button" className={`${s.sh} ${s.shBtn}`} aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className={`${s.chev} ${open ? s.open : ""}`} aria-hidden="true" />
+        <span>{title}</span>
+        <span className="grow" />
+        {glance.text && <span className={`${s.glance} ${glance.attention ? s.attention : ""}`}>{glance.text}</span>}
+      </button>
+      {open && children}
     </div>
   );
 }
