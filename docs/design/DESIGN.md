@@ -13,6 +13,7 @@ The point of view, in short:
 - **Evidence sits next to the claim.** Every finding shows its quote, its intended vs heard text, or its database diff inline. The reviewer should never have to go looking for why the evaluator said what it said.
 - **The UI tells the truth about what it knows.** Turn-based calls carry a dashed badge, their timing section says "not measured", and the gaps on the waveform are labelled synthetic. Advisory findings say "cannot fail the call" in their header. Pass rates always carry n and a 95% interval. Invalid is drawn as a hollow dashed badge, visually "not a result", because it is a test problem and not a bot failure.
 - **Dark by default, light as a first-class theme.** Dark is kinder for long sessions with waveforms. Both themes use the same token names and both have been checked for contrast.
+- **Tiered, never hidden.** Every screen leads with the one thing to act on and folds the rest behind a heading, a glance line, or a show-all toggle. Nothing is removed: a decided finding folds to one line, a page of JSON evidence clamps to five lines, a rubric table folds to "11 of 15 pass, 4 fail". Anything that needs attention starts open.
 
 What was deliberately not done: no purple, no glassmorphism, no emoji, no big stat tiles, no charts that need a legend to be read, no modal-driven flows for the main loop.
 
@@ -74,7 +75,7 @@ Layout: title and count, filter row, dense table.
 
 Filters: verdict as a segmented control with counts, scenario, persona, mode, model profile as selects, run as a removable chip when arrived at from a run. "Open findings only" checkbox. All filters are URL parameters.
 
-Columns: call id (mono), verdict (with the invalid reason inline under the badge), scenario, persona ("you" for mic calls, "unknown" for uploads), mode, profile, run and rep, duration, reply p50, overlaps, findings with an "n open" tag. Turn-based rows show `n/a` with a tooltip in the timing columns rather than a dash, so it reads as "not measured" and not "zero".
+Columns: call id (mono), verdict (with the invalid reason clamped to two lines under the badge, full text in the title), scenario, persona ("you" for mic calls, "unknown" for uploads), mode, profile, run and rep, length, reply p50, overlaps, findings with an amber "n open" tag. Turn-based rows show `n/a` with a tooltip in the timing columns rather than a dash, so it reads as "not measured" and not "zero". Cells never wrap: scenario and persona truncate with an ellipsis and carry the full text in their title. Under 1180 px the profile, run, and overlaps columns drop out; they are still in the CSV export and on the review screen.
 
 Keys: `j`/`k` move the selection marker, `Enter` or `o` opens the call, `Esc` clears filters.
 
@@ -84,7 +85,11 @@ States: loading skeleton; empty state names the active filters and offers "launc
 
 This is the screen that pays for the rest. Three regions in a fixed-height layout: header, timeline across the top, transcript left, findings and evaluators right.
 
-**Header.** Call id, verdict, mode badge, scenario, persona, profile, run and rep, call time (and wall clock time for turn-based), turn count against the limit. Right side: "finding i of n", prev and next call needing review. Turn-based calls get a one-line note under the header explaining what is and is not real. It is shown once per call, not repeated anywhere else on the screen.
+**Header.** One row: call id, verdict, mode badge; then scenario, persona, profile, argument guard, run and rep, call time (and wall clock time for turn-based), turn count against the limit; on the right "finding i of n", prev and next call needing review. The middle group wraps inside its own cell so the navigation never moves. Under 1180 px the meta drops to a second row.
+
+**Verdict strip.** Directly under the header, the full width: the verdict word in its colour, then the verdict engine's reason in plain words ("The bot did something forbidden: Renew for more than one year; the caller also missed a required checkpoint, which doesn't excuse this: Ask for the new expiry date."). The engine's summary is split client-side: the "Why:" clause is the strip, and the criteria, finding, and not-checked counts sit behind "How it was decided". If the human verdict differs it says so next to the word ("fail, you said pass"). Invalid calls add one line: a test problem, not a bot failure, out of pass rates. While evaluating, the strip says so and that the recording and transcript are already usable. A pass with no reason says what a pass means. The reason appears once, here, and is not repeated in the side panel.
+
+Turn-based calls keep a one-line note under the strip explaining what is and is not real. It is shown once per call, not repeated anywhere else on the screen.
 
 **Timeline.** Toolbar: play/pause with the key shown, time readout, speed (1x, 1.5x, 2x), current clip label, legend, and either the p50 reply latency (live) or a "gaps synthetic" tag (turn-based). Below, five lanes with a 64 px label column:
 
@@ -96,13 +101,13 @@ This is the screen that pays for the rest. Three regions in a fixed-height layou
 
 A clip range is drawn as a translucent accent band with solid edges; the playhead is a 1 px line with a flag. Click anywhere on a waveform to seek and clear the clip.
 
-**Transcript.** Each turn: speaker label in the channel colour, timestamp, text. Bot turns show the text the ASR heard; when it differs from the intended text, the intended token is struck through in red and the heard token is highlighted amber, with the full intended line underneath. Turns with findings carry a small numbered tag matching the pin. Interrupted bot turns say "interrupted"; overlapping caller turns say "overlaps bot speech". Tool and database events sit inline as mono rows. The active turn follows the playhead and scrolls into view while playing. Filter: all turns, with findings (`f`), tools and db.
+**Transcript.** Each turn: speaker label in the channel colour, timestamp, text. Bot turns show the text the ASR heard; when it differs from the intended text, the intended token is struck through in red and the heard token is highlighted amber, with the full intended line underneath. Turns with findings carry a small numbered tag matching the pin; the numbers come from the visible findings list, so hidden info findings never leave gaps or ghost numbers. Interrupted bot turns say "interrupted"; overlapping caller turns say "overlaps bot speech". Tool and database events sit inline as mono rows; a tool result longer than about 180 characters folds to two lines with "Show all". The active turn follows the playhead and scrolls into view while playing. Filter: all turns, with findings (`f`), tools and db.
 
-**Findings panel.** Count of open findings and the key hints. Each card: severity, time, source evaluator; title; evidence (quote in italics, or intended vs heard in mono, or the database diff); a clip button with its range; confirm (`y`), dismiss (`n`), note (`c`). Confirmed and dismissed are written next to the time in words, not only by fading. Advisory findings say "advisory, cannot fail the call" in the header and are drawn with a dashed top border.
+**Findings panel.** Count of open findings (amber while above zero), the count of open advisory ones, and the key hints. Each card: pin number, severity, time, source evaluator; title in bold; evidence (quote in italics, or intended vs heard in mono, or the database diff); a clip button with its range; confirm (`y`), dismiss (`n`), note (`c`). Evidence clamps to five lines (three for advisory) with a "Show all" toggle that only appears when something is hidden. Confirmed and dismissed are written next to the time in words, not only by fading, and a decided finding that is not selected folds to one line (number, severity, time, state, title) so the open ones stand out; selecting it with a click or `j`/`k` opens it again. Advisory findings say "advisory, cannot fail the call" in the header and are drawn with a dashed top border. Info findings stay behind "Show n detail findings", labelled "info only, never counted".
 
 Decision behaviour: confirming or dismissing toggles (press again to reopen), updates the open count and pin, shows a toast, and advances to the next open finding with its clip cued. Notes save on blur or `Ctrl Enter`, `Esc` cancels. A saved note renders as a quiet block with an edit link.
 
-**Below findings:** rubric table (one row per criterion with pass/fail/needs-review badge, "must" or "must not" label, the quoted evidence with a timestamp link), database changes as an expected/actual diff with missing rows in red and allowed extras in green, timing (or "not measured (turn-based)" in each cell), and the evaluator list with status, one-line summary, and model used. The audio listener is labelled advisory here too.
+**Below findings:** five folding sections, each a heading with a one-line glance on the right: rubric ("11 of 15 pass, 4 fail"), database changes ("1 missing, 5 unexpected" or "as expected"), timing ("reply p50 2.8 s, 1 overlap" or "not measured (turn-based)"), delivery ("5 of 12 utterances flagged"), and evaluators ("9 ran, 1 skipped"). A glance that needs attention is amber and its section starts open; the rest start folded. Open, they show the rubric table (one row per criterion with pass/fail/needs-review badge, "must" or "must not" label, the quoted evidence with a timestamp link), database changes as an expected/actual diff with missing rows in red and allowed extras in green, timing (or "not measured (turn-based)" in each cell), the per-utterance delivery table, and the evaluator list with status, one-line summary, and model used. The audio listener is labelled advisory here too.
 
 **Verdict bar.** Sticky at the bottom of the panel: current machine verdict and a segmented control for the human verdict with `1`-`4`. Setting it toasts and points at `]`.
 
@@ -128,9 +133,15 @@ States:
 - Upload with reduced evidence: the evaluator list says which checks were skipped and why ("no tool log"), the rubric section is replaced by "no scenario selected" or shows judge-only results, database changes says "not available", transcript shows heard text only with no intended line. The verdict bar still works; the machine verdict is always needs review for these.
 - Invalid: the header badge is invalid and a note gives the caller-validity reason and the checkpoint reached. Findings about the bot are still listed but the verdict bar says "invalid runs do not count against the bot" and the pass/fail buttons are disabled unless the reviewer first un-marks invalid.
 - Audio missing or corrupt: waveform lanes show "recording unavailable" with the file path; transcript and findings still render; clip buttons are disabled.
-- Narrow (under 900 px): the sidebar collapses under the transcript with a max height, the rail collapses to icons, the legend text hides. Still fully keyboard operable.
+- Narrow (under 1500 px the key hint in the findings header hides; it stays in `?`): under 1180 px the sidebar is 340 px and the header meta takes its own row; under 900 px the sidebar collapses under the transcript with a max height, the rail collapses to icons, the legend text hides. Still fully keyboard operable.
 
-### 4.4 Persona builder (`persona.html`)
+### 4.4 Scenario and persona lists (`/scenarios`, `/personas`)
+
+Layout: one panel, one grid for the whole list. Every row is a subgrid of the list, so the four columns share tracks from the first row to the last; sizing a column per row is what made the lists read as ragged. A header row names the columns. Columns: name with a one-line description (ellipsis, full text in the title); tags as chips plus "n must, n must not, n beats" for scenarios, temperament and age plus "interrupts n/5, patience n/5" for personas; pass rate (percentage, 95% interval, n, then "16 calls, 1 invalid, v1") right-aligned with tabular numerals; id in mono, right-aligned. Rows are links; the row title carries the id.
+
+States: empty says where seeds come from and offers a new one. Under 1180 px the id column drops (it stays in the title); under 900 px the middle column drops too. Browsers without subgrid get fixed column widths.
+
+### 4.5 Persona builder (`persona.html`)
 
 Layout: form left, "how this reads to the caller model" and recent calls right.
 
@@ -140,7 +151,7 @@ The rendered instruction block updates live so the author sees exactly what the 
 
 States: preview while TTS is loading shows the model-loading health dot and the elapsed time; preview error shows the server message inline and keeps the form editable.
 
-### 4.5 Scenario builder (`scenario.html`)
+### 4.6 Scenario builder (`scenario.html`)
 
 Layout: form left (the issue, fact sheet, beats, rules, expected database changes, pronunciation watch list), AI draft panel right, sticky.
 
@@ -156,15 +167,15 @@ Draft with AI: plain description → Draft button → skeleton with "usually 5 t
 
 States: draft failure shows the error and keeps the description; an account that no longer exists in the seed is flagged on the select; the Save button is disabled with a reason if there is no checkpoint beat.
 
-### 4.6 Run launcher and progress (`run.html`, `run.html?view=progress`)
+### 4.7 Run launcher and progress (`run.html`, `run.html?view=progress`)
 
-Launcher: scenario × persona matrix with row and column selectors. Each cell shows last week's pass rate for that pair on the chosen profile, amber under 70%, so the matrix doubles as a map of where the bot is weak. Right column: repetitions (1, 2, 3, 5, 10, with the stochastic warning), model profile (unavailable profiles disabled with the reason), call mode (auto picks live or turn-based from the latest benchmark and says which and why), line conditions, concurrency. Summary: call count, effective mode badge, time estimate (wall clock for turn-based), eval readiness. Launch button names the number of calls.
+Launcher: scenario × persona matrix with row and column selectors. Each cell shows last week's pass rate for that pair on the chosen profile, amber under 70%, so the matrix doubles as a map of where the bot is weak; a pair with no valid calls shows a faint dash, with the reason in the title, so a hundred "no data" labels do not drown the few numbers. Right column: repetitions (1, 2, 3, 5, 10, with the stochastic warning), model profile (unavailable profiles disabled with the reason), call mode (auto picks live or turn-based from the latest benchmark and says which and why), line conditions, concurrency. Summary: call count, effective mode badge, time estimate (wall clock for turn-based), eval readiness. Launch button names the number of calls.
 
-Progress: header with running badge and mode; left, a segmented progress bar with one cell per call coloured by outcome (running cells pulse), a legend with counts, the pass rate so far with the interval and a note not to read it yet; the call list with verdict glyphs and open links as calls finish. Right, the live call: scenario and persona tags, clock, transcript streaming in with a caret, tool and barge-in events inline, a footer naming the other concurrent call with "watch instead". Actions: pause after current calls, stop run.
+Progress: header with running badge and mode; left, a segmented progress bar with one cell per call coloured by outcome (running cells pulse), a legend with counts, the pass rate so far with the interval and a note not to read it yet; the calls as a table (verdict with any invalid reason, scenario, persona, rep, id, findings with the open count, open or watch) that never wraps. Right, while the run is active, the live call: scenario and persona tags, clock, transcript streaming in with a caret, tool and barge-in events inline, a footer naming the other concurrent call with "watch instead". Once the run is finished the live panel goes away and the calls table takes the width. Actions: pause after current calls, stop run.
 
 States: queued (no models free) shows position in queue; a failed call (transport error) shows as fail with the reason and does not count as a bot fail unless confirmed; a run stopped early keeps partial results and says so in the run row.
 
-### 4.7 Talk to the bot (`talk.html`, `?phase=setup|incall|evaluating`)
+### 4.8 Talk to the bot (`talk.html`, `?phase=setup|incall|evaluating`)
 
 Setup: mic select, live level meter with guidance, headphone note that explains what happens on speakers, record-as segmented control, scenario or call freely, optional persona, line condition applied to your own audio. Start call is `Enter`.
 
@@ -174,21 +185,21 @@ Evaluating: a single panel listing each evaluator with done, running, or queued 
 
 States: mic permission denied shows the browser instruction and the LAN/HTTPS reminder; no headphones detected keeps the warning visible in the "you" tile; bot model loading shows the setup Start button disabled with "bot LLM loading, 18 s"; WebRTC disconnect mid-call shows a red strip and keeps the recording so far.
 
-### 4.8 Upload a recording (`upload.html`)
+### 4.9 Upload a recording (`upload.html`)
 
 Drop zone with format and channel guidance; after selection, a file row with duration, channels, sample rate, size, and the channel detection result. Optional context: scenario, bot version, intended bot transcript, tool log. Right, the evidence panel lists each kind of evidence with a check or cross and what it enables or skips, and a warning that with reduced evidence the call cannot be marked pass or fail automatically. Evaluate button with a time estimate.
 
 States: mono file shows the diarisation warning and lets the user pick which speaker is the bot after a 10 s preview; unsupported file shows the error inline; a scenario chosen later re-runs only the judge.
 
-### 4.9 Models and settings (`settings.html`)
+### 4.10 Models and settings (`settings.html`)
 
 Active profile select with the YAML path and the latest benchmark result that decides live vs turn-based. Roles table: role, interface name (LLM, STT, TTS, RealtimeVoice, AudioAnalyst, AudioQuality), adapter select, status with the health dot and detail, licence. Any Bedrock adapter shows an "untested against live AWS" tag next to the select, and the Swap a provider panel repeats the warning with region and credential status and a disabled Test connection. Evaluation thresholds. Right column: model servers with state and detail, a loading note with elapsed and usual time, GPU memory, access URLs.
 
 States: a server down shows red with the last error line and a restart button for that server only; restarting shows loading; changing an adapter shows "restarting role" inline and blocks only that role.
 
-### 4.10 Compare (`compare.html`)
+### 4.11 Compare (`compare.html`)
 
-Two run selectors. A note about sample size with both intervals. Two headline panels with pass rate, n, interval, mode badge, and the outcome bar. Per rubric criterion: pass counts and percentages for each run and a delta column with up/down glyphs plus colour (green better, red worse). A callout names the largest regression and links to those calls. Other measures: timing rows are marked "not comparable" when either run is turn-based; invalid runs are listed as "test, not bot"; advisory counts are listed but not scored. Scenario × persona cells show A → B pass of n reps with a glyph.
+Two run selectors. A note about sample size with both intervals. Two headline panels with pass rate, n, interval, mode badge, and the outcome bar. Per rubric criterion: pass counts and percentages for each run and a delta column with up/down glyphs plus colour (green better, red worse), kept on one line. A callout names the largest regression and links to those calls. Other measures: timing rows are marked "not comparable" when either run is turn-based; invalid runs are listed as "test, not bot"; advisory counts are listed but not scored. Scenario × persona cells show "k/n → k/n" with a glyph and the two percentages under it when both sides have valid reps; a side with no valid reps shows neither glyph nor percentage, and the cell title says why. Persona headers use the full name and wrap.
 
 States: runs with different scenario sets show only the intersection and say what was dropped; a run still in progress is comparable but marked partial.
 
@@ -214,11 +225,11 @@ Screen keys are listed with each screen above. Rules: single letters for the rev
 
 Shell: rail (brand, grouped nav items with optional count, footer with profile, health, theme), topbar (breadcrumbs, jump box, actions), toast, keyboard help dialog.
 
-Primitives: button (default, primary, danger, danger solid, ghost; sm, lg), kbd chip, tag, verdict badge, mode badge, severity label, health dot, note (plain, info, warn, err), panel (header, body, flush variant), table (sticky header, selectable rows, mono id and time cells), field with label and help, input, select, textarea, checkbox, segmented control, 1 to 5 scale, chip, empty state, skeleton.
+Primitives: button (default, primary, danger, danger solid, ghost; sm, lg), kbd chip, tag, verdict badge, mode badge, severity label, health dot, note (plain, info, warn, err), panel (header, body, flush variant), table (sticky header, selectable rows, mono id and time cells), label-value list (`.kv`), field with label and help, input, select, textarea, checkbox, segmented control, 1 to 5 scale, chip, empty state, skeleton, two-line clamp (`.clamp2`), subgrid list with header row.
 
 Data display: stat panel, stacked rate bar with legend, sparkbar, rate row, confidence interval text, progress bar (segmented per call).
 
-Review: timeline (toolbar, lanes, waveform canvas, pins, event markers, clip band, playhead, ruler), transcript turn (caller, bot, event; diff spans; finding tag; barge and overlap notes), finding card, rubric table, database diff block, key-value block, verdict bar.
+Review: verdict strip (verdict word, reason, "how it was decided" disclosure), timeline (toolbar, lanes, waveform canvas, pins, event markers, clip band, playhead, ruler), transcript turn (caller, bot, event; diff spans; finding tag; barge and overlap notes; folded long tool result), finding card (open and folded), line clamp with show-all, folding section with glance, rubric table, database diff block, key-value block, verdict bar.
 
 Builders: matrix table, beat row, rule row, fact row, AI draft panel with diff blocks, voice preview control.
 
@@ -277,13 +288,13 @@ System stacks so the prototype has no font dependency. Production may self-host 
 - Spacing scale: 4, 8, 12, 16, 24, 32 px. Panel padding 12, page padding 16, table cell 6 × 10.
 - Radius: 3 px controls and badges, 5 px buttons and inputs, 8 px panels and dialogs.
 - Motion: 100 ms for hover and press, 160 ms for panel and toast, ease `cubic-bezier(.2,.7,.2,1)`. Playhead moves on animation frames with no easing. Running badges spin at 900 ms, loading dots pulse at 1.2 s. `prefers-reduced-motion` collapses all of it to near zero.
-- Layout: rail 180 px (52 px under 900 px), topbar 44 px, review sidebar 380 px (330 under 1180 px).
+- Layout: rail 180 px (52 px under 900 px), topbar 44 px, review sidebar `clamp(380px, 25vw, 460px)` (340 px under 1180 px). Finding cards use 10 px vertical padding, 6 px when folded; the verdict strip is 6 × 10 px with a 3 px coloured left border.
 
 ## 8. Accessibility
 
 - Nothing is colour alone. Verdicts have a word and a distinct glyph (dot, square, triangle, hollow dashed ring). Severity is a word. Caller and bot lanes are labelled. Overlap is a hatch pattern and a word in the transcript. Deltas have arrows. Health states have words next to the dot. Mode badges have an icon, a word, and turn-based adds a dashed border and "slow".
 - Contrast, computed with the WCAG formula against `--bg-1`: `--ink-1` 14.5:1 dark and 17.8:1 light; `--ink-2` 7.8:1 and 7.6:1; `--ink-3` 4.7:1 and 4.7:1 (used for labels and detail only). Verdict text on its own soft badge background: pass 5.6 dark and 4.7 light, fail 5.0 and 4.7, review 6.4 and 5.1. Channel fills are graphics and sit at 4.9 and 5.5 dark, 4.4 and 4.1 light, all over the 3:1 graphics floor; speaker labels use the `-text` variants, 5.5 and 5.6 in light. Invalid text 5.9 and 5.4. Accent on panel 6.1 and 4.9. The script used is three lines of relative-luminance maths; re-run it if a token changes.
-- Keyboard: everything in section 5 plus native tab order. Focus ring is 2 px in `--focus` with offset. Pins, event markers, transcript turns, and finding cards are buttons or focusable with `aria-pressed` for selection. Segmented controls use `aria-pressed`; the 1 to 5 scales are radio groups.
+- Keyboard: everything in section 5 plus native tab order. Focus ring is 2 px in `--focus` with offset; inside clipped containers (segmented controls, list rows, folding section headings) the offset is negative so the ring stays visible. Pins, event markers, transcript turns, and finding cards are buttons or focusable with `aria-pressed` for selection. Segmented controls use `aria-pressed`; the 1 to 5 scales are radio groups; folding sections and show-all toggles carry `aria-expanded`.
 - Screen readers: rate bars carry `role="img"` with a full text label; waveforms are presentational and the transcript is the accessible equivalent; toasts should be an `aria-live="polite"` region in production.
 - Motion and audio: no autoplay; clip playback needs a keypress or click. Reduced motion respected.
 - Targets: buttons are at least 24 px tall at the small size and 28 px by default. Pins are 18 px with a larger hit area in production (the prototype uses the visible size).
